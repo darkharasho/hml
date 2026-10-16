@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   truncateSync,
   writeFileSync
 } from 'node:fs'
@@ -310,6 +311,42 @@ describe('services', () => {
     await Promise.all([deploying, uninstalling])
     expect(await api.getDeployment(label)).toMatchObject({ profileId: b.id, files: 0 })
     expect((await api.listProfiles(label)).find((p) => p.id === a.id)?.mods).toEqual([])
+  })
+
+  test('two deploy games can not deploy to one folder', async () => {
+    deps.fetch = nexusFetch
+    const api = createServices(deps)
+    await api.addNexusGame('aaa')
+    await api.addNexusGame('bbb')
+    const a = await api.createProfile('nexus-aaa', 'a')
+    const b = await api.createProfile('nexus-bbb', 'b')
+    const dir = path.join(tmp, 'shared')
+    mkdirSync(dir)
+    // Pointing both at the folder is fine while nothing is deployed.
+    await api.setGamePath('nexus-aaa', dir)
+    await api.setGamePath('nexus-bbb', dir)
+    const file = path.join(tmp, 'm.zip')
+    writeFileSync(file, zipSync({ 'Data/a.esp': strToU8('esp') }))
+    await api.installFromPaths('nexus-aaa', a.id, [file])
+    await api.installFromPaths('nexus-bbb', b.id, [file])
+    await api.deployProfile('nexus-aaa', a.id)
+    const msg = 'Game aaa has mods deployed to this folder. Remove them in HML first.'
+    await expect(api.deployProfile('nexus-bbb', b.id)).rejects.toThrow(msg)
+    expect(await api.getDeployment('nexus-bbb')).toBeNull()
+    expect(readFileSync(path.join(dir, 'Data/a.esp'), 'utf8')).toBe('esp')
+    // The same folder by another path (a symlink) is the same folder.
+    const link = path.join(tmp, 'link')
+    symlinkSync(dir, link)
+    await api.setGamePath('nexus-bbb', null)
+    await expect(api.setGamePath('nexus-bbb', link)).rejects.toThrow(msg)
+    await expect(api.setGamePath('nexus-bbb', dir + path.sep)).rejects.toThrow(msg)
+    expect((await api.getSettings()).gamePathOverrides['nexus-bbb']).toBeUndefined()
+    // The game that owns the deployment can keep its folder.
+    await api.setGamePath('nexus-aaa', dir)
+    await api.removeDeployment('nexus-aaa')
+    await api.setGamePath('nexus-bbb', link)
+    await api.deployProfile('nexus-bbb', b.id)
+    expect(await api.getDeployment('nexus-bbb')).toMatchObject({ files: 1 })
   })
 
   test('installFromFile installs selected zip as local source with sha256', async () => {

@@ -58,6 +58,7 @@ import {
   deployedProfileId,
   deployProfile,
   deploymentStatus,
+  otherDeploymentAt,
   removeDeployment
 } from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
@@ -274,8 +275,17 @@ export function createServices(
     throw new Error(LOCK_BUSY)
   }
 
+  /** Refuses a folder that another deploy game has mods deployed to. */
+  async function assertNoOtherDeployment(def: GameDef, dir: string): Promise<void> {
+    const other = await otherDeploymentAt(paths, def.label, dir)
+    if (other === null) return
+    const name = (await getCatalog()).games.find((g) => g.label === other)?.displayName ?? other
+    throw new Error(`${name} has mods deployed to this folder. Remove them in HML first.`)
+  }
+
   async function setGamePath(label: string, dir: string | null): Promise<void> {
-    await requireGame(label)
+    const def = await requireGame(label)
+    if (dir && def.loader === 'deploy') await assertNoOtherDeployment(def, dir)
     const settings = await loadSettings(paths)
     const overrides = { ...settings.gamePathOverrides }
     if (dir) overrides[label] = dir
@@ -759,6 +769,7 @@ export function createServices(
           serialize(game, DEPLOY_KEY, async () => {
             const now = await lockableDeployedProfile(def)
             if (now !== null && now !== profileId) return null
+            await assertNoOtherDeployment(def, gameDir)
             return deployProfile(paths, def, profileId, gameDir)
           })
         )

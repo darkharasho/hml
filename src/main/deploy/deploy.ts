@@ -198,6 +198,31 @@ export async function deployedProfileId(paths: AppPaths, game: GameDef): Promise
   return (await readManifest(paths, game))?.profileId ?? null
 }
 
+/** The real location of a folder, or its resolved path when it can't be resolved. */
+async function realOrResolved(p: string): Promise<string> {
+  return fs.realpath(p).catch(() => path.resolve(p))
+}
+
+/**
+ * The label of another game whose deployment record names the same folder as dir, or null.
+ * Two games deploying into one folder would back up each other's mod files as originals.
+ */
+export async function otherDeploymentAt(
+  paths: AppPaths,
+  label: string,
+  dir: string
+): Promise<string | null> {
+  const target = await realOrResolved(dir)
+  const labels = await fs.readdir(paths.gamesDir).catch(() => [] as string[])
+  for (const other of labels.sort()) {
+    if (other === label) continue
+    const m = await readJson<{ gameDir?: unknown }>(paths.deployment(other)).catch(() => null)
+    if (typeof m?.gameDir !== 'string' || !path.isAbsolute(m.gameDir)) continue
+    if ((await realOrResolved(m.gameDir)) === target) return other
+  }
+  return null
+}
+
 export async function deploymentStatus(
   paths: AppPaths,
   game: GameDef
