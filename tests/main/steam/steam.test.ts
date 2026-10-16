@@ -47,6 +47,18 @@ describe('steam locator', () => {
     )
   })
 
+  test('ignores a manifest whose installdir escapes steamapps/common', async () => {
+    const lib = path.join(tmp, 'lib')
+    const root = await makeRoot([lib])
+    for (const dir of ['../../evil', '..', '.', 'a\\\\b', 'a/b']) {
+      await write(
+        path.join(lib, 'steamapps', 'appmanifest_7.acf'),
+        `"AppState" { "installdir" "${dir}" }`
+      )
+      expect(await findAppInstall(root, '7')).toBeNull()
+    }
+  })
+
   test('supports library paths with spaces', async () => {
     const lib = path.join(tmp, 'My Games', 'Steam Library')
     const root = await makeRoot([lib])

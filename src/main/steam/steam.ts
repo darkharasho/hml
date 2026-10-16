@@ -99,7 +99,13 @@ export async function findAppInstall(root: string, appId: string): Promise<strin
   for (const lib of await listLibraries(root)) {
     const manifest = await readVdf(path.join(lib, 'steamapps', `appmanifest_${appId}.acf`))
     const installdir = manifest && vdfGet(manifest, 'AppState', 'installdir')
-    if (typeof installdir === 'string' && installdir) {
+    if (
+      typeof installdir === 'string' &&
+      installdir &&
+      !/[/\\]/.test(installdir) &&
+      installdir !== '.' &&
+      installdir !== '..'
+    ) {
       return path.join(lib, 'steamapps', 'common', installdir)
     }
   }
