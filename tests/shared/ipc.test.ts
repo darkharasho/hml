@@ -35,3 +35,8 @@ test('HML_METHODS lists the github methods', () => {
   )
   expect(HML_METHODS).not.toContain('ghAutoUpdateAll')
 })
+test('HML_METHODS lists the nexus game methods', () => {
+  expect(HML_METHODS).toEqual(
+    expect.arrayContaining(['addNexusGame', 'nxGetDomain', 'nxSetDomain'])
+  )
+})

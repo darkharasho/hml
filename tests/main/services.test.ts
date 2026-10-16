@@ -106,6 +106,47 @@ describe('services', () => {
     expect(games.find((g) => g.label === 'repo')?.installDir).toBe(gameDir)
   })
 
+  test('addNexusGame persists a Nexus-only game, searchGames appends extras, domains validate', async () => {
+    const nx = (game: unknown): unknown => ({ data: { game } })
+    deps.fetch = (async (url: string, init?: { body?: string }) => {
+      const body = init?.body ?? ''
+      let json: unknown = fixture
+      if (url.includes('graphql')) {
+        if (body.includes('game(domainName:\\"skyrimspecialedition\\")'))
+          json = nx({ id: '1704', name: 'Skyrim SE', domainName: 'skyrimspecialedition' })
+        else if (body.includes('game(domainName:'))
+          json = { data: { game: null }, errors: [{ extensions: { code: 'GAME_NOT_FOUND' } }] }
+        else
+          json = {
+            data: {
+              games: {
+                nodes: [
+                  { id: '1704', name: 'Skyrim SE', domainName: 'skyrimspecialedition', modCount: 1 }
+                ]
+              }
+            }
+          }
+      }
+      return { ok: true, status: 200, headers: new Headers(), json: async () => json }
+    }) as unknown as typeof fetch
+    const api = createServices(deps)
+    const extra = (await api.searchGames('sky')).find(
+      (g) => g.label === 'nexus-skyrimspecialedition'
+    )
+    expect(extra).toMatchObject({ loader: 'deploy', installDir: null, loaderPackageIds: [] })
+    const added = await api.addNexusGame('skyrimspecialedition')
+    expect(added.label).toBe('nexus-skyrimspecialedition')
+    expect(await api.listProfiles('nexus-skyrimspecialedition')).toEqual([])
+    await expect(api.addNexusGame('nope')).rejects.toThrow('Nexus Mods has no game "nope".')
+
+    await api.nxSetDomain('repo', 'skyrimspecialedition')
+    expect((await api.getSettings()).nexusDomainOverrides).toEqual({ repo: 'skyrimspecialedition' })
+    expect(await api.nxGetDomain('repo')).toBe('skyrimspecialedition')
+    await expect(api.nxSetDomain('repo', 'nope')).rejects.toThrow('Nexus Mods has no game "nope".')
+    await api.nxSetDomain('repo', null)
+    expect((await api.getSettings()).nexusDomainOverrides).toEqual({})
+  })
+
   test('installFromFile installs selected zip as local source with sha256', async () => {
     const api = createServices(deps)
     const profile = await api.createProfile('repo', 'Test')

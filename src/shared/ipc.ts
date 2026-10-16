@@ -64,6 +64,12 @@ export interface HmlApi {
   /** Saves (after verifying) or, with null/empty, removes the GitHub token. Never returns it. */
   ghSetToken(token: string | null): Promise<{ login: string | null }>
   ghTokenStatus(): Promise<{ set: boolean; encryptionAvailable: boolean }>
+  /** Persists a Nexus-only game (validated against Nexus Mods) so it can be opened like any game. */
+  addNexusGame(domain: string): Promise<GameSummary>
+  /** The game's Nexus domain (override, cache, or live lookup); null when not on Nexus Mods. */
+  nxGetDomain(game: string): Promise<string | null>
+  /** Sets (after validating) or, with null, clears the Nexus domain override for a game. */
+  nxSetDomain(game: string, domain: string | null): Promise<void>
   /** Opens an https Thunderstore or GitHub link in the system browser; anything else throws. */
   openExternal(url: string): Promise<void>
 }
@@ -100,6 +106,9 @@ const METHOD_TABLE = {
   ghSetUpdateMode: true,
   ghSetToken: true,
   ghTokenStatus: true,
+  addNexusGame: true,
+  nxGetDomain: true,
+  nxSetDomain: true,
   openExternal: true
 } satisfies Record<keyof HmlApi, true>
 

@@ -1,6 +1,6 @@
 import { app, shell, dialog, BrowserWindow, safeStorage } from 'electron'
 import { execFile, spawn } from 'node:child_process'
-import { homedir } from 'node:os'
+import { homedir, release as osRelease, type as osType } from 'node:os'
 import { join } from 'path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -84,6 +84,8 @@ app.whenReady().then(() => {
   const services = createServices({
     paths: makePaths(app.getPath('userData')),
     fetch: globalThis.fetch,
+    appVersion: app.getVersion(),
+    os: { type: osType(), release: osRelease(), arch: process.arch },
     snapshotPath: resolveSnapshotPath({
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,

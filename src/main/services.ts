@@ -54,6 +54,8 @@ import { downloadPackage } from './thunderstore/download'
 import { parseAllowedExternalUrl } from './security'
 import type { SecretPort } from './github/token'
 import { createGithubServices, unsupportedLoaderMessage } from './github/service'
+import { createNexusGames } from './nexus/games'
+import { gameByDomain } from './nexus/api'
 import { findInstalledMod } from '../shared/modIdentity'
 
 export interface DialogPort {
@@ -87,6 +89,10 @@ export interface ServiceDeps {
   secrets: SecretPort
   /** Clock for index freshness; defaults to Date.now. */
   now?: () => number
+  /** HML's version, sent to Nexus Mods in request headers. */
+  appVersion?: string
+  /** OS details for the Nexus User-Agent. */
+  os?: { type: string; release: string; arch: string }
 }
 
 interface LoadedIndex extends TsIndex {
@@ -127,14 +133,50 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
   const now = deps.now ?? Date.now
 
+  const nexusClient = {
+    fetch: deps.fetch,
+    appVersion: deps.appVersion ?? '0.0.0',
+    os: deps.os ?? { type: 'unknown', release: '', arch: process.arch }
+  }
+  const nexus = createNexusGames({ paths, client: nexusClient, now })
+
   let catalogPromise: Promise<Catalog> | null = null
-  const getCatalog = (): Promise<Catalog> => {
+  const getBaseCatalog = (): Promise<Catalog> => {
     catalogPromise ??= loadCatalog(paths, deps.fetch, deps.snapshotPath).catch((e) => {
       catalogPromise = null
       throw e
     })
     return catalogPromise
   }
+  /** The ecosystem catalog plus the user's added Nexus-only games. */
+  const getCatalog = async (): Promise<Catalog> => {
+    const base = await getBaseCatalog()
+    const have = new Set(base.games.map((g) => g.label))
+    const added = (await nexus.addedGames()).filter((g) => !have.has(g.label))
+    return added.length ? { ...base, games: [...base.games, ...added] } : base
+  }
+
+  const summarize = (
+    g: GameDef,
+    catalog: Catalog,
+    settings: Settings,
+    steamRoot: string | null
+  ): Promise<GameSummary> =>
+    g.loader === 'deploy'
+      ? Promise.resolve({
+          ...g,
+          loaderPackageIds: [],
+          installDir: settings.gamePathOverrides[g.label] ?? null
+        })
+      : resolveGameDir(g, settings, steamRoot)
+          .catch(() => null)
+          .then((installDir) => ({
+            ...g,
+            loaderPackageIds: catalog.modloaderPackages
+              .filter((m) => m.loader === g.loader)
+              .map((m) => m.packageId),
+            installDir
+          }))
 
   async function requireGame(label: string): Promise<GameDef> {
     const game = (await getCatalog()).games.find((g) => g.label === label)
@@ -475,20 +517,52 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
       const settings = await loadSettings(paths)
       const steamRoot = await getSteamRoot()
       const summaries = await Promise.all(
-        ranked.map(async (g): Promise<GameSummary> => ({
-          ...g,
-          loaderPackageIds: catalog.modloaderPackages
-            .filter((m) => m.loader === g.loader)
-            .map((m) => m.packageId),
-          installDir: await resolveGameDir(g, settings, steamRoot).catch(() => null)
-        }))
+        ranked.map((g) => summarize(g, catalog, settings, steamRoot))
       )
       // Rank group first, then installed before not installed, then searchGames' own order.
       const q = query.trim().toLowerCase()
-      return summaries
+      const sorted = summaries
         .map((g, i) => ({ g, i, rank: q ? rankGame(g, q) : 0, installed: g.installDir ? 0 : 1 }))
         .sort((a, b) => a.rank - b.rank || a.installed - b.installed || a.i - b.i)
         .map((x) => x.g)
+      const extra = await nexus.searchExtra(query, catalog, settings)
+      const extras = await Promise.all(extra.map((g) => summarize(g, catalog, settings, steamRoot)))
+      return [...sorted, ...extras]
+    },
+
+    async addNexusGame(domain: string): Promise<GameSummary> {
+      const def = await nexus.addGame(domain)
+      const catalog = await getCatalog()
+      return summarize(def, catalog, await loadSettings(paths), null)
+    },
+
+    async nxGetDomain(game: string): Promise<string | null> {
+      const def = await requireGame(game)
+      const settings = await loadSettings(paths)
+      try {
+        return (await nexus.domainFor(def, settings))?.domain ?? null
+      } catch {
+        return nexus.cachedDomain(def, settings)
+      }
+    },
+
+    async nxSetDomain(game: string, domain: string | null): Promise<void> {
+      await requireGame(game)
+      const settings = await loadSettings(paths)
+      const overrides = { ...settings.nexusDomainOverrides }
+      const wanted = domain?.trim().toLowerCase() ?? ''
+      if (wanted) {
+        const found = /^[a-z0-9_-]{1,64}$/.test(wanted)
+          ? await gameByDomain(nexusClient, wanted)
+          : null
+        if (!found) throw new Error(`Nexus Mods has no game "${wanted}".`)
+        overrides[game] = found.domain
+        await nexus.rememberDomain(game, found.domain, found.id)
+      } else {
+        delete overrides[game]
+        await nexus.forgetDomain(game)
+      }
+      await saveSettings(paths, { ...settings, nexusDomainOverrides: overrides })
     },
 
     async refreshCatalog(): Promise<void> {
