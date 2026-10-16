@@ -2158,6 +2158,24 @@ describe('services', () => {
         expect(again.replaced).toEqual(['owner-repo'])
       })
 
+      test('ghInstall refuses only when it would replace an installed mod', async () => {
+        await installOld()
+        api = winApi()
+        tasks = ['REPO.exe']
+        // Reinstalling owner/repo replaces the installed copy.
+        await expect(api.ghInstall('repo', pid, 'owner/repo')).rejects.toThrow(CLOSE)
+        expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
+        // A mod the profile doesn't have yet still installs.
+        publish('n', 'fresh', 'v1.0.0', { 'a.zip': zipOf('Fresh', '1.0.0') })
+        const r = await api.ghInstall('repo', pid, 'n/fresh')
+        expect(r.kind).toBe('installed')
+        // A failing tasklist doesn't block.
+        tasks = 'fail'
+        const again = await api.ghInstall('repo', pid, 'owner/repo')
+        if (again.kind !== 'installed') throw new Error('expected install')
+        expect(again.mod.source).toMatchObject({ tag: 'v2.0.0' })
+      })
+
       test('a failing tasklist does not block manual actions', async () => {
         await installOld()
         api = winApi()
@@ -3933,13 +3951,20 @@ describe('share import', () => {
       }
     })
     ownModDeps = ['Dep-Lib-1.5.0']
-    // Own-Mod moves Dep-Lib to 1.5.0 and the export's 1.0.0 is put back: both replace a mod.
-    const r = await importCode([ts('Dep-Lib', '1.0.0'), ts('Own-Mod', '2.0.0')])
+    // Own-Mod moves Dep-Lib to 1.5.0 and the export's 1.0.0 is put back, and the second
+    // owner/thing release replaces the first: each replaces an installed mod.
+    const r = await importCode([
+      ts('Dep-Lib', '1.0.0'),
+      ts('Own-Mod', '2.0.0'),
+      gh('v1.0.0'),
+      gh('v2.0.0')
+    ])
     expect(r.unresolved).toEqual([])
     expect(r.warnings).toEqual([])
     expect(r.profile.mods.map((m) => `${m.id}@${m.version}`).sort()).toEqual([
       'Dep-Lib@1.0.0',
-      'Own-Mod@2.0.0'
+      'Own-Mod@2.0.0',
+      'owner-thing@2.0.0'
     ])
   })
 

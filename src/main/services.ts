@@ -797,6 +797,9 @@ export function createServices(
     ...nexusApi,
     ...shareApi,
     handleNxm,
+    // Replacing an installed mod under a running game is refused; a fresh install is allowed.
+    ghInstall: (game, profileId, url, asset) =>
+      ghInstallWith(game, profileId, url, asset, { beforeReplacing: assertGameClosed }),
     async ghUpdate(game, profileId, modIds) {
       await assertGameClosed(await requireGame(game))
       return ghServices.ghUpdate(game, profileId, modIds)

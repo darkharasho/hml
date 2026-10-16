@@ -10,7 +10,12 @@ import type {
 } from '../../shared/types'
 import type { HmlApi } from '../../shared/ipc'
 import type { ServiceDeps } from '../services'
-import { detectPackageMeta, installZip, readZipEntries } from '../install/installer'
+import {
+  detectPackageMeta,
+  installedModsReplaced,
+  installZip,
+  readZipEntries
+} from '../install/installer'
 import { getProfile, listProfiles, saveProfile } from '../profiles/profiles'
 import { parseGithubUrl } from './url'
 import { assetPattern, chooseAsset, type GhReleaseAsset } from './assets'
@@ -77,6 +82,11 @@ function looksLikeToken(t: string): boolean {
 export interface GhInstallOptions {
   /** Thunderstore packages to record as provided by the installed mod (a share import). */
   provides?: string[]
+  /**
+   * Called before installing, outside the profile's queue, when the install would replace an
+   * installed mod; it throws to refuse (the running-game check).
+   */
+  beforeReplacing?: (def: GameDef) => Promise<void>
 }
 
 export function createGithubServices(ctx: GhContext): Pick<
@@ -156,6 +166,63 @@ export function createGithubServices(ctx: GhContext): Pick<
     return known
   }
 
+  /** The asset as a zip (a bare .dll is wrapped in one). */
+  const zipData = (chosen: Chosen): Uint8Array =>
+    /\.dll$/i.test(chosen.asset.name) ? zipSync({ [chosen.asset.name]: chosen.data }) : chosen.data
+
+  /**
+   * The installed mods an install of `data` under `packageId` replaces besides the mod under that
+   * id: a local copy with its manifest name, the repo's mod under another id, and the one
+   * Thunderstore mod with its manifest name (two or more are ambiguous and none is replaced).
+   */
+  function supersededBy(
+    mods: InstalledMod[],
+    name: string,
+    owner: string,
+    repo: string,
+    packageId: string
+  ): { local: InstalledMod[]; sameRepoMods: InstalledMod[]; tsCopy: InstalledMod | undefined } {
+    const local = mods.filter((m) => m.source.kind === 'local' && m.id === name)
+    const sameRepoMods = mods.filter(
+      (m) =>
+        isGhMod(m) &&
+        sameRepo(m.source.owner, owner) &&
+        sameRepo(m.source.repo, repo) &&
+        m.id !== packageId
+    )
+    const tsNamed = mods.filter((m) => m.source.kind === 'thunderstore' && m.name === name)
+    const tsCopy = tsNamed.length === 1 ? tsNamed[0] : undefined
+    return { local, sameRepoMods, tsCopy }
+  }
+
+  const replacesOf = (s: ReturnType<typeof supersededBy>, packageId: string): string[] =>
+    [...s.local, ...s.sameRepoMods, ...(s.tsCopy ? [s.tsCopy] : [])]
+      .map((m) => m.id)
+      .filter((id) => id !== packageId)
+
+  /** True when installing `chosen` under `packageId` would replace a mod the profile has now. */
+  async function replacesInstalled(
+    def: GameDef,
+    catalog: Catalog,
+    profileId: string,
+    chosen: Chosen,
+    o: { owner: string; repo: string; packageId: string }
+  ): Promise<boolean> {
+    const zip = readZipEntries(zipData(chosen))
+    const name = detectPackageMeta(zip, o.packageId)?.name ?? o.packageId
+    const { mods } = await getProfile(paths, def.label, profileId)
+    const s = supersededBy(mods, name, o.owner, o.repo, o.packageId)
+    const ids = installedModsReplaced(
+      mods,
+      def,
+      catalog,
+      zip,
+      o.packageId,
+      replacesOf(s, o.packageId)
+    )
+    return ids.length > 0
+  }
+
   /**
    * Installs a downloaded release asset and records the github config. Runs inside the profile's
    * queue; `replaces` is computed from the profile as it is then.
@@ -176,26 +243,15 @@ export function createGithubServices(ctx: GhContext): Pick<
     }
   ): Promise<{ mod: InstalledMod; replaced: string[] }> {
     const { owner, repo, release, chosen, packageId } = o
-    const data = /\.dll$/i.test(chosen.asset.name)
-      ? zipSync({ [chosen.asset.name]: chosen.data })
-      : chosen.data
+    const data = zipData(chosen)
     const meta = detectPackageMeta(readZipEntries(data), packageId)
     const name = meta?.name ?? packageId
     const version = meta && meta.version !== '0.0.0' ? meta.version : stripV(release.tag)
     o.onInstalling?.(name, version)
 
     const { mods } = await getProfile(paths, def.label, profileId)
-    const local = mods.filter((m) => m.source.kind === 'local' && m.id === name)
-    const sameRepoMods = mods.filter(
-      (m) =>
-        isGhMod(m) &&
-        sameRepo(m.source.owner, owner) &&
-        sameRepo(m.source.repo, repo) &&
-        m.id !== packageId
-    )
-    // A Thunderstore copy of the same package: only an unambiguous single match is replaced.
-    const tsNamed = mods.filter((m) => m.source.kind === 'thunderstore' && m.name === name)
-    const tsCopy = tsNamed.length === 1 ? tsNamed[0] : undefined
+    const superseded = supersededBy(mods, name, owner, repo, packageId)
+    const { local, sameRepoMods, tsCopy } = superseded
     const previous = mods.find((m) => m.id === packageId) ?? sameRepoMods[0]
     const provides = [
       ...new Set([
@@ -221,9 +277,7 @@ export function createGithubServices(ctx: GhContext): Pick<
       {
         packageId,
         version,
-        replaces: [...local, ...sameRepoMods, ...(tsCopy ? [tsCopy] : [])]
-          .map((m) => m.id)
-          .filter((id) => id !== packageId),
+        replaces: replacesOf(superseded, packageId),
         github: o.config(previous),
         provides
       }
@@ -330,13 +384,20 @@ export function createGithubServices(ctx: GhContext): Pick<
       chosen = r
     }
 
+    const packageId = prior?.id ?? `${owner}-${repo}`
+    if (
+      opts.beforeReplacing &&
+      (await replacesInstalled(def, catalog, profileId, chosen, { owner, repo, packageId }))
+    ) {
+      await opts.beforeReplacing(def)
+    }
     return serialize(game, profileId, async () => {
       const { mod, replaced } = await installChosen(def, catalog, profileId, {
         owner,
         repo,
         release,
         chosen,
-        packageId: prior?.id ?? `${owner}-${repo}`,
+        packageId,
         onInstalling: (name, version) => progress(`Installing ${name} ${version}`, 2),
         provides: opts.provides,
         config: (previous) => ({

@@ -172,6 +172,78 @@ async function removeFiles(root: string, files: string[]): Promise<void> {
   await pruneEmptyDirs(root, files)
 }
 
+/**
+ * The loader package a zip installs as: a catalog loader package, or a raw BepInEx release,
+ * which isn't a catalog package but installs like one with its paths kept and stands in for the
+ * game's loader packages (so Thunderstore doesn't add BepInExPack on top).
+ */
+function loaderKind(
+  game: GameDef,
+  catalog: Catalog,
+  zip: ZipEntries,
+  packageId: string,
+  meta: { name: string } | null
+): { loaderPackage: ModloaderPackage | undefined; rawLoader: boolean; loaderIds: string[] } {
+  const deploy = game.loader === 'deploy'
+  const catalogLoader = deploy
+    ? undefined
+    : findLoaderPackage(game, catalog, zip, packageId, meta?.name)
+  const loaderIds = catalog.modloaderPackages
+    .filter((p) => p.loader === game.loader)
+    .map((p) => p.packageId)
+  const rawLoader =
+    !deploy && !catalogLoader && game.loader === 'bepinex' && isRawBepInEx(zip.names)
+  const loaderPackage: ModloaderPackage | undefined =
+    catalogLoader ??
+    (rawLoader
+      ? { packageId: loaderIds[0] ?? packageId, rootFolder: '', loader: game.loader }
+      : undefined)
+  return { loaderPackage, rawLoader, loaderIds }
+}
+
+/**
+ * Ids treated as the previous version: the mod under this id, any mod the install replaces, and
+ * for a loader package a local install recorded under the loader's alias (its manifest name).
+ * A raw loader also replaces any installed mod that stands for a loader package; otherwise the
+ * shared paths would be kept as that mod's files and the install would record none.
+ */
+function replacedIds(
+  mods: InstalledMod[],
+  packageId: string,
+  replaces: string[],
+  loaderPackage: ModloaderPackage | undefined,
+  rawLoader: boolean,
+  loaderIds: string[]
+): Set<string> {
+  const replaced = new Set([packageId, ...replaces])
+  if (loaderPackage) replaced.add(loaderAlias(loaderPackage.packageId))
+  if (rawLoader) {
+    for (const m of mods) {
+      const standsFor = m.source.kind === 'thunderstore' ? [m.source.fullName] : (m.provides ?? [])
+      if (standsFor.some((id) => loaderIds.includes(id))) replaced.add(m.id)
+    }
+  }
+  return replaced
+}
+
+/**
+ * The installed mods (ids) an install of `zip` under `packageId` would replace, for a check made
+ * before installing.
+ */
+export function installedModsReplaced(
+  mods: InstalledMod[],
+  game: GameDef,
+  catalog: Catalog,
+  zip: ZipEntries,
+  packageId: string,
+  replaces: string[] = []
+): string[] {
+  const meta = detectPackageMeta(zip, packageId)
+  const { loaderPackage, rawLoader, loaderIds } = loaderKind(game, catalog, zip, packageId, meta)
+  const ids = replacedIds(mods, packageId, replaces, loaderPackage, rawLoader, loaderIds)
+  return mods.filter((m) => ids.has(m.id)).map((m) => m.id)
+}
+
 export async function installZip(
   paths: AppPaths,
   game: GameDef,
@@ -209,21 +281,7 @@ export async function installZip(
   const name = opts.name ?? meta?.name ?? rawId
 
   if (deploy) assertDeployPackageId(packageId)
-  const catalogLoader = deploy
-    ? undefined
-    : findLoaderPackage(game, catalog, zip, packageId, meta?.name)
-  // A raw BepInEx release isn't a catalog package; it installs like one with its paths kept,
-  // and stands in for the game's loader packages so Thunderstore doesn't add BepInExPack on top.
-  const loaderIds = catalog.modloaderPackages
-    .filter((p) => p.loader === game.loader)
-    .map((p) => p.packageId)
-  const rawLoader =
-    !deploy && !catalogLoader && game.loader === 'bepinex' && isRawBepInEx(zip.names)
-  const loaderPackage: ModloaderPackage | undefined =
-    catalogLoader ??
-    (rawLoader
-      ? { packageId: loaderIds[0] ?? packageId, rootFolder: '', loader: game.loader }
-      : undefined)
+  const { loaderPackage, rawLoader, loaderIds } = loaderKind(game, catalog, zip, packageId, meta)
   const provides = [
     ...new Set([...(opts.provides ?? []), ...(rawLoader && loaderIds[0] ? [loaderIds[0]] : [])])
   ]
@@ -244,18 +302,14 @@ export async function installZip(
   }
 
   // Everything validated; only now touch the profile.
-  // The previous version is the mod under this id, any mod this install replaces, and for a
-  // loader package a local install recorded under the loader's alias (its manifest name).
-  const replaced = new Set([packageId, ...(opts.replaces ?? [])])
-  if (loaderPackage) replaced.add(loaderAlias(loaderPackage.packageId))
-  // A raw loader also replaces any installed mod that stands for a loader package; otherwise
-  // the shared paths would be kept as that mod's files and this install would record none.
-  if (rawLoader) {
-    for (const m of profile.mods) {
-      const standsFor = m.source.kind === 'thunderstore' ? [m.source.fullName] : (m.provides ?? [])
-      if (standsFor.some((id) => loaderIds.includes(id))) replaced.add(m.id)
-    }
-  }
+  const replaced = replacedIds(
+    profile.mods,
+    packageId,
+    opts.replaces ?? [],
+    loaderPackage,
+    rawLoader,
+    loaderIds
+  )
   const previous = profile.mods.filter((m) => replaced.has(m.id))
   let keptOwned: string[] = []
   if (previous.length > 0) {
