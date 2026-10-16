@@ -229,7 +229,8 @@ export function installedVersions(
   for (const loaderId of loaderPackageIds) {
     const short = loaderAlias(loaderId)
     const mod =
-      mods.find((m) => m.id === loaderId || m.id === short) ??
+      mods.find((m) => m.id === loaderId) ??
+      mods.find((m) => m.id === short) ??
       mods.find((m) => providesPackage(m, loaderId, loaderPackageIds))
     if (mod) out.set(loaderId, mod.version)
   }

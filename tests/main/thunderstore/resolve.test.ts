@@ -272,6 +272,19 @@ describe('installedVersions', () => {
   })
 })
 
+describe('installedVersions loader preference', () => {
+  it('prefers the exact loader id over its short alias', () => {
+    const m = installedVersions(
+      [
+        mod('BepInExPack', '5.0.0', { kind: 'local', fileName: 'x.zip', sha256: '' }),
+        ts('BepInEx-BepInExPack', '5.4.1')
+      ],
+      ['BepInEx-BepInExPack']
+    )
+    expect(m.get('BepInEx-BepInExPack')).toBe('5.4.1')
+  })
+})
+
 describe('provided packages', () => {
   const gh = (provides?: string[]): InstalledMod => ({
     ...mod('o-r', '2.0.0', {
