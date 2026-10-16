@@ -22,3 +22,9 @@ test('HML_METHODS lists the thunderstore methods', () => {
     ])
   )
 })
+test('HML_METHODS lists the github methods', () => {
+  expect(HML_METHODS).toEqual(
+    expect.arrayContaining(['ghInstall', 'ghCheckUpdates', 'ghUpdate', 'ghSetUpdateMode'])
+  )
+  expect(HML_METHODS).not.toContain('ghAutoUpdateAll')
+})

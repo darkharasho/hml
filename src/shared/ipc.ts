@@ -1,5 +1,8 @@
 import type {
   GameDef,
+  GhInstallResult,
+  GhUpdate,
+  GhUpdateMode,
   InstalledMod,
   LaunchMode,
   LaunchWarning,
@@ -53,6 +56,11 @@ export interface HmlApi {
   ): Promise<TsInstallResult>
   tsCheckUpdates(game: string, profileId: string): Promise<ModUpdate[]>
   tsUpdate(game: string, profileId: string, modIds: string[]): Promise<TsInstallResult>
+  /** Installs the latest (or the linked) release of a GitHub repo; may ask which file to use. */
+  ghInstall(game: string, profileId: string, url: string, asset?: string): Promise<GhInstallResult>
+  ghCheckUpdates(game: string, profileId: string): Promise<GhUpdate[]>
+  ghUpdate(game: string, profileId: string, modIds: string[]): Promise<InstalledMod[]>
+  ghSetUpdateMode(game: string, profileId: string, modId: string, mode: GhUpdateMode): Promise<void>
   /** Opens an https Thunderstore or GitHub link in the system browser; anything else throws. */
   openExternal(url: string): Promise<void>
 }
@@ -83,6 +91,10 @@ const METHOD_TABLE = {
   tsInstall: true,
   tsCheckUpdates: true,
   tsUpdate: true,
+  ghInstall: true,
+  ghCheckUpdates: true,
+  ghUpdate: true,
+  ghSetUpdateMode: true,
   openExternal: true
 } satisfies Record<keyof HmlApi, true>
 

@@ -1,4 +1,4 @@
-import { app, shell, dialog, BrowserWindow } from 'electron'
+import { app, shell, dialog, BrowserWindow, safeStorage } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'path'
@@ -99,6 +99,14 @@ app.whenReady().then(() => {
             // A closing window must never abort the operation that emitted.
           }
         }
+      },
+      secrets: {
+        isAvailable: () =>
+          safeStorage.isEncryptionAvailable() &&
+          (process.platform !== 'linux' ||
+            safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+        encrypt: (plain) => safeStorage.encryptString(plain),
+        decrypt: (data) => safeStorage.decryptString(data)
       },
       home: homedir(),
       dialog: {

@@ -65,6 +65,11 @@ beforeEach(() => {
     snapshotPath: path.join(__dirname, '../fixtures/ecosystem-min.json'),
     platform: 'linux',
     home: tmp,
+    secrets: {
+      isAvailable: () => true,
+      encrypt: (s) => Buffer.from(s),
+      decrypt: (b) => b.toString()
+    },
     dialog,
     shell: { openPath: async () => '', openExternal: async () => undefined },
     execFile: async (file, args) => {
@@ -743,7 +748,9 @@ describe('services', () => {
   })
 
   test('HML_METHODS covers every HmlApi key', () => {
-    expect([...HML_METHODS].sort()).toEqual(Object.keys(createServices(deps)).sort())
+    // ghAutoUpdateAll is for the main-process scheduler, not an IPC method.
+    const keys = Object.keys(createServices(deps)).filter((k) => k !== 'ghAutoUpdateAll')
+    expect([...HML_METHODS].sort()).toEqual(keys.sort())
   })
 
   test('HML_METHODS includes the thunderstore methods and openExternal', () => {
@@ -757,6 +764,335 @@ describe('services', () => {
       'openExternal'
     ])
       expect(HML_METHODS).toContain(m)
+  })
+
+  describe('github', () => {
+    interface Rel {
+      tag: string
+      files: Record<string, Uint8Array>
+      wrongDigest?: boolean
+    }
+    const sha = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex')
+    const zipOf = (name: string, version: string, dll = `${name}.dll`): Uint8Array =>
+      zipSync({
+        'manifest.json': strToU8(JSON.stringify({ name, version_number: version })),
+        [dll]: strToU8('dll')
+      })
+    let repos: Map<string, { releases: Rel[]; down?: number }>
+    let calls: string[]
+    let ghFetch: typeof fetch
+    let api: ReturnType<typeof createServices>
+    let pid: string
+    let clock: number
+
+    const slug = (o: string, r: string): string => `${o}/${r}`.toLowerCase()
+    const publish = (
+      o: string,
+      r: string,
+      tag: string,
+      files: Record<string, Uint8Array>,
+      wrong = false
+    ): void => {
+      const entry = repos.get(slug(o, r)) ?? { releases: [] }
+      entry.releases.push({ tag, files, wrongDigest: wrong })
+      repos.set(slug(o, r), entry)
+    }
+    const json = (o: string, r: string, rel: Rel): unknown => ({
+      tag_name: rel.tag,
+      name: rel.tag,
+      prerelease: false,
+      draft: false,
+      published_at: '2026-01-01T00:00:00Z',
+      html_url: `https://github.com/${o}/${r}/releases/tag/${rel.tag}`,
+      assets: Object.entries(rel.files).map(([name, data], i) => ({
+        id: i + 1,
+        name,
+        size: data.length,
+        browser_download_url: `https://github.com/${o}/${r}/releases/download/${rel.tag}/${name}`,
+        url: `https://api.github.com/repos/${o}/${r}/releases/assets/${i + 1}`,
+        digest: `sha256:${rel.wrongDigest ? '0'.repeat(64) : sha(data)}`
+      }))
+    })
+    const res = (status: number, body?: unknown): unknown => ({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: new Headers(),
+      json: async () => body
+    })
+
+    beforeEach(() => {
+      repos = new Map()
+      calls = []
+      ghFetch = vi.fn(async (url: string) => {
+        const u = new URL(url)
+        if (u.host === 'api.github.com') {
+          calls.push(url)
+          const m = /^\/repos\/([^/]+)\/([^/]+)\/releases\/(latest|tags\/(.+))$/.exec(u.pathname)
+          const entry = m && repos.get(slug(m[1], m[2]))
+          if (!m || !entry) return res(404)
+          if (entry.down) return res(entry.down)
+          const rel = m[4]
+            ? entry.releases.find((x) => x.tag === decodeURIComponent(m[4]))
+            : entry.releases[entry.releases.length - 1]
+          return rel ? res(200, json(m[1], m[2], rel)) : res(404)
+        }
+        if (u.host === 'github.com') {
+          const m = /^\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\/(.+)$/.exec(u.pathname)
+          const rel = m && repos.get(slug(m[1], m[2]))?.releases.find((x) => x.tag === m[3])
+          const data = rel?.files[decodeURIComponent(m![4])]
+          if (!data) return res(404)
+          const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+          return { ok: true, status: 200, arrayBuffer: async () => buf }
+        }
+        return deps.fetch(url)
+      }) as never
+      clock = Date.now()
+      api = createServices({ ...deps, fetch: ghFetch, now: () => clock })
+    })
+    const setup = async (): Promise<void> => {
+      pid = (await api.createProfile('repo', 'p')).id
+    }
+    const modsOf = async (id = pid): Promise<import('../../src/shared/types').InstalledMod[]> =>
+      (await api.listProfiles('repo')).find((p) => p.id === id)!.mods
+    const pluginsDir = (id = pid): string =>
+      path.join(deps.paths.profileDir('repo', id), 'BepInEx', 'plugins')
+
+    test('repo url installs the latest release as an auto mod', async () => {
+      await setup()
+      const zip = zipOf('Thing', '1.2.3')
+      publish('owner', 'repo', 'v1.2.3', { 'thing.zip': zip })
+      const r = await api.ghInstall('repo', pid, 'https://github.com/owner/repo')
+      if (r.kind !== 'installed') throw new Error('expected install')
+      expect(r.mod.id).toBe('owner-repo')
+      expect(r.mod.version).toBe('1.2.3')
+      expect(r.mod.source).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+        tag: 'v1.2.3',
+        asset: 'thing.zip',
+        sha256: sha(zip)
+      })
+      expect(r.mod.github).toEqual({ updateMode: 'auto', assetPattern: null })
+      expect(r.mod.files.every((f) => f.startsWith('BepInEx/plugins/owner-repo/'))).toBe(true)
+      expect(existsSync(path.join(pluginsDir(), 'owner-repo', 'Thing.dll'))).toBe(true)
+      expect((await modsOf())[0].github?.updateMode).toBe('auto')
+      const progress = emitted.filter((e) => e.type === 'progress')
+      expect(progress.map((e) => e.type === 'progress' && e.message)).toEqual([
+        'Checking owner/repo',
+        'Downloading thing.zip',
+        'Installing Thing 1.2.3',
+        'Done'
+      ])
+      const last = progress[progress.length - 1]
+      expect(last.type === 'progress' && last.done === last.total && last.total === 3).toBe(true)
+    })
+
+    test('a tag url installs that release and pins it', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      publish('owner', 'repo', 'v2.0.0', { 'a.zip': zipOf('Thing', '2.0.0') })
+      const r = await api.ghInstall(
+        'repo',
+        pid,
+        'https://github.com/owner/repo/releases/tag/v1.0.0'
+      )
+      if (r.kind !== 'installed') throw new Error('expected install')
+      expect(r.mod.source).toMatchObject({ tag: 'v1.0.0' })
+      expect(r.mod.github?.updateMode).toBe('pinned')
+    })
+
+    test('a lone dll release installs the dll into the plugins folder', async () => {
+      await setup()
+      publish('owner', 'repo', '1.0', { 'Cool.dll': strToU8('dll') })
+      const r = await api.ghInstall('repo', pid, 'owner/repo')
+      if (r.kind !== 'installed') throw new Error('expected install')
+      expect(r.mod.version).toBe('1.0')
+      expect(existsSync(path.join(pluginsDir(), 'owner-repo', 'Cool.dll'))).toBe(true)
+    })
+
+    test('several manifest-less zips ask, install nothing, then a pick is remembered', async () => {
+      await setup()
+      const bare = (n: string): Uint8Array => zipSync({ [n]: strToU8('x') })
+      publish('owner', 'repo', 'v1.0.0', {
+        'mod-win-1.0.0.zip': bare('win.dll'),
+        'mod-linux-1.0.0.zip': bare('linux.dll')
+      })
+      const first = await api.ghInstall('repo', pid, 'owner/repo')
+      expect(first).toMatchObject({
+        kind: 'choose-asset',
+        owner: 'owner',
+        repo: 'repo',
+        tag: 'v1.0.0'
+      })
+      if (first.kind !== 'choose-asset') throw new Error('expected ask')
+      expect(first.assets.map((a) => a.name).sort()).toEqual([
+        'mod-linux-1.0.0.zip',
+        'mod-win-1.0.0.zip'
+      ])
+      expect(first.assets.every((a) => a.size > 0)).toBe(true)
+      expect(await modsOf()).toEqual([])
+      const r = await api.ghInstall('repo', pid, 'owner/repo', 'mod-linux-1.0.0.zip')
+      if (r.kind !== 'installed') throw new Error('expected install')
+      expect(r.mod.github?.assetPattern).toBe('mod-linux-{version}.zip')
+      expect(existsSync(path.join(pluginsDir(), 'owner-repo', 'linux.dll'))).toBe(true)
+      await expect(api.ghInstall('repo', pid, 'owner/repo', 'nope.zip')).rejects.toThrow(
+        'v1.0.0 has no file named nope.zip.'
+      )
+
+      // per-platform update picks the matching zip of the next release
+      publish('owner', 'repo', 'v1.1.0', {
+        'mod-win-1.1.0.zip': bare('win.dll'),
+        'mod-linux-1.1.0.zip': bare('linux.dll')
+      })
+      const [u] = await api.ghUpdate('repo', pid, ['owner-repo'])
+      expect(u.source).toMatchObject({ tag: 'v1.1.0', asset: 'mod-linux-1.1.0.zip' })
+      expect(u.github?.assetPattern).toBe('mod-linux-{version}.zip')
+    })
+
+    test('reinstall under another case keeps one mod and its update mode', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      await api.ghInstall('repo', pid, 'https://github.com/owner/repo')
+      await api.ghSetUpdateMode('repo', pid, 'owner-repo', 'notify')
+      await api.ghInstall('repo', pid, 'https://github.com/Owner/Repo')
+      const list = await modsOf()
+      expect(list).toHaveLength(1)
+      expect(list[0].github?.updateMode).toBe('notify')
+      expect(existsSync(path.join(pluginsDir(), 'Owner-Repo', 'Thing.dll'))).toBe(true)
+      expect(existsSync(path.join(pluginsDir(), 'owner-repo'))).toBe(false)
+    })
+
+    test('a local mod with the manifest name is replaced', async () => {
+      await setup()
+      picked = []
+      const file = path.join(tmp, 'Thing.zip')
+      writeFileSync(file, zipOf('Thing', '0.1.0'))
+      await api.installFromPaths('repo', pid, [file])
+      expect((await modsOf()).map((m) => m.id)).toEqual(['Thing'])
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      const r = await api.ghInstall('repo', pid, 'owner/repo')
+      if (r.kind !== 'installed') throw new Error('expected install')
+      expect(r.replaced).toEqual(['Thing'])
+      expect((await modsOf()).map((m) => m.id)).toEqual(['owner-repo'])
+    })
+
+    test('ghCheckUpdates lists newer tags, skips pinned and memoizes for 10 minutes', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      publish('pin', 'ned', 'v1.0.0', { 'a.zip': zipOf('Pinned', '1.0.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      await api.ghInstall('repo', pid, 'https://github.com/pin/ned/releases/tag/v1.0.0')
+      publish('owner', 'repo', 'v1.1.0', { 'a.zip': zipOf('Thing', '1.1.0') })
+      publish('pin', 'ned', 'v2.0.0', { 'a.zip': zipOf('Pinned', '2.0.0') })
+      clock += 11 * 60_000 // past the install-time lookup's memo window
+      calls.length = 0
+      expect(await api.ghCheckUpdates('repo', pid)).toEqual([
+        {
+          modId: 'owner-repo',
+          owner: 'owner',
+          repo: 'repo',
+          current: 'v1.0.0',
+          latest: 'v1.1.0',
+          mode: 'auto'
+        }
+      ])
+      const n = calls.length
+      expect(n).toBe(1)
+      clock += 9 * 60_000
+      await api.ghCheckUpdates('repo', pid)
+      expect(calls.length).toBe(n)
+    })
+
+    test('ghUpdate installs the new tag keeping config; a checksum mismatch keeps the old version', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      await api.ghSetUpdateMode('repo', pid, 'owner-repo', 'notify')
+      publish('owner', 'repo', 'v1.1.0', { 'a.zip': zipOf('Thing', '1.1.0') })
+      const [u] = await api.ghUpdate('repo', pid, ['owner-repo'])
+      expect(u.version).toBe('1.1.0')
+      expect(u.source).toMatchObject({ tag: 'v1.1.0' })
+      expect(u.github).toEqual({ updateMode: 'notify', assetPattern: null })
+      expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.1.0' })
+
+      publish('owner', 'repo', 'v1.2.0', { 'a.zip': zipOf('Thing', '1.2.0') }, true)
+      await expect(api.ghUpdate('repo', pid, ['owner-repo'])).rejects.toThrow(
+        'owner/repo: Download of a.zip failed: checksum mismatch'
+      )
+      const [kept] = await modsOf()
+      expect(kept.source).toMatchObject({ tag: 'v1.1.0' })
+      expect(existsSync(path.join(pluginsDir(), 'owner-repo', 'Thing.dll'))).toBe(true)
+    })
+
+    test('bad url, unsupported game and non-github mod reject with exact messages', async () => {
+      await setup()
+      await expect(api.ghInstall('repo', pid, 'https://example.com/a/b')).rejects.toThrow(
+        "That isn't a GitHub repository link. Paste one like https://github.com/owner/repo."
+      )
+      await expect(api.ghInstall('bonelab', pid, 'owner/repo')).rejects.toThrow(
+        "BONELAB uses a mod loader HML doesn't support yet."
+      )
+      const file = path.join(tmp, 'Loc.zip')
+      writeFileSync(file, zipOf('Loc', '1.0.0'))
+      await api.installFromPaths('repo', pid, [file])
+      await expect(api.ghSetUpdateMode('repo', pid, 'Loc', 'auto')).rejects.toThrow(
+        "Loc isn't a GitHub mod."
+      )
+      await expect(api.ghSetUpdateMode('repo', pid, 'Loc', 'bogus' as never)).rejects.toThrow(
+        'Unknown update mode: bogus'
+      )
+    })
+
+    test('ghAutoUpdateAll updates auto mods, logs failures, and shares one run', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      try {
+        await setup()
+        const p2 = (await api.createProfile('repo', 'q')).id
+        for (const [o, r, t] of [
+          ['a', 'ra', 'v1.0.0'],
+          ['b', 'rb', 'v1.0.0'],
+          ['c', 'rc', 'v1.0.0']
+        ]) {
+          publish(o, r, t, { 'x.zip': zipOf(`${r}mod`, '1.0.0') })
+        }
+        await api.ghInstall('repo', pid, 'a/ra')
+        await api.ghInstall('repo', pid, 'c/rc')
+        await api.ghSetUpdateMode('repo', pid, 'c-rc', 'notify')
+        await api.ghInstall('repo', p2, 'b/rb')
+        for (const [o, r] of [
+          ['a', 'ra'],
+          ['b', 'rb'],
+          ['c', 'rc']
+        ]) {
+          publish(o, r, 'v2.0.0', { 'x.zip': zipOf(`${r}mod`, '2.0.0') })
+        }
+        repos.get('a/ra')!.down = 500
+        emitted.length = 0
+        calls.length = 0
+        await Promise.all([api.ghAutoUpdateAll(), api.ghAutoUpdateAll()])
+        expect(calls.filter((c) => c.includes('/b/rb/')).length).toBe(1)
+        expect((await modsOf(pid)).find((m) => m.id === 'a-ra')!.source).toMatchObject({
+          tag: 'v1.0.0'
+        })
+        expect((await modsOf(pid)).find((m) => m.id === 'c-rc')!.source).toMatchObject({
+          tag: 'v1.0.0'
+        })
+        expect((await modsOf(p2))[0].source).toMatchObject({ tag: 'v2.0.0' })
+        const events = emitted.filter((e) => e.type === 'github-updated')
+        expect(events).toEqual([
+          {
+            type: 'github-updated',
+            game: 'repo',
+            profileId: p2,
+            mods: [{ name: 'rbmod', tag: 'v2.0.0' }]
+          }
+        ])
+        expect(warn).toHaveBeenCalledTimes(1)
+      } finally {
+        warn.mockRestore()
+      }
+    })
   })
 
   describe('openExternal normalization', () => {

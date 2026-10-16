@@ -52,6 +52,8 @@ import {
 } from './thunderstore/resolve'
 import { downloadPackage } from './thunderstore/download'
 import { parseAllowedExternalUrl } from './security'
+import type { SecretPort } from './github/token'
+import { createGithubServices, unsupportedLoaderMessage } from './github/service'
 import { findInstalledMod } from '../shared/modIdentity'
 
 export interface DialogPort {
@@ -81,6 +83,8 @@ export interface ServiceDeps {
   execFile: ExecFilePort
   /** Progress events for long operations (sent to the renderer as hml:event). */
   emit(e: HmlEvent): void
+  /** Encrypts the GitHub token at rest (Electron safeStorage). */
+  secrets: SecretPort
   /** Clock for index freshness; defaults to Date.now. */
   now?: () => number
 }
@@ -118,7 +122,7 @@ async function assertZipFile(file: string): Promise<void> {
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export function createServices(deps: ServiceDeps): HmlApi {
+export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll(): Promise<void> } {
   const { paths } = deps
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
   const now = deps.now ?? Date.now
@@ -288,7 +292,7 @@ export function createServices(deps: ServiceDeps): HmlApi {
   function requireInstallable(def: GameDef): void {
     requireListing(def)
     if (!def.supported) {
-      throw new Error(`${def.displayName} uses a mod loader HML doesn't support yet.`)
+      throw new Error(unsupportedLoaderMessage(def))
     }
   }
 
@@ -452,8 +456,11 @@ export function createServices(deps: ServiceDeps): HmlApi {
     }
   }
 
+  const ghServices = createGithubServices({ deps, getCatalog, requireGame, serialize })
+
   return {
     ...tsServices,
+    ...ghServices,
     async searchGames(query: string): Promise<GameSummary[]> {
       const catalog = await getCatalog()
       const ranked = searchGames(catalog.games, query)
