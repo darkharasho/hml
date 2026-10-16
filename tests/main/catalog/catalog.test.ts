@@ -70,6 +70,30 @@ describe('loadCatalog', () => {
     expect(got.games.map((g) => g.label).sort()).toEqual(['bonelab', 'repo'])
   })
 
+  it('returns fresh catalog when cache write fails', async () => {
+    const paths = makePaths(tmp)
+    await fs.mkdir(path.dirname(paths.schemaCache), { recursive: true })
+    await fs.mkdir(paths.schemaCache) // a directory blocks the rename
+    const got = await loadCatalog(paths, await okFetch(), '/nonexistent', 1000, () => 5_000)
+    expect(got.games.map((g) => g.label).sort()).toEqual(['bonelab', 'repo'])
+  })
+
+  it('ignores wrong-shape and future-dated caches', async () => {
+    const paths = makePaths(tmp)
+    await writeJsonAtomic(paths.schemaCache, {
+      games: 'nope',
+      fetchedAt: new Date(1000).toISOString()
+    })
+    const fetchFn = await okFetch()
+    await loadCatalog(paths, fetchFn, fixture, 86_400_000, () => 2000)
+    expect(fetchFn).toHaveBeenCalledOnce()
+    const cat = { ...parseEcosystem(await raw()), fetchedAt: new Date(9_000_000).toISOString() }
+    await writeJsonAtomic(paths.schemaCache, cat)
+    const fetch2 = await okFetch()
+    await loadCatalog(paths, fetch2, fixture, 86_400_000, () => 2000)
+    expect(fetch2).toHaveBeenCalledOnce()
+  })
+
   it('falls back when cache file is corrupt', async () => {
     const paths = makePaths(tmp)
     await fs.mkdir(path.dirname(paths.schemaCache), { recursive: true })

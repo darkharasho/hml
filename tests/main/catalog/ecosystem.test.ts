@@ -40,6 +40,14 @@ describe('parseEcosystem', () => {
     )
   })
 
+  it('skips a malformed game and parses the others', () => {
+    const j = JSON.parse(JSON.stringify(fixture))
+    j.games.broken = { meta: {}, r2modman: [{ exeNames: 5 }] }
+    const c = parseEcosystem(j)
+    expect(c.games.map((g) => g.label).sort()).toEqual(['bonelab', 'repo'])
+    expect(() => parseEcosystem({ games: 3 })).toThrow()
+  })
+
   it('skips games without r2modman and defaults missing fields', () => {
     const j = {
       games: {

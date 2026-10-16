@@ -40,7 +40,7 @@ const gameSchema = z
 
 const ecosystemSchema = z
   .object({
-    games: z.record(z.string(), gameSchema),
+    games: z.record(z.string(), z.unknown()),
     modloaderPackages: z
       .array(
         z
@@ -59,7 +59,10 @@ function resolveIcon(iconUrl: string | null | undefined): string | null {
 export function parseEcosystem(json: unknown): Catalog {
   const eco = ecosystemSchema.parse(json)
   const games: GameDef[] = []
-  for (const [key, game] of Object.entries(eco.games)) {
+  for (const [key, rawGame] of Object.entries(eco.games)) {
+    const parsed = gameSchema.safeParse(rawGame)
+    if (!parsed.success) continue
+    const game = parsed.data
     const r2 = game.r2modman?.[0]
     if (!r2) continue
     const steam = game.distributions?.find((d) => d.platform === 'steam')
