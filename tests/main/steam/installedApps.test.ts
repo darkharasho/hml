@@ -77,6 +77,8 @@ describe('listInstalledApps', () => {
 
   it('rejects unsafe installdir values', async () => {
     await manifest(root, '60', 'Evil', '../evil')
+    // The traversal target exists, so only the installdir safety check can reject it.
+    await fs.mkdir(path.join(root, 'steamapps', 'evil'), { recursive: true })
     expect(await listInstalledApps(root)).toEqual([])
   })
 
