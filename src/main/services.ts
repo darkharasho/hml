@@ -215,16 +215,25 @@ export function createServices(
     steamRootPromise = null
   }
   const getSteamRoot = (): Promise<string | null> => {
-    steamRootPromise ??= (async () => {
+    if (steamRootPromise) return steamRootPromise
+    const p: Promise<string | null> = (async () => {
       const { steamRootOverride } = await loadSettings(paths)
       if (steamRootOverride) return steamRootOverride
       const winSteamPath = deps.platform === 'win32' ? await readWinSteamPath(deps.execFile) : null
       return findSteamRoot(steamRootCandidates(deps.platform, deps.home, winSteamPath ?? undefined))
-    })().catch((e) => {
-      steamRootPromise = null
-      throw e
-    })
-    return steamRootPromise
+    })().then(
+      (root) => {
+        // A Steam that isn't there yet (installed or mounted later) is looked for again.
+        if (root === null && steamRootPromise === p) steamRootPromise = null
+        return root
+      },
+      (e: unknown) => {
+        if (steamRootPromise === p) steamRootPromise = null
+        throw e
+      }
+    )
+    steamRootPromise = p
+    return p
   }
 
   // Serializes mutating operations on one profile.
@@ -936,6 +945,20 @@ export function createServices(
     getSettings: () => loadSettings(paths),
 
     async saveSettings(s: Settings): Promise<void> {
+      const override = typeof s.steamRootOverride === 'string' ? s.steamRootOverride : null
+      if (override !== null && override !== (await loadSettings(paths)).steamRootOverride) {
+        const looksLikeSteam = await fs
+          .access(path.join(override, 'steamapps', 'libraryfolders.vdf'))
+          .then(
+            () => true,
+            () => false
+          )
+        if (!looksLikeSteam) {
+          throw new Error(
+            "That folder doesn't look like Steam: it has no steamapps/libraryfolders.vdf."
+          )
+        }
+      }
       await saveSettings(paths, s)
       invalidateSteamRoot()
     },

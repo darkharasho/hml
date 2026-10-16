@@ -636,6 +636,42 @@ describe('services', () => {
     expect((await api.searchGames('repo'))[0].installDir).toBe(game2)
   })
 
+  test('saveSettings refuses a new Steam folder without steamapps/libraryfolders.vdf', async () => {
+    const api = createServices(deps)
+    const before = readFileSync(deps.paths.settings, 'utf8')
+    const empty = path.join(tmp, 'not-steam')
+    mkdirSync(empty, { recursive: true })
+    await expect(
+      api.saveSettings({ ...(await api.getSettings()), steamRootOverride: empty })
+    ).rejects.toThrow(
+      "That folder doesn't look like Steam: it has no steamapps/libraryfolders.vdf."
+    )
+    expect(readFileSync(deps.paths.settings, 'utf8')).toBe(before)
+    // Clearing the override, or saving the unchanged one, needs no check.
+    await api.saveSettings({ ...(await api.getSettings()), steamRootOverride: null })
+    await api.saveSettings({ ...(await api.getSettings()), steamRootOverride: null })
+  })
+
+  test('a Steam root that appears after the first lookup is found on the next', async () => {
+    writeFileSync(deps.paths.settings, JSON.stringify({ steamRootOverride: null }))
+    const late = path.join(tmp, 'late-home')
+    const api = createServices({ ...deps, home: late })
+    expect((await api.searchGames('repo'))[0].installDir).toBeNull()
+    const lateRoot = path.join(late, '.steam', 'steam')
+    mkdirSync(path.join(lateRoot, 'steamapps', 'common', 'REPO'), { recursive: true })
+    writeFileSync(
+      path.join(lateRoot, 'steamapps', 'libraryfolders.vdf'),
+      '"libraryfolders"\n{\n}\n'
+    )
+    writeFileSync(
+      path.join(lateRoot, 'steamapps', 'appmanifest_3241660.acf'),
+      '"AppState"\n{\n"installdir" "REPO"\n}\n'
+    )
+    expect((await api.searchGames('repo'))[0].installDir).toBe(
+      path.join(lateRoot, 'steamapps', 'common', 'REPO')
+    )
+  })
+
   test('saveSettings drops unknown keys and non-string values', async () => {
     const api = createServices(deps)
     await api.saveSettings({
