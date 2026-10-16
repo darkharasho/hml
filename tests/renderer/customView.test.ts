@@ -5,7 +5,8 @@ import {
   isSteamCandidate,
   loaderChoicesFor,
   loaderOptionLabel,
-  runnerLabel
+  runnerLabel,
+  sourcesFor
 } from '../../src/renderer/src/customView'
 
 const mono: GameDetection = {
@@ -69,5 +70,39 @@ describe('platform and runner helpers', () => {
     expect(runnerIndexOf(list, { kind: 'wine' })).toBe(2)
     expect(runnerIndexOf(list, { kind: 'proton', name: 'Z', path: '/z' })).toBe(0)
     expect(runnerIndexOf(list, null)).toBe(0)
+  })
+
+  describe('sourcesFor', () => {
+    const custom = {
+      label: 'custom-x',
+      packageIndex: null,
+      custom: { source: 'folder', added: true }
+    }
+    const catalog = {
+      label: 'repo',
+      packageIndex: 'https://thunderstore.io/c/repo/api/v1/package/'
+    }
+    const asGame = (o: object): Parameters<typeof sourcesFor>[0] =>
+      o as unknown as Parameters<typeof sourcesFor>[0]
+
+    test('a custom game with no Nexus domain makes GitHub the primary source', () => {
+      expect(sourcesFor(asGame(custom), null)).toEqual({ online: [], githubPrimary: true })
+    })
+    test('a catalog game offers Thunderstore and, with a domain, Nexus', () => {
+      expect(sourcesFor(asGame(catalog), null)).toEqual({
+        online: ['thunderstore'],
+        githubPrimary: false
+      })
+      expect(sourcesFor(asGame(catalog), 'repo')).toEqual({
+        online: ['thunderstore', 'nexus'],
+        githubPrimary: false
+      })
+    })
+    test('a custom game with a Nexus domain offers Nexus only', () => {
+      expect(sourcesFor(asGame(custom), 'somegame')).toEqual({
+        online: ['nexus'],
+        githubPrimary: false
+      })
+    })
   })
 })

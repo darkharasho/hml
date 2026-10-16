@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ProfileManifest } from '../../../shared/types'
 import { api, errorMessage } from '../api'
+import { isLinux, isNexusOnly } from '../customView'
 import { useStore } from '../store'
+import { EditGameDialog } from './AddGameDialog'
 import { GameCover } from './GameCover'
 import { ImportDialog } from './ImportDialog'
 import { ShareDialog } from './ShareDialog'
-import { Button, ConfirmDialog, Icon, Menu, Modal } from './ui'
+import { Button, ConfirmDialog, Icon, Menu, Modal, type MenuItem } from './ui'
 
 export function ProfileSidebar(): React.JSX.Element | null {
   const game = useStore((s) => s.currentGame)
@@ -17,6 +19,8 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const deleteProfile = useStore((s) => s.deleteProfile)
   const openProfileFolder = useStore((s) => s.openProfileFolder)
   const leaveGame = useStore((s) => s.leaveGame)
+  const removeCustomGame = useStore((s) => s.removeCustomGame)
+  const toast = useStore((s) => s.toast)
   const openSettings = useStore((s) => s.setSettingsOpen)
   const [creating, setCreating] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -24,8 +28,49 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const [domainOpen, setDomainOpen] = useState(false)
   const [sharing, setSharing] = useState<ProfileManifest | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [removingGame, setRemovingGame] = useState(false)
+  const [removingManual, setRemovingManual] = useState(false)
+  // A hand-installed BepInEx in the game folder; a failed lookup counts as none.
+  const [manualFor, setManualFor] = useState<string | null>(null)
+  const gameLabel = game?.label
+  const hasManual = !!gameLabel && manualFor === gameLabel
+  const isCustom = !!game?.custom
+  const isBepinex = game?.loader === 'bepinex'
+  useEffect(() => {
+    if (!gameLabel || !isCustom || !isBepinex) return
+    let live = true
+    api.getManualLoader(gameLabel).then(
+      (found) => live && setManualFor(found ? gameLabel : null),
+      () => undefined
+    )
+    return () => {
+      live = false
+    }
+  }, [gameLabel, isCustom, isBepinex])
 
   if (!game) return null
+
+  // Nexus-only games always use their own domain; catalog and custom games can set one.
+  const menuItems: MenuItem[] = []
+  if (!isNexusOnly(game))
+    menuItems.push({ label: 'Nexus domain…', onSelect: () => setDomainOpen(true) })
+  if (game.custom) {
+    menuItems.push({ label: 'Rename…', onSelect: () => setEditOpen(true) })
+    menuItems.push({ label: 'Change loader…', onSelect: () => setEditOpen(true) })
+    if (isLinux() && game.custom.source === 'folder')
+      menuItems.push({ label: 'Change runner…', onSelect: () => setEditOpen(true) })
+    if (hasManual)
+      menuItems.push({
+        label: 'Remove manual BepInEx install…',
+        onSelect: () => setRemovingManual(true)
+      })
+    menuItems.push({
+      label: 'Remove from HML…',
+      danger: true,
+      onSelect: () => setRemovingGame(true)
+    })
+  }
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-panel">
@@ -58,13 +103,12 @@ export function ProfileSidebar(): React.JSX.Element | null {
             </div>
           </div>
         </div>
-        {/* Nexus-only games always use their own domain, so only catalog games get this menu. */}
-        {game.loader !== 'deploy' && (
+        {menuItems.length > 0 && (
           <Menu
             label={`Actions for ${game.displayName}`}
             position="absolute"
             className="top-2 right-2"
-            items={[{ label: 'Nexus domain…', onSelect: () => setDomainOpen(true) }]}
+            items={menuItems}
           />
         )}
       </div>
@@ -181,6 +225,33 @@ export function ProfileSidebar(): React.JSX.Element | null {
       )}
       {sharing && (
         <ShareDialog game={game.label} profile={sharing} onClose={() => setSharing(null)} />
+      )}
+      {editOpen && <EditGameDialog game={game} onClose={() => setEditOpen(false)} />}
+      {removingGame && (
+        <ConfirmDialog
+          title={`Remove ${game.displayName}?`}
+          body={`Remove ${game.displayName} from HML? Its profiles stay on disk and come back if you add the game again.`}
+          confirmLabel="Remove from HML"
+          onConfirm={() => void removeCustomGame()}
+          onClose={() => setRemovingGame(false)}
+        />
+      )}
+      {removingManual && (
+        <ConfirmDialog
+          title="Remove manual BepInEx install?"
+          body={`${game.displayName} has BepInEx installed in its game folder. HML manages mods per profile and only loads them when you launch through HML. Remove the manual install?`}
+          confirmLabel="Remove"
+          onConfirm={() =>
+            void api.removeManualLoader(game.label).then(
+              (backup) => {
+                setManualFor(null)
+                toast('success', `Moved the manual BepInEx install to ${backup}`)
+              },
+              (e) => toast('error', errorMessage(e))
+            )
+          }
+          onClose={() => setRemovingManual(false)}
+        />
       )}
       {importOpen && <ImportDialog onClose={() => setImportOpen(false)} />}
       {domainOpen && <NexusDomainDialog game={game.label} onClose={() => setDomainOpen(false)} />}

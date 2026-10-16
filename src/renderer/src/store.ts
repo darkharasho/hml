@@ -7,6 +7,7 @@ import type {
   GhUpdateMode,
   HmlEvent,
   AddCustomGameInput,
+  CustomGameUpdate,
   InstalledMod,
   LaunchMode,
   LaunchWarning,
@@ -74,12 +75,19 @@ interface State {
   settingsOpen: boolean
   /** A hand-installed BepInEx found in the selected game's folder, awaiting Remove or Keep. */
   manualLoader: { game: string; entries: string[] } | null
+  /** The current game's Nexus domain; null when it has none or the lookup failed. */
+  currentDomain: string | null
 
   init(): Promise<void>
   selectGame(game: GameSummary): Promise<void>
   leaveGame(): void
   addCustomGame(input: AddCustomGameInput): Promise<void>
   resolveManualLoader(action: 'remove' | 'keep'): Promise<void>
+  /** Installs (or switches to) the game's chosen BepInEx in the current profile. */
+  installLoader(): Promise<void>
+  updateCustomGame(patch: CustomGameUpdate): Promise<void>
+  /** Forgets the current custom game and returns to the picker; its profiles stay on disk. */
+  removeCustomGame(): Promise<void>
   selectProfile(id: string): Promise<void>
   createProfile(name: string): Promise<void>
   renameProfile(id: string, name: string): Promise<void>
@@ -311,6 +319,17 @@ export const useStore = create<State>()((set, get) => {
       set({ manualLoader: { game: game.label, entries: found.entries } })
   }
 
+  /** Loads the game's Nexus domain; a failed lookup counts as no domain. */
+  async function loadDomain(game: GameSummary): Promise<void> {
+    let domain: string | null = null
+    try {
+      domain = await api.nxGetDomain(game.label)
+    } catch {
+      // No domain: the Online tab simply offers fewer sources.
+    }
+    if (get().currentGame?.label === game.label) set({ currentDomain: domain })
+  }
+
   /** Re-reads what is deployed for the current game; only deploy games have deployments. */
   async function refreshDeployment(): Promise<void> {
     const game = get().currentGame
@@ -385,6 +404,7 @@ export const useStore = create<State>()((set, get) => {
     toasts: [],
     settingsOpen: false,
     manualLoader: null,
+    currentDomain: null,
 
     init() {
       initPromise ??= runInit()
@@ -400,8 +420,10 @@ export const useStore = create<State>()((set, get) => {
         ghUpdates: [],
         nxUpdates: [],
         deployment: null,
-        manualLoader: null
+        manualLoader: null,
+        currentDomain: null
       })
+      void loadDomain(game)
       try {
         const profiles = await loadProfilesEnsuringOne(game.label)
         if (get().currentGame?.label !== game.label) return
@@ -448,8 +470,41 @@ export const useStore = create<State>()((set, get) => {
         ghUpdates: [],
         nxUpdates: [],
         deployment: null,
-        manualLoader: null
+        manualLoader: null,
+        currentDomain: null
       })
+    },
+
+    async installLoader() {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) return
+      const mod = await busy(() => api.installLoader(currentGame.label, currentProfile))
+      if (mod === failed) return
+      if (get().currentGame?.label === currentGame.label) {
+        await reloadProfiles().catch(fail)
+        await refreshWarnings()
+      }
+      get().toast('success', `Installed ${mod.name} ${mod.version}`)
+    },
+
+    async updateCustomGame(patch) {
+      const game = get().currentGame
+      if (!game) return
+      // Throws so the edit dialog can show the reason inline.
+      const updated = await tracked(() => api.updateCustomGame(game.label, patch))
+      if (get().currentGame?.label === game.label) {
+        set({ currentGame: updated })
+        await refreshWarnings()
+      }
+    },
+
+    async removeCustomGame() {
+      const game = get().currentGame
+      if (!game) return
+      const ok = await busy(() => api.removeCustomGame(game.label))
+      if (ok === failed) return
+      get().leaveGame()
+      get().toast('success', `Removed ${game.displayName} from HML. Its profiles are kept.`)
     },
 
     async selectProfile(id) {
@@ -767,6 +822,7 @@ export const useStore = create<State>()((set, get) => {
       if (!game) return
       await tracked(() => api.nxSetDomain(game.label, domain))
       set((s) => ({ nxDomainVersion: s.nxDomainVersion + 1 }))
+      await loadDomain(game)
       get().toast('success', domain ? `Saved Nexus domain ${domain}` : 'Cleared Nexus domain')
       await get().checkUpdates()
     },
@@ -880,8 +936,8 @@ export const useStore = create<State>()((set, get) => {
 
     async launch(mode) {
       const { currentGame, currentProfile } = get()
-      // HML doesn't start deploy games; the launch bar deploys instead.
-      if (!currentGame || currentGame.loader === 'deploy') return
+      // HML does not start catalog deploy games (the launch bar deploys instead); custom ones can Play.
+      if (!currentGame || (currentGame.loader === 'deploy' && !currentGame.custom)) return
       const ok = await busy(() =>
         api.launch(currentGame.label, mode === 'modded' ? currentProfile : null, mode)
       )

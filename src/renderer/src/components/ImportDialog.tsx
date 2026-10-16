@@ -18,6 +18,8 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   const [opening, setOpening] = useState<'code' | 'file' | null>(null)
   const [preview, setPreview] = useState<SharePreview | null>(null)
   const [name, setName] = useState('')
+  // The folder picked for a shared custom game HML doesn't know yet.
+  const [folder, setFolder] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [progress, setProgress] = useState<Progress | null>(null)
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -64,6 +66,7 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
       if (!mounted.current || !p) return
       setPreview(p)
       setName(p.profileName)
+      setFolder(null)
     } catch (e) {
       if (mounted.current) setError(errorMessage(e))
     } finally {
@@ -73,12 +76,17 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
 
   async function runImport(): Promise<void> {
     if (!preview || busy) return
+    if (preview.needsFolder && !folder) return
     setError(null)
     setProgress(null)
     importingRef.current = true
     setImporting(true)
     try {
-      const r = await api.importShare(preview.token, name.trim())
+      const r = await api.importShare(
+        preview.token,
+        name.trim(),
+        preview.needsFolder ? (folder ?? undefined) : undefined
+      )
       if (mounted.current) setResult(r)
     } catch (e) {
       if (mounted.current) setError(errorMessage(e))
@@ -89,7 +97,18 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   }
 
   const trimmed = code.trim()
-  const mismatch = preview ? gameMismatchNote(preview, currentGame) : null
+  const mismatch = preview && !preview.needsFolder ? gameMismatchNote(preview, currentGame) : null
+
+  async function chooseFolder(): Promise<void> {
+    if (busy) return
+    setError(null)
+    try {
+      const picked = await api.pickCustomGameFolder()
+      if (mounted.current && picked) setFolder(picked.folder)
+    } catch (e) {
+      if (mounted.current) setError(errorMessage(e))
+    }
+  }
 
   const footer = result ? (
     <Button variant="primary" autoFocus onClick={done}>
@@ -109,7 +128,11 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
         >
           Back
         </Button>
-        <Button variant="primary" disabled={busy} onClick={() => void runImport()}>
+        <Button
+          variant="primary"
+          disabled={busy || (!!preview.needsFolder && !folder)}
+          onClick={() => void runImport()}
+        >
           <Icon name="download" />
           {importing ? 'Importing…' : 'Import'}
         </Button>
@@ -138,6 +161,25 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
               <Icon name="warn" className="mt-0.5 size-4 shrink-0" />
               <span>{mismatch}</span>
             </p>
+          )}
+          {preview.needsFolder && (
+            <div className="mt-3 flex flex-col gap-2">
+              <p className="text-fg">
+                This profile is for {preview.gameName}, which HML doesn&apos;t know yet. Choose its
+                folder to add it.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button disabled={busy} onClick={() => void chooseFolder()}>
+                  <Icon name="folder" />
+                  Choose folder…
+                </Button>
+                {folder && (
+                  <span className="min-w-0 truncate text-xs text-muted" title={folder}>
+                    {folder}
+                  </span>
+                )}
+              </div>
+            </div>
           )}
           <label className="mt-4 block">
             <span className="text-sm font-medium text-fg">Profile name</span>

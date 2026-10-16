@@ -1,4 +1,5 @@
-import type { GameDef, GameDetection, LoaderChoice, Runner } from '../../shared/types'
+import type { GameSummary } from '../../shared/ipc'
+import type { GameDef, GameDetection, InstalledMod, LoaderChoice, Runner } from '../../shared/types'
 
 /** Nexus-only games come from a Nexus Mods search; their label says so (a loader of `deploy` can also be a folder game's). */
 export const isNexusOnly = (g: GameDef): boolean => g.label.startsWith('nexus-')
@@ -40,4 +41,43 @@ export function runnerIndexOf(runners: Runner[], current: Runner | null | undefi
       : current.kind === 'proton' && r.path === current.path && r.name === current.name
   )
   return i < 0 ? 0 : i
+}
+
+/** Which online catalogues a game can browse. With none, GitHub is the primary way to add mods. */
+export function sourcesFor(
+  game: Pick<GameSummary, 'packageIndex'>,
+  nexusDomain: string | null
+): { online: ('thunderstore' | 'nexus')[]; githubPrimary: boolean } {
+  const online: ('thunderstore' | 'nexus')[] = []
+  if (game.packageIndex) online.push('thunderstore')
+  if (nexusDomain) online.push('nexus')
+  return { online, githubPrimary: online.length === 0 }
+}
+
+const SHORT_LOADER_LABELS: Record<Exclude<LoaderChoice, 'none'>, string> = {
+  bepinex5: 'BepInEx 5 (Mono)',
+  'bepinex6-mono': 'BepInEx 6 (Mono)',
+  'bepinex6-il2cpp': 'BepInEx 6 (IL2CPP)'
+}
+const ASSET_CHOICES: [string, Exclude<LoaderChoice, 'none'>][] = [
+  ['BepInEx_win_x64_', 'bepinex5'],
+  ['BepInEx-Unity.Mono-', 'bepinex6-mono'],
+  ['BepInEx-Unity.IL2CPP-', 'bepinex6-il2cpp']
+]
+
+/** Short loader name for buttons and warnings: "BepInEx 5 (Mono)"; "No loader" for none. */
+export const shortLoaderLabel = (choice: LoaderChoice): string =>
+  choice === 'none' ? 'No loader' : SHORT_LOADER_LABELS[choice]
+
+/** Names the BepInEx build installed in a profile from its GitHub mod; a generic name if unknown. */
+export function installedLoaderLabel(mods: InstalledMod[]): string {
+  const mod = mods.find(
+    (m) =>
+      m.source.kind === 'github' &&
+      m.source.owner.toLowerCase() === 'bepinex' &&
+      m.source.repo.toLowerCase() === 'bepinex'
+  )
+  const pattern = mod?.github?.assetPattern ?? ''
+  const hit = ASSET_CHOICES.find(([prefix]) => pattern.startsWith(prefix))
+  return hit ? SHORT_LOADER_LABELS[hit[1]] : 'a different BepInEx'
 }

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { LaunchWarning } from '../../../shared/types'
 import { api, errorMessage } from '../api'
+import { installedLoaderLabel, shortLoaderLabel } from '../customView'
 import { deploymentLabel } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
+import { EditGameDialog } from './AddGameDialog'
 import { Button, Icon, Modal } from './ui'
 
 const PROTON_LAUNCH_OPTIONS = 'WINEDLLOVERRIDES="winhttp=n,b" %command%'
@@ -75,14 +77,44 @@ export function LaunchBar(): React.JSX.Element | null {
   const launch = useStore((s) => s.launch)
   const deployment = useStore((s) => s.deployment)
   const deploy = useStore((s) => s.deploy)
+  const installLoader = useStore((s) => s.installLoader)
   const removeDeployment = useStore((s) => s.removeDeployment)
   const openSettings = useStore((s) => s.setSettingsOpen)
   const [protonOpen, setProtonOpen] = useState(false)
   const [flatpakOpen, setFlatpakOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
 
   if (!game) return null
   // HML doesn't start deploy games: it copies the mods into the game folder and the user starts it.
   const deploys = game.loader === 'deploy'
+  const chosen = game.custom?.loaderChoice
+  const customBepinex = !!game.custom && game.loader === 'bepinex' && chosen !== 'none'
+
+  /** Warning copy and button that depend on the custom game; null keeps the stock warning. */
+  function customWarning(
+    code: LaunchWarning
+  ): { detail: string; button?: { label: string; onClick(): void } } | null {
+    if (!game?.custom) return null
+    if (code === 'no-bepinex' && customBepinex)
+      return {
+        detail: 'Install BepInEx into this profile so mods can load.',
+        button: { label: 'Install BepInEx', onClick: () => void installLoader() }
+      }
+    if (code === 'loader-mismatch' && chosen)
+      return {
+        detail: `This profile has ${installedLoaderLabel(profile?.mods ?? [])}; ${game.displayName} is set to ${shortLoaderLabel(chosen)}.`,
+        button: {
+          label: `Switch to ${shortLoaderLabel(chosen)}`,
+          onClick: () => void installLoader()
+        }
+      }
+    if (code === 'no-runner')
+      return {
+        detail: 'Choose how to run this game (Proton or Wine).',
+        button: { label: 'Choose runner…', onClick: () => setEditOpen(true) }
+      }
+    return null
+  }
 
   function runAction(action: WarningAction): void {
     if (action === 'settings') openSettings(true)
@@ -97,9 +129,26 @@ export function LaunchBar(): React.JSX.Element | null {
           Profile <span className="font-semibold text-fg">{profile?.name ?? 'none'}</span>
         </span>
         {warnings.map((code) => {
-          const w = WARNINGS[code] ?? { label: code, detail: code, action: null }
+          const base = WARNINGS[code] ?? { label: code, detail: code, action: null }
+          const extra = customWarning(code)
+          const w = extra ? { ...base, detail: extra.detail } : base
           const chip =
             'inline-flex items-center gap-1.5 rounded-full border border-warn/40 bg-warn/10 px-2.5 py-1 text-xs font-medium text-warn'
+          if (extra?.button)
+            return (
+              <span key={code} className={chip}>
+                <Icon name="warn" className="size-3" />
+                <span>{w.detail}</span>
+                <Button
+                  variant="quiet"
+                  disabled={busy}
+                  onClick={extra.button.onClick}
+                  className="h-6 px-2 text-xs"
+                >
+                  {extra.button.label}
+                </Button>
+              </span>
+            )
           return w.action ? (
             <button
               key={code}
@@ -126,6 +175,12 @@ export function LaunchBar(): React.JSX.Element | null {
       </div>
       {deploys ? (
         <>
+          {game.custom && (
+            <Button disabled={busy} onClick={() => void launch('vanilla')}>
+              <Icon name="play" />
+              Play
+            </Button>
+          )}
           <Button disabled={busy || !deployment} onClick={() => void removeDeployment()}>
             Remove mods
           </Button>
@@ -158,6 +213,7 @@ export function LaunchBar(): React.JSX.Element | null {
       )}
 
       {protonOpen && <ProtonDialog onClose={() => setProtonOpen(false)} />}
+      {editOpen && <EditGameDialog game={game} onClose={() => setEditOpen(false)} />}
       {flatpakOpen && <FlatpakDialog onClose={() => setFlatpakOpen(false)} />}
     </header>
   )

@@ -1,6 +1,7 @@
 import { useRef, useState, type DragEvent } from 'react'
 import type { GhUpdate, InstalledMod, ModSource, ModUpdate, NxUpdate } from '../../../shared/types'
 import { api, errorMessage, pathForFile } from '../api'
+import { sourcesFor } from '../customView'
 import { ghSubline, githubRepoUrl, UPDATE_MODES, updateModeLabel } from '../ghView'
 import { nexusModUrl } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
@@ -27,6 +28,7 @@ export function ModList(): React.JSX.Element | null {
   const toast = useStore((s) => s.toast)
   const openProfileFolder = useStore((s) => s.openProfileFolder)
   const game = useStore((s) => s.currentGame)
+  const currentDomain = useStore((s) => s.currentDomain)
   const updates = useStore((s) => s.updates)
   const ghUpdates = useStore((s) => s.ghUpdates)
   const nxUpdates = useStore((s) => s.nxUpdates)
@@ -48,6 +50,32 @@ export function ModList(): React.JSX.Element | null {
   const nxUpdateById = new Map(nxUpdates.map((u) => [u.modId, u]))
   const updateCount = updates.length + ghUpdates.length + nxUpdates.length
   const openGithub = (): void => setGithubOpen(true)
+  const { online, githubPrimary } = sourcesFor(game, currentDomain)
+  const hasOnline = online.length > 0
+  // The domain can change while the Online tab is open; fall back to Installed if it vanishes.
+  const activeTab = hasOnline ? tab : 'installed'
+  const custom = !!game.custom
+  const fileButton = (
+    <Button
+      variant={githubPrimary ? 'quiet' : 'ghost'}
+      disabled={busy}
+      onClick={() => void installFromFile()}
+    >
+      <Icon name="upload" />
+      Install from file
+    </Button>
+  )
+  const githubButton = (
+    <Button
+      variant={githubPrimary ? 'primary' : 'ghost'}
+      disabled={busy || !game.supported}
+      title={game.supported ? undefined : UNSUPPORTED_LOADER}
+      onClick={openGithub}
+    >
+      <Icon name="github" />
+      Add from GitHub
+    </Button>
+  )
   const mods = [...profile.mods].sort((a, b) => a.name.localeCompare(b.name))
   const enabledCount = mods.filter((m) => m.enabled).length
 
@@ -91,55 +119,58 @@ export function ModList(): React.JSX.Element | null {
     >
       <div className="flex items-end justify-between gap-4 border-b border-line px-6">
         <div role="tablist" aria-label="Profile views" className="flex gap-6">
-          <TabButton selected={tab === 'installed'} onSelect={() => setTab('installed')}>
+          <TabButton selected={activeTab === 'installed'} onSelect={() => setTab('installed')}>
             Installed
             <span className="ml-2 text-xs font-normal text-muted tabular-nums">{mods.length}</span>
           </TabButton>
-          <TabButton
-            selected={tab === 'online'}
-            onSelect={() => {
-              setTab('online')
-              setOnlineOpened(true)
-            }}
-          >
-            Online
-          </TabButton>
+          {hasOnline && (
+            <TabButton
+              selected={activeTab === 'online'}
+              onSelect={() => {
+                setTab('online')
+                setOnlineOpened(true)
+              }}
+            >
+              Online
+            </TabButton>
+          )}
         </div>
         <div className="flex h-11 items-center gap-2 pb-2">
-          {tab === 'installed' && (
+          {activeTab === 'installed' && (
             <>
               <Button variant="quiet" onClick={() => void openProfileFolder()}>
                 <Icon name="folder" />
                 Open folder
               </Button>
-              <Button disabled={busy} onClick={() => void installFromFile()}>
-                <Icon name="upload" />
-                Install from file
-              </Button>
-              <Button
-                disabled={busy || !game.supported}
-                title={game.supported ? undefined : UNSUPPORTED_LOADER}
-                onClick={openGithub}
-              >
-                <Icon name="github" />
-                Add from GitHub
-              </Button>
+              {githubPrimary ? (
+                <>
+                  {githubButton}
+                  {fileButton}
+                </>
+              ) : (
+                <>
+                  {fileButton}
+                  {githubButton}
+                </>
+              )}
             </>
           )}
         </div>
       </div>
 
       {onlineOpened && (
-        <div className={tab === 'online' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+        <div className={activeTab === 'online' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
           <Browse key={game.label} game={game.label} />
         </div>
       )}
-      {tab === 'online' ? null : mods.length === 0 ? (
+      {activeTab === 'online' ? null : mods.length === 0 ? (
         <EmptyState
           onPick={() => void installFromFile()}
           onGithub={openGithub}
           supported={game.supported}
           busy={busy}
+          custom={custom}
+          githubPrimary={githubPrimary}
         />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -381,34 +412,56 @@ function EmptyState({
   onPick,
   onGithub,
   supported,
-  busy
+  busy,
+  custom,
+  githubPrimary
 }: {
   onPick(): void
   onGithub(): void
   supported: boolean
   busy: boolean
+  custom: boolean
+  githubPrimary: boolean
 }): React.JSX.Element {
+  const githubButton = (
+    <Button
+      variant={githubPrimary ? 'primary' : 'ghost'}
+      disabled={busy || !supported}
+      title={supported ? undefined : UNSUPPORTED_LOADER}
+      onClick={onGithub}
+    >
+      <Icon name="github" />
+      Add from GitHub
+    </Button>
+  )
+  // Catalog games keep zip install as the primary action; for custom games it is the fallback.
+  const fileButton = (
+    <Button variant={custom ? (githubPrimary ? 'quiet' : 'ghost') : 'primary'} onClick={onPick}>
+      Install from file
+    </Button>
+  )
   return (
     <div className="grid flex-1 place-items-center p-8">
       <div className="max-w-sm rounded-xl border border-dashed border-line px-8 py-10 text-center">
         <Icon name="upload" className="mx-auto size-7 text-muted" />
         <p className="mt-3 font-semibold">No mods in this profile yet</p>
         <p className="mt-1 text-sm text-muted">
-          Drag mod .zip files here, pick them from disk, or add a mod from its GitHub repository.
-          Start with BepInExPack if the game needs it.
+          {custom
+            ? 'Add a mod from its GitHub repository, or drop a .zip here.'
+            : 'Drag mod .zip files here, pick them from disk, or add a mod from its GitHub repository. Start with BepInExPack if the game needs it.'}
         </p>
         <div className="mt-5 flex justify-center gap-2">
-          <Button variant="primary" onClick={onPick}>
-            Install from file
-          </Button>
-          <Button
-            disabled={busy || !supported}
-            title={supported ? undefined : UNSUPPORTED_LOADER}
-            onClick={onGithub}
-          >
-            <Icon name="github" />
-            Add from GitHub
-          </Button>
+          {githubPrimary ? (
+            <>
+              {githubButton}
+              {fileButton}
+            </>
+          ) : (
+            <>
+              {fileButton}
+              {githubButton}
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { GamePicker } from './components/GamePicker'
 import { LaunchBar } from './components/LaunchBar'
+import { ManualLoaderDialog } from './components/ManualLoaderDialog'
 import { ModList } from './components/ModList'
 import { ProfileSidebar } from './components/ProfileSidebar'
 import { SettingsDialog } from './components/SettingsDialog'
@@ -40,6 +41,7 @@ function App(): React.JSX.Element {
       ) : (
         <GamePicker />
       )}
+      <ManualLoaderDialog />
       <SettingsDialog />
       <Toasts />
     </>

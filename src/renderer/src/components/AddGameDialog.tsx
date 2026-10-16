@@ -32,6 +32,7 @@ export function AddGameDialog({
   onClose(): void
 }): React.JSX.Element {
   const addCustomGame = useStore((s) => s.addCustomGame)
+  const updateCustomGame = useStore((s) => s.updateCustomGame)
   const choices = loaderChoicesFor(detection)
   const initialChoice = game?.custom?.loaderChoice
   const [name, setName] = useState(initialName)
@@ -108,15 +109,15 @@ export function AddGameDialog({
           runner: showRunner ? (runners?.[runnerIndex] ?? null) : null
         })
       } else if (game) {
-        const updated = await api.updateCustomGame(game.label, {
+        const patch = {
           displayName: trimmed,
           loaderChoice: loader,
           ...(showRunner && runnerChanged && runners?.[runnerIndex]
             ? { runner: runners[runnerIndex] }
             : {})
-        })
-        if (useStore.getState().currentGame?.label === game.label)
-          useStore.setState({ currentGame: updated })
+        }
+        // The edit dialog only opens for the current game; the store updates it and its warnings.
+        await updateCustomGame(patch)
       }
       onClose()
     } catch (e) {
@@ -201,5 +202,43 @@ export function AddGameDialog({
         {error && <p className="text-sm text-danger">{error}</p>}
       </div>
     </Modal>
+  )
+}
+
+/** Loads a custom game's detection, then opens the dialog in edit mode (rename, loader, runner). */
+export function EditGameDialog({
+  game,
+  onClose
+}: {
+  game: GameSummary
+  onClose(): void
+}): React.JSX.Element | null {
+  const toast = useStore((s) => s.toast)
+  const [loaded, setLoaded] = useState<{ detection: GameDetection } | null>(null)
+  useEffect(() => {
+    let live = true
+    api.detectCustomGame(game.label).then(
+      (d) => live && setLoaded({ detection: d.detection }),
+      (e) => {
+        if (!live) return
+        toast('error', errorMessage(e))
+        onClose()
+      }
+    )
+    return () => {
+      live = false
+    }
+    // Detection is read once per open; onClose identity changes must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.label])
+  if (!loaded) return null
+  return (
+    <AddGameDialog
+      mode="edit"
+      game={game}
+      detection={loaded.detection}
+      initialName={game.displayName}
+      onClose={onClose}
+    />
   )
 }
