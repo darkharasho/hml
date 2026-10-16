@@ -8,6 +8,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { isAllowedNavigation, parseAllowedExternalUrl } from './security'
 import { registerIpc } from './ipc'
 import { createServices } from './services'
+import { GH_CHECK_INTERVAL_MS } from './github/service'
 import { makePaths } from './store/paths'
 import { resolveSnapshotPath } from './snapshotPath'
 import icon from '../../resources/icon.png?asset'
@@ -80,58 +81,67 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  registerIpc(
-    createServices({
-      paths: makePaths(app.getPath('userData')),
-      fetch: globalThis.fetch,
-      snapshotPath: resolveSnapshotPath({
-        isPackaged: app.isPackaged,
-        resourcesPath: process.resourcesPath,
-        devPath: devSnapshotPath
-      }),
-      platform: process.platform,
-      emit: (e) => {
-        const win = mainWindowRef
-        if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-          try {
-            win.webContents.send('hml:event', e)
-          } catch {
-            // A closing window must never abort the operation that emitted.
-          }
+  const services = createServices({
+    paths: makePaths(app.getPath('userData')),
+    fetch: globalThis.fetch,
+    snapshotPath: resolveSnapshotPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      devPath: devSnapshotPath
+    }),
+    platform: process.platform,
+    emit: (e) => {
+      const win = mainWindowRef
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+        try {
+          win.webContents.send('hml:event', e)
+        } catch {
+          // A closing window must never abort the operation that emitted.
         }
+      }
+    },
+    secrets: {
+      isAvailable: () =>
+        safeStorage.isEncryptionAvailable() &&
+        (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+      encrypt: (plain) => safeStorage.encryptString(plain),
+      decrypt: (data) => safeStorage.decryptString(data)
+    },
+    home: homedir(),
+    dialog: {
+      async pickFiles({ title, filters }) {
+        const win = BrowserWindow.getFocusedWindow()
+        const opts = { title, filters, properties: ['openFile', 'multiSelections'] as const }
+        const r = win
+          ? await dialog.showOpenDialog(win, { ...opts, properties: [...opts.properties] })
+          : await dialog.showOpenDialog({ ...opts, properties: [...opts.properties] })
+        return r.canceled ? [] : r.filePaths
       },
-      secrets: {
-        isAvailable: () =>
-          safeStorage.isEncryptionAvailable() &&
-          (process.platform !== 'linux' ||
-            safeStorage.getSelectedStorageBackend() !== 'basic_text'),
-        encrypt: (plain) => safeStorage.encryptString(plain),
-        decrypt: (data) => safeStorage.decryptString(data)
-      },
-      home: homedir(),
-      dialog: {
-        async pickFiles({ title, filters }) {
-          const win = BrowserWindow.getFocusedWindow()
-          const opts = { title, filters, properties: ['openFile', 'multiSelections'] as const }
-          const r = win
-            ? await dialog.showOpenDialog(win, { ...opts, properties: [...opts.properties] })
-            : await dialog.showOpenDialog({ ...opts, properties: [...opts.properties] })
-          return r.canceled ? [] : r.filePaths
-        },
-        async pickFolder(title) {
-          const win = BrowserWindow.getFocusedWindow()
-          const opts = { title, properties: ['openDirectory' as const] }
-          const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-          return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
-        }
-      },
-      shell,
-      spawn,
-      execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false })
-    })
-  )
+      async pickFolder(title) {
+        const win = BrowserWindow.getFocusedWindow()
+        const opts = { title, properties: ['openDirectory' as const] }
+        const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+        return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+      }
+    },
+    shell,
+    spawn,
+    execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false })
+  })
+  registerIpc(services)
 
   createWindow()
+
+  // Check GitHub mods for updates shortly after startup and then periodically.
+  const runGhUpdates = (): void => {
+    services.ghAutoUpdateAll().catch((e) => {
+      console.warn(`GitHub auto-update failed: ${e instanceof Error ? e.message : String(e)}`)
+    })
+  }
+  setTimeout(() => {
+    runGhUpdates()
+    setInterval(runGhUpdates, GH_CHECK_INTERVAL_MS)
+  }, 10_000)
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

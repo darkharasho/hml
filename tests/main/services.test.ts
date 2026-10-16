@@ -1181,6 +1181,98 @@ describe('services', () => {
       expect(seen.every((s) => !s.auth)).toBe(true)
     })
 
+    describe('token settings', () => {
+      type Seen = { url: string; auth: string | undefined }
+      const loginFetch = (seen: Seen[], status = 200): typeof fetch =>
+        (async (url: string, init?: { headers?: Record<string, string> }) => {
+          seen.push({ url, auth: init?.headers?.Authorization })
+          if (url === 'https://api.github.com/user') {
+            return res(status, { login: 'octo' })
+          }
+          const m =
+            /^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/releases\/assets\/(\d+)$/.exec(
+              url
+            )
+          if (m) {
+            const rel = repos.get(slug(m[1], m[2]))!.releases[0]
+            const data = Object.values(rel.files)[Number(m[3]) - 1]
+            const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+            return { ok: true, status: 200, arrayBuffer: async () => buf }
+          }
+          return ghFetch(url, init as never)
+        }) as unknown as typeof fetch
+
+      test('ghSetToken verifies, saves and reports the login; status never leaks the token', async () => {
+        const seen: Seen[] = []
+        api = createServices({ ...deps, fetch: loginFetch(seen) })
+        expect(await api.ghTokenStatus()).toEqual({ set: false, encryptionAvailable: true })
+        expect(await api.ghSetToken('  ghp_abc123  ')).toEqual({ login: 'octo' })
+        expect(seen).toEqual([{ url: 'https://api.github.com/user', auth: 'Bearer ghp_abc123' }])
+        const status = await api.ghTokenStatus()
+        expect(status).toEqual({ set: true, encryptionAvailable: true })
+        expect(JSON.stringify(status)).not.toContain('ghp_abc123')
+      })
+
+      test('a saved token authenticates api.github.com requests only, never browser_download_url', async () => {
+        await setup()
+        const seen: Seen[] = []
+        api = createServices({ ...deps, fetch: loginFetch(seen), now: () => clock })
+        await api.ghSetToken('ghp_abc123')
+        seen.length = 0
+        publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+        await api.ghInstall('repo', pid, 'owner/repo')
+        expect(seen.some((s) => s.url.includes('/releases/latest'))).toBe(true)
+        expect(seen.some((s) => s.url.includes('/releases/assets/'))).toBe(true)
+        for (const s of seen) {
+          if (s.url.startsWith('https://api.github.com/')) expect(s.auth).toBe('Bearer ghp_abc123')
+          else expect(s.auth).toBeUndefined()
+        }
+        expect(
+          seen.some(
+            (s) => s.url.includes('browser_download_url') || s.url.startsWith('https://github.com/')
+          )
+        ).toBe(false)
+      })
+
+      test('a rejected token is not saved', async () => {
+        api = createServices({ ...deps, fetch: loginFetch([], 401) })
+        await expect(api.ghSetToken('ghp_bad')).rejects.toThrow("GitHub didn't accept that token.")
+        expect((await api.ghTokenStatus()).set).toBe(false)
+        expect(existsSync(deps.paths.ghToken)).toBe(false)
+      })
+
+      test('malformed tokens are rejected before any request', async () => {
+        const seen: Seen[] = []
+        api = createServices({ ...deps, fetch: loginFetch(seen) })
+        for (const bad of ['ab cd', 'ab\u0000cd', 'ab\ncd', 'x'.repeat(256)]) {
+          await expect(api.ghSetToken(bad)).rejects.toThrow(
+            "That doesn't look like a GitHub token."
+          )
+        }
+        expect(seen).toEqual([])
+      })
+
+      test('null or empty clears the token', async () => {
+        api = createServices({ ...deps, fetch: loginFetch([]) })
+        await api.ghSetToken('ghp_abc123')
+        expect(await api.ghSetToken(null)).toEqual({ login: null })
+        expect((await api.ghTokenStatus()).set).toBe(false)
+        await api.ghSetToken('ghp_abc123')
+        expect(await api.ghSetToken('   ')).toEqual({ login: null })
+        expect((await api.ghTokenStatus()).set).toBe(false)
+      })
+
+      test('unavailable secure storage refuses to save and reports it', async () => {
+        const secrets = { ...deps.secrets, isAvailable: () => false }
+        api = createServices({ ...deps, secrets, fetch: loginFetch([]) })
+        await expect(api.ghSetToken('ghp_abc123')).rejects.toThrow(
+          "Secure storage isn't available on this system, so HML can't save a GitHub token."
+        )
+        expect(await api.ghTokenStatus()).toEqual({ set: false, encryptionAvailable: false })
+        expect(await api.ghSetToken(null)).toEqual({ login: null })
+      })
+    })
+
     test('ghAutoUpdateAll resolves even when listing profiles or the catalog fails', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       try {

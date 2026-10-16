@@ -14,8 +14,15 @@ import { detectPackageMeta, installZip, readZipEntries } from '../install/instal
 import { getProfile, listProfiles, saveProfile } from '../profiles/profiles'
 import { parseGithubUrl } from './url'
 import { assetPattern, chooseAsset, type GhReleaseAsset } from './assets'
-import { downloadAsset, fetchRelease, GH_RELEASE_MEMO_MS, isNewerTag, type GhRelease } from './api'
-import { loadToken } from './token'
+import {
+  downloadAsset,
+  fetchLogin,
+  fetchRelease,
+  GH_RELEASE_MEMO_MS,
+  isNewerTag,
+  type GhRelease
+} from './api'
+import { loadToken, saveToken } from './token'
 
 export const GH_CHECK_INTERVAL_MS = 21_600_000
 
@@ -45,9 +52,21 @@ interface Chosen {
   sha256: string
 }
 
+const BAD_TOKEN = "That doesn't look like a GitHub token."
+
+/** True for an empty-free token without whitespace or control characters, at most 255 long. */
+function looksLikeToken(t: string): boolean {
+  if (t.length > 255) return false
+  for (let i = 0; i < t.length; i++) {
+    const c = t.charCodeAt(i)
+    if (c <= 0x20 || (c >= 0x7f && c <= 0x9f)) return false
+  }
+  return true
+}
+
 export function createGithubServices(ctx: GhContext): Pick<
   HmlApi,
-  'ghInstall' | 'ghCheckUpdates' | 'ghUpdate' | 'ghSetUpdateMode'
+  'ghInstall' | 'ghCheckUpdates' | 'ghUpdate' | 'ghSetUpdateMode' | 'ghSetToken' | 'ghTokenStatus'
 > & {
   ghAutoUpdateAll(): Promise<void>
 } {
@@ -417,8 +436,29 @@ export function createGithubServices(ctx: GhContext): Pick<
     }
   }
 
+  async function setToken(raw: string | null): Promise<{ login: string | null }> {
+    const token = raw?.trim() ?? ''
+    if (token === '') {
+      await saveToken(paths, deps.secrets, null)
+      return { login: null }
+    }
+    if (!looksLikeToken(token)) throw new Error(BAD_TOKEN)
+    const login = await fetchLogin({ fetch: deps.fetch, token })
+    await saveToken(paths, deps.secrets, token)
+    return { login }
+  }
+
+  async function tokenStatus(): Promise<{ set: boolean; encryptionAvailable: boolean }> {
+    return {
+      set: (await loadToken(paths, deps.secrets)) !== null,
+      encryptionAvailable: deps.secrets.isAvailable()
+    }
+  }
+
   let running: Promise<void> | null = null
   return {
+    ghSetToken: setToken,
+    ghTokenStatus: tokenStatus,
     ghInstall: install,
     ghCheckUpdates: checkUpdates,
     ghUpdate: update,

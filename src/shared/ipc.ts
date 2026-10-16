@@ -61,6 +61,9 @@ export interface HmlApi {
   ghCheckUpdates(game: string, profileId: string): Promise<GhUpdate[]>
   ghUpdate(game: string, profileId: string, modIds: string[]): Promise<InstalledMod[]>
   ghSetUpdateMode(game: string, profileId: string, modId: string, mode: GhUpdateMode): Promise<void>
+  /** Saves (after verifying) or, with null/empty, removes the GitHub token. Never returns it. */
+  ghSetToken(token: string | null): Promise<{ login: string | null }>
+  ghTokenStatus(): Promise<{ set: boolean; encryptionAvailable: boolean }>
   /** Opens an https Thunderstore or GitHub link in the system browser; anything else throws. */
   openExternal(url: string): Promise<void>
 }
@@ -95,6 +98,8 @@ const METHOD_TABLE = {
   ghCheckUpdates: true,
   ghUpdate: true,
   ghSetUpdateMode: true,
+  ghSetToken: true,
+  ghTokenStatus: true,
   openExternal: true
 } satisfies Record<keyof HmlApi, true>
 
