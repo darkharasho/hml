@@ -1,0 +1,107 @@
+import { describe, test, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { planInstall, UnsafeEntryError } from '../../../src/main/install/planInstall'
+import type { InstallRule } from '../../../src/shared/types'
+
+const eco = JSON.parse(
+  readFileSync(path.join(__dirname, '../../fixtures/ecosystem-min.json'), 'utf8')
+)
+const rules: InstallRule[] = eco.games.repo.r2modman[0].installRules
+const packageId = 'Author-Mod'
+
+const plan = (entries: string[]) => planInstall(entries, { packageId, rules }).files
+
+describe('planInstall', () => {
+  test('root files go to default plugins subdir', () => {
+    expect(plan(['manifest.json', 'icon.png', 'README.md', 'Mod.dll'])).toEqual([
+      { from: 'manifest.json', to: 'BepInEx/plugins/Author-Mod/manifest.json', disableable: true },
+      { from: 'icon.png', to: 'BepInEx/plugins/Author-Mod/icon.png', disableable: true },
+      { from: 'README.md', to: 'BepInEx/plugins/Author-Mod/README.md', disableable: true },
+      { from: 'Mod.dll', to: 'BepInEx/plugins/Author-Mod/Mod.dll', disableable: true }
+    ])
+  })
+
+  test('routes plugins/patchers/config folders', () => {
+    expect(plan(['plugins/A.dll', 'patchers/P.dll', 'config/a.cfg'])).toEqual([
+      { from: 'plugins/A.dll', to: 'BepInEx/plugins/Author-Mod/A.dll', disableable: true },
+      { from: 'patchers/P.dll', to: 'BepInEx/patchers/Author-Mod/P.dll', disableable: true },
+      { from: 'config/a.cfg', to: 'BepInEx/config/a.cfg', disableable: false }
+    ])
+  })
+
+  test('handles BepInEx/ prefix', () => {
+    expect(plan(['BepInEx/plugins/A.dll', 'icon.png'])[0].to).toBe(
+      'BepInEx/plugins/Author-Mod/A.dll'
+    )
+  })
+
+  test('mm.dll goes to monomod', () => {
+    expect(plan(['X.mm.dll'])).toEqual([
+      { from: 'X.mm.dll', to: 'BepInEx/monomod/Author-Mod/X.mm.dll', disableable: true }
+    ])
+  })
+
+  test('strips single wrapper folder', () => {
+    expect(plan(['MyMod-1.2.0/manifest.json', 'MyMod-1.2.0/Mod.dll'])).toEqual([
+      { from: 'MyMod-1.2.0/manifest.json', to: 'BepInEx/plugins/Author-Mod/manifest.json', disableable: true },
+      { from: 'MyMod-1.2.0/Mod.dll', to: 'BepInEx/plugins/Author-Mod/Mod.dll', disableable: true }
+    ])
+  })
+
+  test('does not strip route folder', () => {
+    expect(plan(['config/a.cfg', 'config/b.cfg']).map((f) => f.to)).toEqual([
+      'BepInEx/config/a.cfg',
+      'BepInEx/config/b.cfg'
+    ])
+    expect(plan(['BepInEx/config/x.cfg']).map((f) => f.to)).toEqual(['BepInEx/config/x.cfg'])
+  })
+
+  test('does not strip when a root-level file exists', () => {
+    expect(plan(['Wrap/a.txt', 'b.txt']).map((f) => f.to)).toEqual([
+      'BepInEx/plugins/Author-Mod/Wrap/a.txt',
+      'BepInEx/plugins/Author-Mod/b.txt'
+    ])
+  })
+
+  test('unknown folders land under default route', () => {
+    expect(plan(['assets/a.png', 'assets/b.png', 'x.dll']).map((f) => f.to)).toEqual([
+      'BepInEx/plugins/Author-Mod/assets/a.png',
+      'BepInEx/plugins/Author-Mod/assets/b.png',
+      'BepInEx/plugins/Author-Mod/x.dll'
+    ])
+  })
+
+  test('non-subdir tracking methods do not add the package folder', () => {
+    const r: InstallRule[] = [
+      { route: 'Game/state', defaultFileExtensions: [], trackingMethod: 'state', subRoutes: [], isDefaultLocation: true },
+      { route: 'Game/pz', defaultFileExtensions: ['.pz'], trackingMethod: 'package-zip', subRoutes: [], isDefaultLocation: false }
+    ]
+    const out = planInstall(['a.pz', 'b.txt', 'state/c.txt'], { packageId, rules: r }).files
+    expect(out.map((f) => f.to)).toEqual(['Game/pz/a.pz', 'Game/state/b.txt', 'Game/state/c.txt'])
+    expect(out.every((f) => f.disableable)).toBe(true)
+  })
+
+  test('loader package', () => {
+    const out = planInstall(
+      ['BepInExPack/winhttp.dll', 'BepInExPack/BepInEx/core/BepInEx.Preloader.dll', 'icon.png'],
+      { packageId, rules, loaderPackage: { packageId: 'BepInEx-BepInExPack', rootFolder: 'BepInExPack', loader: 'bepinex' } }
+    ).files
+    expect(out).toEqual([
+      { from: 'BepInExPack/winhttp.dll', to: 'winhttp.dll', disableable: false },
+      { from: 'BepInExPack/BepInEx/core/BepInEx.Preloader.dll', to: 'BepInEx/core/BepInEx.Preloader.dll', disableable: false }
+    ])
+  })
+
+  test('rejects path traversal', () => {
+    for (const e of ['../evil.dll', '/abs.dll', 'C:/x.dll', 'a/../../b.dll', 'a\\..\\b.dll']) {
+      expect(() => plan([e])).toThrow(UnsafeEntryError)
+    }
+  })
+
+  test('throws when there is no default rule', () => {
+    expect(() =>
+      planInstall(['a.txt'], { packageId, rules: rules.map((r) => ({ ...r, isDefaultLocation: false })) })
+    ).toThrow(/default/)
+  })
+})
