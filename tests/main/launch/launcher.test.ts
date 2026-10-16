@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -95,6 +96,14 @@ describe('launchWarnings', () => {
     expect(await launchWarnings(input())).toEqual([])
   })
 
+  test('no proton warning when steamAppId is null', async () => {
+    await addPreloader()
+    await fs.writeFile(path.join(gameDir, 'REPO.exe'), '')
+    expect(
+      await launchWarnings({ ...input(), game: { ...game, steamAppId: null } as GameDef })
+    ).toEqual([])
+  })
+
   test('game-not-found, no-bepinex and loader-unsupported', async () => {
     expect(await launchWarnings({ ...input(), gameDir: null })).toEqual([
       'game-not-found',
@@ -107,15 +116,25 @@ describe('launchWarnings', () => {
 })
 
 describe('launch', () => {
+  function fakeChild(event: 'spawn' | 'error') {
+    const calls: unknown[][] = []
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() })
+    const fake = ((...a: unknown[]) => {
+      calls.push(a)
+      queueMicrotask(() =>
+        event === 'spawn'
+          ? child.emit('spawn')
+          : child.emit('error', new Error('spawn steam ENOENT'))
+      )
+      return child
+    }) as never
+    return { calls, child, fake }
+  }
+
   test('copies existing files then spawns detached without shell', async () => {
     await fs.writeFile(path.join(profile, 'winhttp.dll'), 'dll')
     await fs.writeFile(path.join(profile, 'doorstop_config.ini'), 'ini')
-    const calls: unknown[][] = []
-    let unrefed = false
-    const fake = ((...a: unknown[]) => {
-      calls.push(a)
-      return { unref: () => (unrefed = true) }
-    }) as never
+    const { calls, child, fake } = fakeChild('spawn')
     await launch(
       {
         command: 'steam',
@@ -130,6 +149,30 @@ describe('launch', () => {
     expect(calls).toEqual([
       ['steam', ['-applaunch', '1'], { detached: true, stdio: 'ignore', shell: false }]
     ])
-    expect(unrefed).toBe(true)
+    expect(child.unref).toHaveBeenCalled()
+  })
+
+  test('rejects when the child emits error', async () => {
+    const { fake } = fakeChild('error')
+    await expect(
+      launch({ command: 'steam', args: [], copyToGameDir: [] }, profile, gameDir, fake)
+    ).rejects.toThrow('ENOENT')
+  })
+
+  test('rejects non-basename copy entries before copying or spawning', async () => {
+    await fs.writeFile(path.join(profile, 'winhttp.dll'), 'dll')
+    const { calls, fake } = fakeChild('spawn')
+    for (const bad of ['../x', 'a/b', 'a\\b', '..', '.']) {
+      await expect(
+        launch(
+          { command: 'steam', args: [], copyToGameDir: ['winhttp.dll', bad] },
+          profile,
+          gameDir,
+          fake
+        )
+      ).rejects.toThrow('Invalid copy entry')
+    }
+    expect(await fs.readdir(gameDir)).toEqual([])
+    expect(calls).toEqual([])
   })
 })

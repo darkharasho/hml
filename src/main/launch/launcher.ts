@@ -37,7 +37,7 @@ export async function findPreloader(profileDir: string): Promise<string | null> 
 }
 
 export async function isProtonGame(
-  platform: 'win32' | 'linux' | NodeJS.Platform,
+  platform: 'win32' | 'linux',
   gameDir: string,
   exeNames: string[]
 ): Promise<boolean> {
@@ -77,8 +77,20 @@ export async function launch(
   spawnFn: typeof nodeSpawn = nodeSpawn
 ): Promise<void> {
   for (const rel of plan.copyToGameDir) {
+    if (rel === '.' || rel === '..' || rel.includes('/') || rel.includes('\\')) {
+      throw new Error(`Invalid copy entry: ${rel}`)
+    }
+  }
+  for (const rel of plan.copyToGameDir) {
     const src = path.join(profileDir, rel)
     if (await exists(src)) await fs.copyFile(src, path.join(gameDir, rel))
   }
-  spawnFn(plan.command, plan.args, { detached: true, stdio: 'ignore', shell: false }).unref()
+  const child = spawnFn(plan.command, plan.args, { detached: true, stdio: 'ignore', shell: false })
+  await new Promise<void>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
+  })
 }
