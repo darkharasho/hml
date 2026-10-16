@@ -198,7 +198,12 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         }
         case 'nexus': {
           const domain = await api.nxGetDomain(game)
-          if (domain !== null && domain !== s.domain) {
+          if (domain === null) {
+            return unresolved(
+              `HML couldn't confirm this game's Nexus Mods domain (${s.domain}). Set it in the game's menu, then import again.`
+            )
+          }
+          if (domain !== s.domain) {
             return unresolved(`This mod is for a different game on Nexus Mods (${s.domain}).`)
           }
           const r = await api.nxInstall(game, profileId, s.modId, s.fileId)

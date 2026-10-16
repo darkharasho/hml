@@ -3598,6 +3598,23 @@ describe('share import', () => {
     expect(r.profile.id).toBe('friends-2')
   })
 
+  test('an unconfirmable Nexus domain leaves the mod unresolved without installing it', async () => {
+    await withKey()
+    nexusDown = true
+    const r = await importCode([nx('skyrim')])
+    nexusDown = false
+    expect(r.installed).toBe(0)
+    expect(r.unresolved).toEqual([
+      {
+        name: 'Cool Mod',
+        version: '1.0.0',
+        kind: 'nexus',
+        reason:
+          "HML couldn't confirm this game's Nexus Mods domain (skyrim). Set it in the game's menu, then import again."
+      }
+    ])
+  })
+
   test('a nexus-<domain> export adds the game; an unknown game is rejected', async () => {
     hml = makeHml([], { game: 'nexus-stardewvalley' })
     const p = await api.previewShare({ code: CODE })
