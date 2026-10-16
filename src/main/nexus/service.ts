@@ -9,6 +9,7 @@ import type {
   NxUser
 } from '../../shared/types'
 import type { HmlApi } from '../../shared/ipc'
+import { NX_NO_KEY, noSecureStorage } from '../../shared/messages'
 import { unsupportedLoaderMessage } from '../github/service'
 import type { ServiceDeps } from '../services'
 import { detectPackageMeta, installZip } from '../install/installer'
@@ -41,7 +42,6 @@ export interface NexusContext {
 
 const NX_FILES_MEMO_MS = 600_000
 const BAD_KEY = "That doesn't look like a Nexus Mods API key."
-const NO_KEY = 'Add your Nexus Mods API key in Settings to download.'
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 type NxMod = InstalledMod & { source: Extract<InstalledMod['source'], { kind: 'nexus' }> }
@@ -92,9 +92,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     if (!looksLikeKey(key)) throw new Error(BAD_KEY)
     // Don't send a key to Nexus Mods that can't be stored afterwards.
     if (!deps.secrets.isAvailable()) {
-      throw new Error(
-        "Secure storage isn't available on this system, so HML can't save a Nexus Mods API key."
-      )
+      throw new Error(noSecureStorage('a Nexus Mods API key'))
     }
     const who = await validateKey(client, key)
     await saveSecret(paths.nxKey, deps.secrets, key, 'a Nexus Mods API key')
@@ -206,7 +204,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     const { def, domain, gameId } = await domainOf(game)
     requireSupported(def)
     const key = await loadKey()
-    if (!key) throw new Error(NO_KEY)
+    if (!key) throw new Error(NX_NO_KEY)
     const files = await modFiles(client, gameId, modId)
     const file = fileId === undefined ? newestMain(files) : files.find((f) => f.fileId === fileId)
     if (!file) {
@@ -303,7 +301,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     const { def, domain, gameId } = await domainOf(game)
     requireSupported(def)
     const key = await loadKey()
-    if (!key) throw new Error(NO_KEY)
+    if (!key) throw new Error(NX_NO_KEY)
     const { mods } = await getProfile(paths, game, profileId)
     const wanted = new Set(modIds)
     const results: NxInstallResult[] = []
@@ -345,7 +343,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     const profileId = settings.lastProfile[def.label]
     if (!profileId) throw new Error(`Pick a profile for ${def.displayName} in HML first.`)
     const key = await loadKey()
-    if (!key) throw new Error(NO_KEY)
+    if (!key) throw new Error(NX_NO_KEY)
     const { gameId } = await requireDomain(def, settings)
     const files = await modFiles(client, gameId, link.modId)
     const file = files.find((f) => f.fileId === link.fileId) ?? {

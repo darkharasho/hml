@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
+import { noSecureStorage } from '../shared/messages'
 
 export interface SecretPort {
   isAvailable(): boolean
@@ -29,7 +30,7 @@ export async function saveSecret(
     return
   }
   if (!secrets.isAvailable()) {
-    throw new Error(`Secure storage isn't available on this system, so HML can't save ${what}.`)
+    throw new Error(noSecureStorage(what))
   }
   await fs.mkdir(path.dirname(file), { recursive: true })
   const tmp = `${file}.${randomUUID()}.tmp`

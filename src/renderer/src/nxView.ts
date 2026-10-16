@@ -1,8 +1,9 @@
 // Pure display helpers for the Nexus Mods views. No DOM, no store, so they unit-test in node.
 import type { DeploymentStatus, InstalledMod, NxFileCategory, NxStatus } from '../../shared/types'
+import { NX_NO_KEY } from '../../shared/messages'
 import { compactCount } from './tsView'
 
-export const NX_NO_KEY = 'Add your Nexus Mods API key in Settings to download.'
+export { NX_NO_KEY }
 export const NX_API_KEY_PAGE = 'https://www.nexusmods.com/users/myaccount?tab=api'
 
 export function nexusModUrl(domain: string, modId: number): string {

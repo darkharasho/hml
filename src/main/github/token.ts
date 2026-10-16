@@ -1,4 +1,5 @@
 import type { AppPaths } from '../store/paths'
+import { noSecureStorage } from '../../shared/messages'
 import { loadSecret, saveSecret, type SecretPort } from '../secrets'
 
 export type { SecretPort }
@@ -7,8 +8,7 @@ export function loadToken(paths: AppPaths, secrets: SecretPort): Promise<string 
   return loadSecret(paths.ghToken, secrets)
 }
 
-export const NO_SECURE_STORAGE =
-  "Secure storage isn't available on this system, so HML can't save a GitHub token."
+export const NO_SECURE_STORAGE = noSecureStorage('a GitHub token')
 
 export function saveToken(
   paths: AppPaths,

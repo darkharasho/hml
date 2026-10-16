@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { NxStatus } from '../../../shared/types'
+import { noSecureStorage } from '../../../shared/messages'
 import { api, errorMessage } from '../api'
 import { NX_API_KEY_PAGE } from '../nxView'
 import { useStore } from '../store'
@@ -141,7 +142,7 @@ function GithubTokenField(): React.JSX.Element {
   const hint = !status
     ? 'Checking for a saved token…'
     : unavailable
-      ? "Secure storage isn't available on this system, so HML can't save a GitHub token."
+      ? noSecureStorage('a GitHub token')
       : status.set && login
         ? `Signed in as ${login}`
         : status.set
@@ -224,7 +225,7 @@ function NexusSection(): React.JSX.Element {
   const statusLine = !status
     ? 'Checking for a saved key…'
     : unavailable
-      ? "Secure storage isn't available on this system, so HML can't save a Nexus Mods API key."
+      ? noSecureStorage('a Nexus Mods API key')
       : status.user
         ? `Signed in as ${status.user.name} (${status.user.isPremium ? 'Premium' : 'Free'})`
         : status.set
