@@ -35,7 +35,7 @@ export async function saveToken(
   await fs.mkdir(path.dirname(paths.ghToken), { recursive: true })
   const tmp = `${paths.ghToken}.${randomUUID()}.tmp`
   try {
-    await fs.writeFile(tmp, secrets.encrypt(token))
+    await fs.writeFile(tmp, secrets.encrypt(token), { mode: 0o600 })
     await fs.rename(tmp, paths.ghToken)
   } catch (e) {
     await fs.rm(tmp, { force: true }).catch(() => undefined)

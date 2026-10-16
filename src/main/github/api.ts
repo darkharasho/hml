@@ -54,23 +54,57 @@ async function send(
 }
 
 /** Throws the shared message for rate limits and rejected tokens; returns for anything else. */
-function throwCommonError(res: Response): void {
+function throwCommonError(res: Response, nowMs: number): void {
+  const retryAfter = res.headers.get('retry-after')
   if (
     (res.status === 403 || res.status === 429) &&
-    res.headers.get('x-ratelimit-remaining') === '0'
+    (res.headers.get('x-ratelimit-remaining') === '0' || retryAfter !== null)
   ) {
-    const reset = Number(res.headers.get('x-ratelimit-reset'))
-    const time = new Date(reset * 1000).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+    const reset = res.headers.get('x-ratelimit-reset')
+    let resetMs = NaN
+    if (reset !== null && reset.trim() !== '' && Number.isFinite(Number(reset))) {
+      resetMs = Number(reset) * 1000
+    } else if (
+      retryAfter !== null &&
+      retryAfter.trim() !== '' &&
+      Number.isFinite(Number(retryAfter))
+    ) {
+      resetMs = nowMs + Number(retryAfter) * 1000
+    }
+    const when = Number.isFinite(resetMs)
+      ? `after ${new Date(resetMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      : 'later'
     throw new Error(
-      `GitHub's rate limit was reached. Try again after ${time}, or add a GitHub token in Settings.`
+      `GitHub's rate limit was reached. Try again ${when}, or add a GitHub token in Settings.`
     )
   }
   if (res.status === 401) {
     throw new Error('GitHub rejected the saved token. Update or remove it in Settings.')
   }
+}
+
+const cacheQueues = new Map<string, Promise<unknown>>()
+
+/** Serializes read-modify-write of one cache file so concurrent writers merge. */
+function updateCache(file: string, mutate: (cache: Cache) => void): Promise<void> {
+  const run = async (): Promise<void> => {
+    const cache = await readCache(file)
+    mutate(cache)
+    await writeJsonAtomic(file, cache, { pretty: false })
+  }
+  const prev = cacheQueues.get(file) ?? Promise.resolve()
+  const next = prev.then(run, run)
+  const tail = next.catch(() => undefined)
+  cacheQueues.set(file, tail)
+  void tail.then(() => {
+    if (cacheQueues.get(file) === tail) cacheQueues.delete(file)
+  })
+  return next
+}
+
+async function readCache(file: string): Promise<Cache> {
+  const raw = await readJson<Cache>(file)
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
 }
 
 function normalizeAsset(a: Record<string, unknown>): GhReleaseAsset | null {
@@ -109,29 +143,30 @@ export async function fetchRelease(
   const now = opts.now ?? Date.now
   const slug = `${owner}/${repo}`
   const base = `${API_ROOT}/repos/${owner}/${repo}`
-  const cacheRead = await readJson<Cache>(opts.cacheFile)
-  const cache: Cache =
-    cacheRead && typeof cacheRead === 'object' && !Array.isArray(cacheRead) ? cacheRead : {}
+  const cache = await readCache(opts.cacheFile)
 
   const get = async (url: string): Promise<Fetched> => {
-    const cached = cache[url]
+    const key = opts.token ? `${url}#auth` : url
+    const cached = cache[key]
     if (cached && maxAgeMs !== undefined && now() - cached.fetchedAt < maxAgeMs) {
       return { status: 'ok', body: cached.body }
     }
     const headers = apiHeaders(opts.token)
-    if (cached) headers['If-None-Match'] = cached.etag
+    if (cached?.etag) headers['If-None-Match'] = cached.etag
     const res = await send(opts.fetch, url, headers)
     if (res.status === 304 && cached) {
-      cache[url] = { ...cached, fetchedAt: now() }
-      await writeJsonAtomic(opts.cacheFile, cache, { pretty: false })
+      await updateCache(opts.cacheFile, (c) => {
+        c[key] = { ...cached, fetchedAt: now() }
+      })
       return { status: 'ok', body: cached.body }
     }
     if (res.status === 404) return { status: 'notfound' }
-    throwCommonError(res)
+    throwCommonError(res, now())
     if (!res.ok) throw new Error(`GitHub returned HTTP ${res.status} for ${slug}.`)
     const body = await res.json()
-    cache[url] = { etag: res.headers.get('etag') ?? '', body, fetchedAt: now() }
-    await writeJsonAtomic(opts.cacheFile, cache, { pretty: false })
+    await updateCache(opts.cacheFile, (c) => {
+      c[key] = { etag: res.headers.get('etag') ?? '', body, fetchedAt: now() }
+    })
     return { status: 'ok', body }
   }
 
@@ -162,7 +197,8 @@ export async function downloadAsset(opts: {
   token: string | null
   asset: GhReleaseAsset
 }): Promise<{ data: Uint8Array; sha256: string }> {
-  const { asset, token } = opts
+  const { asset } = opts
+  const token = opts.token && asset.apiUrl.startsWith(`${API_ROOT}/`) ? opts.token : null
   const fail = (why: string): Error => new Error(`Download of ${asset.name} failed: ${why}`)
   const headers: Record<string, string> = token
     ? { Accept: 'application/octet-stream', 'User-Agent': 'HML', Authorization: `Bearer ${token}` }
@@ -170,10 +206,9 @@ export async function downloadAsset(opts: {
   let data: Uint8Array
   try {
     const res = await opts.fetch(token ? asset.apiUrl : asset.downloadUrl, { headers })
-    if (!res.ok) throw fail(`HTTP ${res.status}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     data = new Uint8Array(await res.arrayBuffer())
   } catch (e) {
-    if (e instanceof Error && e.message.startsWith(`Download of ${asset.name} failed:`)) throw e
     throw fail(e instanceof Error ? e.message : String(e))
   }
   const sha256 = createHash('sha256').update(data).digest('hex')
@@ -185,7 +220,7 @@ export async function downloadAsset(opts: {
 export async function fetchLogin(opts: { fetch: typeof fetch; token: string }): Promise<string> {
   const res = await send(opts.fetch, `${API_ROOT}/user`, apiHeaders(opts.token))
   if (res.status === 401) throw new Error("GitHub didn't accept that token.")
-  throwCommonError(res)
+  throwCommonError(res, Date.now())
   if (!res.ok) throw new Error(`GitHub returned HTTP ${res.status} for your account.`)
   return String(((await res.json()) as { login: unknown }).login)
 }

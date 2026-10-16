@@ -26,6 +26,9 @@ describe('token storage', () => {
     await saveToken(paths, fake(), 'ghp_secret')
     expect((await fs.readFile(paths.ghToken)).toString()).not.toContain('ghp_secret')
     expect(await loadToken(paths, fake())).toBe('ghp_secret')
+    if (process.platform !== 'win32') {
+      expect((await fs.stat(paths.ghToken)).mode & 0o777).toBe(0o600)
+    }
   })
 
   it('saveToken(null) removes the file, even when missing', async () => {

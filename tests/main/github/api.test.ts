@@ -251,6 +251,51 @@ describe('fetchRelease', () => {
   })
 })
 
+describe('fetchRelease cache robustness', () => {
+  it('merges concurrent writers for different repos', async () => {
+    const mk = (r: string): Record<string, Reply> => ({
+      [`https://api.github.com/repos/o/${r}/releases/latest`]: { status: 200, body: rawRelease() }
+    })
+    const { fetch: f } = fakeFetch({ ...mk('a'), ...mk('b'), ...mk('c') })
+    await Promise.all(['a', 'b', 'c'].map((r) => fetchRelease(base(f, { repo: r }))))
+    const cache = JSON.parse(await fs.readFile(cacheFile, 'utf8'))
+    expect(Object.keys(cache).sort()).toEqual(
+      ['a', 'b', 'c'].map((r) => `https://api.github.com/repos/o/${r}/releases/latest`)
+    )
+  })
+
+  it('keys authenticated entries separately and skips empty etags', async () => {
+    const url = `${API}/releases/latest`
+    const { fetch: f, calls } = fakeFetch({
+      [url]: [
+        { status: 200, body: rawRelease({ tag_name: 'private' }) },
+        { status: 200, body: rawRelease({ tag_name: 'public' }) }
+      ]
+    })
+    await fetchRelease(base(f, { token: 't0k' }))
+    const cache = JSON.parse(await fs.readFile(cacheFile, 'utf8'))
+    expect(Object.keys(cache)).toEqual([`${url}#auth`])
+    const rel = await fetchRelease(base(f, { maxAgeMs: GH_RELEASE_MEMO_MS }))
+    expect(rel.tag).toBe('public')
+    expect(calls[1].headers['If-None-Match']).toBeUndefined()
+  })
+
+  it('handles 429 with retry-after and missing reset', async () => {
+    const a = fakeFetch({
+      [`${API}/releases/latest`]: { status: 429, headers: { 'retry-after': '60' } }
+    })
+    await expect(fetchRelease(base(a.fetch))).rejects.toThrow(
+      "GitHub's rate limit was reached. Try again after"
+    )
+    const b = fakeFetch({
+      [`${API}/releases/latest`]: { status: 403, headers: { 'x-ratelimit-remaining': '0' } }
+    })
+    await expect(fetchRelease(base(b.fetch))).rejects.toThrow(
+      "GitHub's rate limit was reached. Try again later, or add a GitHub token in Settings."
+    )
+  })
+})
+
 describe('downloadAsset', () => {
   const bytes = new TextEncoder().encode('hello zip')
   const sha = createHash('sha256').update(bytes).digest('hex')
@@ -281,6 +326,14 @@ describe('downloadAsset', () => {
       'User-Agent': 'HML',
       Authorization: 'Bearer t0k'
     })
+  })
+
+  it('never sends the token to a non-api host', async () => {
+    const a = { ...asset(), apiUrl: 'https://evil.example/asset' }
+    const { fetch: f, calls } = fakeFetch({ [a.downloadUrl]: { status: 200, raw: bytes } })
+    await downloadAsset({ fetch: f, token: 't0k', asset: a })
+    expect(calls[0].url).toBe(a.downloadUrl)
+    expect(calls[0].headers.Authorization).toBeUndefined()
   })
 
   it('rejects on digest mismatch and http errors', async () => {
