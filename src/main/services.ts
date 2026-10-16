@@ -52,6 +52,16 @@ export interface ServiceDeps {
 
 const DEFAULT_PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll'
 
+async function assertZipFile(file: string): Promise<void> {
+  const name = path.basename(file)
+  if (!path.isAbsolute(file)) throw new Error(`${name}: expected an absolute file path.`)
+  if (!file.toLowerCase().endsWith('.zip')) {
+    throw new Error(`${name} is not a .zip file. HML installs mods from zip archives.`)
+  }
+  const stat = await fs.stat(file).catch(() => null)
+  if (!stat?.isFile()) throw new Error(`${name} was not found or is not a file.`)
+}
+
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 export function createServices(deps: ServiceDeps): HmlApi {
@@ -115,6 +125,35 @@ export function createServices(deps: ServiceDeps): HmlApi {
     invalidateSteamRoot()
   }
 
+  /** Installs zips sequentially on the profile's queue, with source kind 'local'. */
+  async function installLocalFiles(
+    def: GameDef,
+    profileId: string,
+    files: string[]
+  ): Promise<InstalledMod[]> {
+    const catalog = await getCatalog()
+    return serialize(def.label, profileId, async () => {
+      const installed: InstalledMod[] = []
+      for (const file of files) {
+        const fileName = path.basename(file)
+        try {
+          const data = await fs.readFile(file)
+          const sha256 = createHash('sha256').update(data).digest('hex')
+          installed.push(
+            await installZip(paths, def, catalog, profileId, data, {
+              kind: 'local',
+              fileName,
+              sha256
+            })
+          )
+        } catch (e) {
+          throw new Error(`Could not install ${fileName}: ${errMsg(e)}`, { cause: e })
+        }
+      }
+      return installed
+    })
+  }
+
   return {
     async searchGames(query: string): Promise<GameSummary[]> {
       const catalog = await getCatalog()
@@ -169,27 +208,21 @@ export function createServices(deps: ServiceDeps): HmlApi {
         filters: [{ name: 'Zip archives', extensions: ['zip'] }]
       })
       if (files.length === 0) return []
-      const catalog = await getCatalog()
-      return serialize(game, profileId, async () => {
-        const installed: InstalledMod[] = []
-        for (const file of files) {
-          const fileName = path.basename(file)
-          try {
-            const data = await fs.readFile(file)
-            const sha256 = createHash('sha256').update(data).digest('hex')
-            installed.push(
-              await installZip(paths, def, catalog, profileId, data, {
-                kind: 'local',
-                fileName,
-                sha256
-              })
-            )
-          } catch (e) {
-            throw new Error(`Could not install ${fileName}: ${errMsg(e)}`, { cause: e })
-          }
-        }
-        return installed
-      })
+      return installLocalFiles(def, profileId, files)
+    },
+
+    async installFromPaths(
+      game: string,
+      profileId: string,
+      files: string[]
+    ): Promise<InstalledMod[]> {
+      const def = await requireGame(game)
+      if (!Array.isArray(files) || files.some((f) => typeof f !== 'string')) {
+        throw new Error('Expected a list of file paths.')
+      }
+      // Validate every path before installing any, so a bad drop installs nothing.
+      for (const file of files) await assertZipFile(file)
+      return installLocalFiles(def, profileId, files)
     },
 
     async setModEnabled(game, profileId, modId, enabled): Promise<void> {

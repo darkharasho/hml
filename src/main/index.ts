@@ -13,8 +13,11 @@ import snapshotPath from '../../resources/ecosystem-snapshot.json?asset'
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1200,
+    height: 780,
+    minWidth: 860,
+    minHeight: 560,
+    backgroundColor: '#0f191d',
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),

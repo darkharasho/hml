@@ -110,6 +110,48 @@ describe('services', () => {
     await expect(api.installFromFile('repo', profile.id)).rejects.toThrow(/bad\.zip/)
   })
 
+  test('installFromPaths installs dropped zips as local source with sha256', async () => {
+    const api = createServices(deps)
+    const profile = await api.createProfile('repo', 'Test')
+    const zip = zipSync({
+      'manifest.json': strToU8(JSON.stringify({ name: 'Dropped', version_number: '0.1.0' })),
+      'Dropped.dll': strToU8('dll')
+    })
+    const file = path.join(tmp, 'Dropped.ZIP')
+    writeFileSync(file, zip)
+    const mods = await api.installFromPaths('repo', profile.id, [file])
+    expect(mods).toHaveLength(1)
+    expect(mods[0].source).toEqual({
+      kind: 'local',
+      fileName: 'Dropped.ZIP',
+      sha256: createHash('sha256').update(zip).digest('hex')
+    })
+    expect((await api.listProfiles('repo'))[0].mods).toHaveLength(1)
+  })
+
+  test('installFromPaths rejects non-zip, relative, missing and directory paths', async () => {
+    const api = createServices(deps)
+    const profile = await api.createProfile('repo', 'Test')
+    const txt = path.join(tmp, 'notes.txt')
+    writeFileSync(txt, 'hi')
+    const dir = path.join(tmp, 'folder.zip')
+    mkdirSync(dir)
+    await expect(api.installFromPaths('repo', profile.id, [txt])).rejects.toThrow(
+      /notes\.txt.*\.zip/
+    )
+    await expect(api.installFromPaths('repo', profile.id, ['rel/Mod.zip'])).rejects.toThrow(
+      /absolute/
+    )
+    await expect(
+      api.installFromPaths('repo', profile.id, [path.join(tmp, 'missing.zip')])
+    ).rejects.toThrow(/missing\.zip/)
+    await expect(api.installFromPaths('repo', profile.id, [dir])).rejects.toThrow(/folder\.zip/)
+    await expect(
+      api.installFromPaths('repo', profile.id, 'x' as unknown as string[])
+    ).rejects.toThrow()
+    expect((await api.listProfiles('repo'))[0].mods).toHaveLength(0)
+  })
+
   test('launch modded spawns steam with doorstop args', async () => {
     const api = createServices(deps)
     const profile = await api.createProfile('repo', 'Test')

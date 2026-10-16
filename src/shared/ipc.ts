@@ -17,6 +17,8 @@ export interface HmlApi {
   deleteProfile(game: string, id: string): Promise<void>
   /** Multi-select .zip dialog; installs with source kind 'local'. Cancel returns []. */
   installFromFile(game: string, profileId: string): Promise<InstalledMod[]>
+  /** Installs dropped .zip files (absolute paths) with source kind 'local'. */
+  installFromPaths(game: string, profileId: string, paths: string[]): Promise<InstalledMod[]>
   setModEnabled(game: string, profileId: string, modId: string, enabled: boolean): Promise<void>
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
   getLaunchWarnings(game: string, profileId: string): Promise<string[]>
@@ -37,6 +39,7 @@ const METHOD_TABLE = {
   renameProfile: true,
   deleteProfile: true,
   installFromFile: true,
+  installFromPaths: true,
   setModEnabled: true,
   uninstallMod: true,
   getLaunchWarnings: true,

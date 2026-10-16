@@ -12,6 +12,8 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
+    // Pre-bundle zustand with React up front; late discovery reloads the page mid-render.
+    optimizeDeps: { include: ['react', 'react-dom/client', 'zustand'] },
     plugins: [react(), tailwindcss()]
   }
 })

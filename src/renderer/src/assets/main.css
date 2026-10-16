@@ -1,1 +1,72 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #0f191d;
+  --color-panel: #15232a;
+  --color-raised: #1c2e35;
+  --color-line: #29404a;
+  --color-fg: #e3ece9;
+  --color-muted: #8ba49e;
+  --color-ember: #ff9a3c;
+  --color-ember-deep: #e2731b;
+  --color-teal: #5fd4c0;
+  --color-warn: #f3c54e;
+  --color-danger: #ff5d6c;
+  --font-sans:
+    'Inter Variable', 'Inter', 'Segoe UI Variable Text', 'Segoe UI', Cantarell, 'Noto Sans',
+    system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-ink text-fg font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.45;
+    user-select: none;
+  }
+  input,
+  textarea {
+    user-select: text;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-ember);
+    outline-offset: 2px;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}

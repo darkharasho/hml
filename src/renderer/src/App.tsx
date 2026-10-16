@@ -1,8 +1,46 @@
+import { useEffect } from 'react'
+import { GamePicker } from './components/GamePicker'
+import { LaunchBar } from './components/LaunchBar'
+import { ModList } from './components/ModList'
+import { ProfileSidebar } from './components/ProfileSidebar'
+import { SettingsDialog } from './components/SettingsDialog'
+import { Toasts } from './components/Toast'
+import { useStore } from './store'
+
 function App(): React.JSX.Element {
+  const ready = useStore((s) => s.ready)
+  const game = useStore((s) => s.currentGame)
+
+  useEffect(() => {
+    void useStore.getState().init()
+    // Files dropped outside the mod list must not navigate the window to file://.
+    const block = (e: DragEvent): void => e.preventDefault()
+    window.addEventListener('dragover', block)
+    window.addEventListener('drop', block)
+    return () => {
+      window.removeEventListener('dragover', block)
+      window.removeEventListener('drop', block)
+    }
+  }, [])
+
   return (
-    <div className="p-6">
-      <h1 className="text-xl font-semibold">HML</h1>
-    </div>
+    <>
+      {!ready ? (
+        <div className="grid h-full place-items-center text-sm text-muted">Loading…</div>
+      ) : game ? (
+        <div className="flex h-full">
+          <ProfileSidebar />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <LaunchBar />
+            <ModList />
+          </div>
+        </div>
+      ) : (
+        <GamePicker />
+      )}
+      <SettingsDialog />
+      <Toasts />
+    </>
   )
 }
 
