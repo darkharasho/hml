@@ -67,4 +67,14 @@ describe('downloadPackage', () => {
       'Download of A-Alpha 1.0.0 failed: boom'
     )
   })
+
+  it('rejects unsafe names before any fetch or file write', async () => {
+    const f = vi.fn(async () => ok(ZIP)) as unknown as typeof fetch
+    await expect(downloadPackage({ ...base(f), fullName: '../evil' })).rejects.toThrow(
+      /^Download of \.\.\/evil 1\.0\.0 failed: invalid package name/
+    )
+    await expect(downloadPackage({ ...base(f), version: '..' })).rejects.toThrow(/invalid package name/)
+    expect(f).not.toHaveBeenCalled()
+    expect(await fs.readdir(tmp)).toEqual([])
+  })
 })
