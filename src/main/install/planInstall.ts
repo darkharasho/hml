@@ -105,3 +105,19 @@ export function planInstall(
   }
   return { files }
 }
+
+/** Deploy games mirror the game folder: install as-is, minus one sole wrapping folder. */
+export function planDeploy(entries: string[]): InstallPlan {
+  const items = entries.map((from) => ({ from, segs: normalize(from) }))
+  const wrapped =
+    items.length > 0 &&
+    items.every((i) => i.segs.length >= 2) &&
+    items.every((i) => eq(i.segs[0], items[0].segs[0]))
+  return {
+    files: items.map((i) => ({
+      from: i.from,
+      to: (wrapped ? i.segs.slice(1) : i.segs).join('/'),
+      disableable: true
+    }))
+  }
+}

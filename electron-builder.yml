@@ -15,6 +15,7 @@ extraResources:
     to: ecosystem-snapshot.json
 asarUnpack:
   - resources/**
+  - node_modules/7zip-bin/**
 win:
   executableName: hml
 nsis:

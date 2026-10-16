@@ -11,8 +11,9 @@ import type {
 } from '../../shared/types'
 import type { AppPaths } from '../store/paths'
 import { getProfile, saveProfile } from '../profiles/profiles'
-import { planInstall, UnsafeEntryError } from './planInstall'
+import { planDeploy, planInstall, UnsafeEntryError } from './planInstall'
 import { loaderAlias } from '../../shared/modIdentity'
+import { readArchive } from './archive'
 
 export interface ZipEntries {
   names: string[]
@@ -134,7 +135,7 @@ export async function installZip(
   game: GameDef,
   catalog: Catalog,
   profileId: string,
-  data: Uint8Array,
+  data: Uint8Array | ZipEntries,
   source: ModSource,
   opts: {
     packageId?: string
@@ -151,7 +152,7 @@ export async function installZip(
 ): Promise<InstalledMod> {
   const profile = await getProfile(paths, game.label, profileId)
   const root = path.resolve(paths.profileDir(game.label, profileId))
-  const zip = readZipEntries(data)
+  const zip = data instanceof Uint8Array ? await readArchive(data) : data
   const fallback = fallbackNameFor(source)
   const meta = detectPackageMeta(zip, fallback)
 
@@ -160,8 +161,13 @@ export async function installZip(
   const version = opts.version ?? meta?.version ?? '0.0.0'
   const name = opts.name ?? meta?.name ?? packageId
 
-  const loaderPackage = findLoaderPackage(game, catalog, zip, packageId, meta?.name)
-  const plan = planInstall(zip.names, { packageId, rules: game.installRules, loaderPackage })
+  const deploy = game.loader === 'deploy'
+  const loaderPackage = deploy
+    ? undefined
+    : findLoaderPackage(game, catalog, zip, packageId, meta?.name)
+  const plan = deploy
+    ? planDeploy(zip.names)
+    : planInstall(zip.names, { packageId, rules: game.installRules, loaderPackage })
 
   // Duplicate destinations: last write wins, recorded once.
   const byTo = new Map<string, { from: string; disableable: boolean }>()

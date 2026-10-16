@@ -301,4 +301,16 @@ describe('installer', () => {
     expect(mod.files.filter((f) => f.endsWith('A.dll'))).toHaveLength(1)
     expect(readFileSync(path.join(profDir, 'BepInEx/plugins/A-Mod/A.dll'), 'utf8')).toBe('2')
   })
+
+  test('installs a deploy game zip as-is with every file disableable', async () => {
+    const deployGame: GameDef = { ...game, label: 'nexus-x', loader: 'deploy', installRules: [] }
+    const p = (await createProfile(paths, 'nexus-x', 'p')).id
+    const zip = zipSync({ 'Wrap/Data/a.esp': strToU8('esp'), 'Wrap/readme.txt': strToU8('r') })
+    const mod = await installZip(paths, deployGame, catalog, p, zip, src, { packageId: 'nexus-1' })
+    expect(mod.files.sort()).toEqual(['Data/a.esp', 'readme.txt'])
+    expect(mod.disableable.sort()).toEqual(['Data/a.esp', 'readme.txt'])
+    expect(readFileSync(path.join(paths.profileDir('nexus-x', p), 'Data/a.esp'), 'utf8')).toBe(
+      'esp'
+    )
+  })
 })

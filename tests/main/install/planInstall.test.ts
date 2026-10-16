@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { planInstall, UnsafeEntryError } from '../../../src/main/install/planInstall'
+import { planDeploy, planInstall, UnsafeEntryError } from '../../../src/main/install/planInstall'
 import type { InstallRule } from '../../../src/shared/types'
 
 const eco = JSON.parse(
@@ -192,5 +192,20 @@ describe('planInstall', () => {
     expect(out).toEqual([
       { from: 'Pack-5.4/BepInExPack/winhttp.dll', to: 'winhttp.dll', disableable: false }
     ])
+  })
+})
+
+describe('planDeploy', () => {
+  const to = (e: string[]): string[] => planDeploy(e).files.map((f) => f.to)
+  test('strips one sole wrapping folder', () => {
+    expect(to(['Mod/Data/a.esp', 'Mod/readme.txt'])).toEqual(['Data/a.esp', 'readme.txt'])
+  })
+  test('keeps a normal layout and marks everything disableable', () => {
+    const plan = planDeploy(['Data/a.esp', 'b.txt'])
+    expect(plan.files.map((f) => f.to)).toEqual(['Data/a.esp', 'b.txt'])
+    expect(plan.files.every((f) => f.disableable)).toBe(true)
+  })
+  test('rejects unsafe entries', () => {
+    expect(() => planDeploy(['../x'])).toThrow(UnsafeEntryError)
   })
 })
