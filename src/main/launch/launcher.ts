@@ -84,6 +84,11 @@ export async function launchWarnings(input: {
   return warnings
 }
 
+/** Turns doorstop off in a config (v3 or v4) so a plain Steam launch loads nothing. */
+export function disableDoorstopIni(text: string): string {
+  return text.replace(/^(\s*enabled\s*=\s*)true\b/gim, '$1false')
+}
+
 export async function launch(
   plan: LaunchPlan,
   profileDir: string,
@@ -99,7 +104,13 @@ export async function launch(
     const src = path.join(profileDir, rel)
     if (!(await exists(src))) continue
     try {
-      await fs.copyFile(src, path.join(gameDir, rel))
+      if (rel === 'doorstop_config.ini') {
+        // HML's launch arguments enable doorstop; the file itself stays inert.
+        const text = await fs.readFile(src, 'utf8')
+        await fs.writeFile(path.join(gameDir, rel), disableDoorstopIni(text))
+      } else {
+        await fs.copyFile(src, path.join(gameDir, rel))
+      }
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : String(cause)
       throw new Error(
@@ -109,10 +120,15 @@ export async function launch(
     }
   }
   try {
+    if (plan.env?.STEAM_COMPAT_DATA_PATH) {
+      await fs.mkdir(plan.env.STEAM_COMPAT_DATA_PATH, { recursive: true })
+    }
     const child = spawnFn(plan.command, plan.args, {
       detached: true,
       stdio: 'ignore',
-      shell: false
+      shell: false,
+      cwd: plan.cwd,
+      env: plan.env ? { ...process.env, ...plan.env } : undefined
     })
     await new Promise<void>((resolve, reject) => {
       child.once('error', reject)
@@ -123,6 +139,6 @@ export async function launch(
     })
   } catch (cause) {
     const msg = cause instanceof Error ? cause.message : String(cause)
-    throw new Error(`Could not start Steam: ${msg}`, { cause })
+    throw new Error(`Could not start ${plan.what}: ${msg}`, { cause })
   }
 }

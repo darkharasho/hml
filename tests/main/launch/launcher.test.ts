@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   detectDoorstopVersion,
+  disableDoorstopIni,
   findPreloader,
   isProtonGame,
   launchWarnings,
@@ -175,7 +176,8 @@ describe('launch', () => {
       {
         command: 'steam',
         args: ['-applaunch', '1'],
-        copyToGameDir: ['winhttp.dll', 'doorstop_config.ini', '.doorstop_version']
+        copyToGameDir: ['winhttp.dll', 'doorstop_config.ini', '.doorstop_version'],
+        what: 'Steam'
       },
       profile,
       gameDir,
@@ -191,7 +193,12 @@ describe('launch', () => {
   test('rejects when the child emits error', async () => {
     const { fake } = fakeChild('error')
     await expect(
-      launch({ command: 'steam', args: [], copyToGameDir: [] }, profile, gameDir, fake)
+      launch(
+        { command: 'steam', args: [], copyToGameDir: [], what: 'Steam' },
+        profile,
+        gameDir,
+        fake
+      )
     ).rejects.toThrow('Could not start Steam: spawn steam ENOENT')
   })
 
@@ -201,7 +208,7 @@ describe('launch', () => {
     await fs.mkdir(path.join(gameDir, 'winhttp.dll'))
     const { calls, fake } = fakeChild('spawn')
     const err = await launch(
-      { command: 'steam', args: [], copyToGameDir: ['winhttp.dll'] },
+      { command: 'steam', args: [], copyToGameDir: ['winhttp.dll'], what: 'Steam' },
       profile,
       gameDir,
       fake
@@ -222,7 +229,7 @@ describe('launch', () => {
     try {
       await expect(
         launch(
-          { command: 'steam', args: [], copyToGameDir: ['winhttp.dll'] },
+          { command: 'steam', args: [], copyToGameDir: ['winhttp.dll'], what: 'Steam' },
           profile,
           gameDir,
           fakeChild('spawn').fake
@@ -239,7 +246,7 @@ describe('launch', () => {
     for (const bad of ['../x', 'a/b', 'a\\b', '..', '.']) {
       await expect(
         launch(
-          { command: 'steam', args: [], copyToGameDir: ['winhttp.dll', bad] },
+          { command: 'steam', args: [], copyToGameDir: ['winhttp.dll', bad], what: 'Steam' },
           profile,
           gameDir,
           fake
@@ -248,5 +255,76 @@ describe('launch', () => {
     }
     expect(await fs.readdir(gameDir)).toEqual([])
     expect(calls).toEqual([])
+  })
+
+  test('launch writes a disabled doorstop ini into the game folder', async () => {
+    await fs.writeFile(path.join(profile, 'doorstop_config.ini'), '[General]\nenabled = true')
+    await fs.writeFile(path.join(profile, 'winhttp.dll'), Buffer.from([1, 2, 3, 255]))
+    await launch(
+      {
+        command: 'steam',
+        args: [],
+        copyToGameDir: ['winhttp.dll', 'doorstop_config.ini'],
+        what: 'Steam'
+      },
+      profile,
+      gameDir,
+      fakeChild('spawn').fake
+    )
+    expect(await fs.readFile(path.join(gameDir, 'doorstop_config.ini'), 'utf8')).toBe(
+      '[General]\nenabled = false'
+    )
+    expect(await fs.readFile(path.join(gameDir, 'winhttp.dll'))).toEqual(
+      Buffer.from([1, 2, 3, 255])
+    )
+  })
+
+  test('launch passes cwd and merged env to spawn, creating the compat data dir', async () => {
+    const prefix = path.join(tmp, 'prefix', 'deep')
+    const { calls, fake } = fakeChild('spawn')
+    await launch(
+      {
+        command: 'wine',
+        args: ['x.exe'],
+        copyToGameDir: [],
+        cwd: gameDir,
+        env: { STEAM_COMPAT_DATA_PATH: prefix, WINEDLLOVERRIDES: 'winhttp=n,b' },
+        what: 'Proton'
+      },
+      profile,
+      gameDir,
+      fake
+    )
+    const opts = calls[0][2] as { cwd: string; env: Record<string, string> }
+    expect(opts.cwd).toBe(gameDir)
+    expect(opts.env.WINEDLLOVERRIDES).toBe('winhttp=n,b')
+    expect(opts.env.PATH).toBe(process.env.PATH)
+    expect((await fs.stat(prefix)).isDirectory()).toBe(true)
+  })
+
+  test('spawn errors name what was being started', async () => {
+    await expect(
+      launch(
+        { command: 'wine', args: [], copyToGameDir: [], what: 'Wine' },
+        profile,
+        gameDir,
+        fakeChild('error').fake
+      )
+    ).rejects.toThrow('Could not start Wine: spawn steam ENOENT')
+  })
+})
+
+describe('disableDoorstopIni', () => {
+  test('disableDoorstopIni turns off doorstop 3 and 4 configs only', () => {
+    expect(
+      disableDoorstopIni(
+        '[UnityDoorstop]\nenabled=true\ntargetAssembly=BepInEx\\core\\BepInEx.Preloader.dll\n'
+      )
+    ).toBe('[UnityDoorstop]\nenabled=false\ntargetAssembly=BepInEx\\core\\BepInEx.Preloader.dll\n')
+    expect(
+      disableDoorstopIni(
+        '[General]\nenabled = true\ntarget_assembly = x\n[UnityMono]\ndebug_enabled = true\n'
+      )
+    ).toBe('[General]\nenabled = false\ntarget_assembly = x\n[UnityMono]\ndebug_enabled = true\n')
   })
 })
