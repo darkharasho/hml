@@ -752,6 +752,13 @@ export function createServices(
       return [...sorted, ...extras]
     },
 
+    async getGame(label: string): Promise<GameSummary | null> {
+      const catalog = await getCatalog()
+      const def = catalog.games.find((g) => g.label === label)
+      if (!def) return null
+      return summarize(def, catalog, await loadSettings(paths), await getSteamRoot())
+    },
+
     addNexusGame,
     nxGetDomain,
 

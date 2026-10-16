@@ -34,6 +34,8 @@ export interface GameSummary extends GameDef {
 export interface HmlApi {
   /** Installed games are listed before games that are not installed. */
   searchGames(query: string): Promise<GameSummary[]>
+  /** One game by label, without searching Nexus Mods; null for an unknown label. */
+  getGame(label: string): Promise<GameSummary | null>
   refreshCatalog(): Promise<void>
   setGamePath(label: string, dir: string | null): Promise<void>
   /** Folder dialog, then setGamePath. Null when cancelled. */
@@ -115,6 +117,7 @@ export interface HmlApi {
 // `satisfies` makes the compiler reject a missing or unknown method name.
 const METHOD_TABLE = {
   searchGames: true,
+  getGame: true,
   refreshCatalog: true,
   setGamePath: true,
   pickGamePath: true,

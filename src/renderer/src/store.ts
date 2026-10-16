@@ -189,8 +189,7 @@ export const useStore = create<State>()((set, get) => {
       const settings = await api.getSettings()
       set({ settings })
       if (settings.lastGame) {
-        const games = await api.searchGames(settings.lastGame)
-        const game = games.find((g) => g.label === settings.lastGame)
+        const game = await api.getGame(settings.lastGame)
         if (game) await get().selectGame(game)
       }
     } catch (e) {
@@ -225,7 +224,7 @@ export const useStore = create<State>()((set, get) => {
     const settings = await api.getSettings()
     set({ settings })
     if (!game) return
-    const match = (await api.searchGames(game.label)).find((g) => g.label === game.label)
+    const match = await api.getGame(game.label)
     if (match && get().currentGame?.label === game.label) set({ currentGame: match })
     await Promise.all([refreshWarnings(), refreshDeployment()])
   }
@@ -471,7 +470,7 @@ export const useStore = create<State>()((set, get) => {
           await reloadProfiles()
           return await get().selectProfile(profileId)
         }
-        const match = (await api.searchGames(game)).find((g) => g.label === game)
+        const match = await api.getGame(game)
         if (!match) throw new Error(`HML couldn't find the game ${game}.`)
         await get().selectGame(match)
       } catch (e) {

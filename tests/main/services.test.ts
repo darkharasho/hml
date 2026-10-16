@@ -124,6 +124,19 @@ describe('services', () => {
     expect(games.find((g) => g.label === 'repo')?.installDir).toBe(gameDir)
   })
 
+  test('getGame returns one summary without a Nexus search, null when unknown', async () => {
+    const urls: string[] = []
+    const base = deps.fetch
+    deps.fetch = (async (url: string, init?: unknown) => {
+      urls.push(String(url))
+      return (base as (u: string, i?: unknown) => Promise<Response>)(url, init)
+    }) as unknown as typeof fetch
+    const api = createServices(deps)
+    expect(await api.getGame('repo')).toMatchObject({ label: 'repo', installDir: gameDir })
+    expect(await api.getGame('nope')).toBeNull()
+    expect(urls.some((u) => u.includes('graphql'))).toBe(false)
+  })
+
   test('addNexusGame persists a Nexus-only game, searchGames appends extras, domains validate', async () => {
     const nx = (game: unknown): unknown => ({ data: { game } })
     deps.fetch = (async (url: string, init?: { body?: string }) => {
