@@ -55,8 +55,10 @@ async function send(
   init: { method?: string; headers: Record<string, string>; body?: string },
   timeoutMs = API_TIMEOUT_MS
 ): Promise<Response> {
+  // A redirect would carry the apikey header to wherever it points, so keyed requests refuse them.
+  const redirect: RequestRedirect = 'apikey' in init.headers ? 'error' : 'follow'
   try {
-    return await o.fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+    return await o.fetch(url, { ...init, redirect, signal: AbortSignal.timeout(timeoutMs) })
   } catch (e) {
     throw new Error(isTimeout(e) ? TIMEOUT_ERROR : CONNECTION_ERROR, { cause: e })
   }

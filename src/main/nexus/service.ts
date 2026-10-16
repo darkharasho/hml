@@ -9,6 +9,7 @@ import type {
   NxUser
 } from '../../shared/types'
 import type { HmlApi } from '../../shared/ipc'
+import { unsupportedLoaderMessage } from '../github/service'
 import type { ServiceDeps } from '../services'
 import { detectPackageMeta, installZip } from '../install/installer'
 import { readArchive } from '../install/archive'
@@ -143,6 +144,11 @@ export function createNexusServices(ctx: NexusContext): Pick<
     return found
   }
 
+  /** Installs follow the Thunderstore and GitHub rule: no installs for unsupported loaders. */
+  function requireSupported(def: GameDef): void {
+    if (!def.supported) throw new Error(unsupportedLoaderMessage(def))
+  }
+
   const domainOf = async (
     game: string
   ): Promise<{ def: GameDef; domain: string; gameId: number }> => {
@@ -198,6 +204,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     fileId?: number
   ): Promise<NxInstallResult> {
     const { def, domain, gameId } = await domainOf(game)
+    requireSupported(def)
     const key = await loadKey()
     if (!key) throw new Error(NO_KEY)
     const files = await modFiles(client, gameId, modId)
@@ -294,6 +301,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     modIds: string[]
   ): Promise<NxInstallResult[]> {
     const { def, domain, gameId } = await domainOf(game)
+    requireSupported(def)
     const key = await loadKey()
     if (!key) throw new Error(NO_KEY)
     const { mods } = await getProfile(paths, game, profileId)
@@ -333,6 +341,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
       }
     }
     if (!def) throw new Error(`Open ${link.domain} in HML before downloading its mods.`)
+    requireSupported(def)
     const profileId = settings.lastProfile[def.label]
     if (!profileId) throw new Error(`Pick a profile for ${def.displayName} in HML first.`)
     const key = await loadKey()

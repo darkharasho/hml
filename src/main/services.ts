@@ -221,10 +221,15 @@ export function createServices(
   }
 
   const DEPLOY_KEY = '__deploy__'
-  /** A deploy game and its folder (the override), or the readable reason it has none. */
-  async function requireDeploy(game: string): Promise<{ def: GameDef; gameDir: string }> {
+  /** A deploy game, or the readable reason it isn't one. */
+  async function requireDeployGame(game: string): Promise<GameDef> {
     const def = await requireGame(game)
     if (def.loader !== 'deploy') throw new Error(`${def.displayName} doesn't use deployment.`)
+    return def
+  }
+  /** A deploy game and its folder (the override), or the readable reason it has none. */
+  async function requireDeploy(game: string): Promise<{ def: GameDef; gameDir: string }> {
+    const def = await requireDeployGame(game)
     const gameDir = (await loadSettings(paths)).gamePathOverrides[def.label]
     if (!gameDir) throw new Error('Set the game folder first.')
     return { def, gameDir }
@@ -535,11 +540,10 @@ export function createServices(
     try {
       const link = parseNxm(raw)
       if (!link) throw new Error("That isn't a Nexus Mods download link.")
-      if (link.userId !== null) {
-        const me = await loggedInUserId()
-        if (me !== null && me !== link.userId) {
-          throw new Error('This download link is for a different Nexus Mods account.')
-        }
+      // A link without a user id can't be shown to be this account's, so it counts as another's.
+      const me = await loggedInUserId()
+      if (me !== null && link.userId !== me) {
+        throw new Error('This download link is for a different Nexus Mods account.')
       }
       const { game, profileId, mod } = await installFromNxm(link)
       deps.emit({
@@ -683,14 +687,15 @@ export function createServices(
       )
     },
 
+    // Remove and status work from the deployment manifest, which records the folder deployed
+    // to, so they don't need the folder setting (it may have been cleared since).
     async removeDeployment(game) {
-      const { def, gameDir } = await requireDeploy(game)
-      return serialize(game, DEPLOY_KEY, () => removeDeployment(paths, def, gameDir))
+      const def = await requireDeployGame(game)
+      return serialize(game, DEPLOY_KEY, () => removeDeployment(paths, def))
     },
 
     async getDeployment(game) {
-      const { def } = await requireDeploy(game)
-      return deploymentStatus(paths, def)
+      return deploymentStatus(paths, await requireDeployGame(game))
     },
 
     async getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]> {

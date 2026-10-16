@@ -5,13 +5,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { path7za } from '7zip-bin'
-import { readZipEntries, type ZipEntries } from './zipEntries'
+import { MAX_EXTRACTED_BYTES, readZipEntries, TOO_LARGE, type ZipEntries } from './zipEntries'
 
 const execFileAsync = promisify(execFile)
 
-export const MAX_EXTRACTED_BYTES = 4 * 1024 ** 3
+export { MAX_EXTRACTED_BYTES }
 const TIMEOUT_MS = 5 * 60 * 1000
-const TOO_LARGE = 'This archive is too large to extract.'
+const NOT_AN_ARCHIVE = "This download isn't a zip or 7z archive."
 
 export type ArchiveKind = 'zip' | '7z' | 'rar' | 'unknown'
 
@@ -25,6 +25,24 @@ export function archiveKind(data: Uint8Array): ArchiveKind {
   if (startsWith(data, [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) return '7z'
   if (startsWith(data, [0x52, 0x61, 0x72, 0x21])) return 'rar'
   return 'unknown'
+}
+
+/**
+ * A zip with bytes in front of it (a self-extractor stub) whose offsets weren't adjusted: the
+ * archive part, found from the end-of-central-directory record. Otherwise the data unchanged.
+ */
+function zipBody(data: Uint8Array): Uint8Array {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+  const stop = Math.max(0, data.length - 22 - 0xffff)
+  for (let i = data.length - 22; i >= stop; i--) {
+    if (view.getUint32(i, true) !== 0x06054b50) continue
+    const cdSize = view.getUint32(i + 12, true)
+    const cdOffset = view.getUint32(i + 16, true)
+    if (cdSize === 0xffffffff || cdOffset === 0xffffffff) return data // zip64: leave as-is
+    const prefix = i - cdSize - cdOffset
+    return prefix > 0 ? data.subarray(prefix) : data
+  }
+  return data
 }
 
 const defaultSevenZip = (): string => path7za.replace('app.asar', 'app.asar.unpacked')
@@ -104,11 +122,12 @@ async function read7z(data: Uint8Array, sevenZip: string, tmpDir: string): Promi
 
 export async function readArchive(
   data: Uint8Array,
-  opts: { sevenZip?: string; tmpDir?: string } = {}
+  opts: { sevenZip?: string; tmpDir?: string; maxBytes?: number } = {}
 ): Promise<ZipEntries> {
+  const zipOpts = { maxBytes: opts.maxBytes }
   switch (archiveKind(data)) {
     case 'zip':
-      return readZipEntries(data)
+      return readZipEntries(data, zipOpts)
     case '7z':
       return read7z(data, opts.sevenZip ?? defaultSevenZip(), opts.tmpDir ?? os.tmpdir())
     case 'rar':
@@ -116,6 +135,12 @@ export async function readArchive(
         "HML can't open .rar archives yet. Download it from Nexus Mods and install the extracted files from a zip."
       )
     default:
-      throw new Error("This download isn't a zip or 7z archive.")
+      // Self-extracting and stub-prefixed zips don't start with a zip signature.
+      try {
+        return readZipEntries(zipBody(data), zipOpts)
+      } catch (e) {
+        if (e instanceof Error && e.message === TOO_LARGE) throw e
+        throw new Error(NOT_AN_ARCHIVE, { cause: e })
+      }
   }
 }

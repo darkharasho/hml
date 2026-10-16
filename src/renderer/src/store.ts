@@ -279,14 +279,11 @@ export const useStore = create<State>()((set, get) => {
   /** Re-reads what is deployed for the current game; only deploy games have deployments. */
   async function refreshDeployment(): Promise<void> {
     const game = get().currentGame
-    // Without a game folder there is nothing deployed, and getDeployment asks for the folder.
-    if (game?.loader !== 'deploy' || !game.installDir) return set({ deployment: null })
-    try {
-      const deployment = await api.getDeployment(game.label)
-      if (get().currentGame?.label === game.label) set({ deployment })
-    } catch (e) {
-      fail(e)
-    }
+    if (game?.loader !== 'deploy') return set({ deployment: null })
+    // Asked even without a game folder: a deployment made before the folder was cleared is
+    // still there and can still be removed.
+    const deployment = await api.getDeployment(game.label).catch(() => null)
+    if (get().currentGame?.label === game.label) set({ deployment })
   }
 
   async function onNexusInstalled(

@@ -360,6 +360,15 @@ describe('installer', () => {
     expect(readFileSync(path.join(dir, 'nexus-1/b.txt'), 'utf8')).toBe('b')
   })
 
+  test('installs a zip that starts with a 16-byte junk prefix', async () => {
+    const zip = modZip('1.0.0')
+    const prefixed = new Uint8Array(16 + zip.length)
+    prefixed.fill(0x41, 0, 16)
+    prefixed.set(zip, 16)
+    const mod = await installZip(paths, game, catalog, pid, prefixed, src, { packageId: 'A-Mod' })
+    expect(mod.files).toContain('BepInEx/plugins/A-Mod/Mod.dll')
+  })
+
   test('accepts a ZipEntries object instead of bytes', async () => {
     const entries = readZipEntries(modZip('1.0.0'))
     const mod = await installZip(paths, game, catalog, pid, entries, src, { packageId: 'A-Mod' })

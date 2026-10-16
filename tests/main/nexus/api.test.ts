@@ -24,6 +24,7 @@ interface Call {
   url: string
   headers: Record<string, string>
   body: string | undefined
+  redirect: string | undefined
 }
 const KEY = 'sekrit-key-123'
 
@@ -32,8 +33,11 @@ function fake(handler: (url: string, body: string | undefined) => Reply | Error)
   calls: Call[]
 } {
   const calls: Call[] = []
-  const f = (async (url: string, init?: { headers?: Record<string, string>; body?: string }) => {
-    calls.push({ url, headers: init?.headers ?? {}, body: init?.body })
+  const f = (async (
+    url: string,
+    init?: { headers?: Record<string, string>; body?: string; redirect?: string }
+  ) => {
+    calls.push({ url, headers: init?.headers ?? {}, body: init?.body, redirect: init?.redirect })
     const r = handler(url, init?.body)
     if (r instanceof Error) throw r
     const status = r.status ?? 200
@@ -294,5 +298,22 @@ describe('key hygiene', () => {
         expect(c.headers.apikey).toBeUndefined()
     }
     expect(calls.some((c) => c.headers.apikey === KEY)).toBe(true)
+  })
+
+  it('refuses redirects on every request that carries the key', async () => {
+    const { o, calls } = fake((url) => {
+      if (url.includes('validate')) return { body: { user_id: 1, name: 'n', is_premium: false } }
+      if (url.includes('download_link'))
+        return { body: [{ URI: 'https://cf-files.nexusmods.com/x' }] }
+      if (url === GQL) return { body: { data: { mods: { totalCount: 0, nodes: [] } } } }
+      return { raw: new Uint8Array([1]) }
+    })
+    await validateKey(o, KEY)
+    const [link] = await downloadLinks(o, KEY, 'repo', 5, 9)
+    await searchMods(o, 'repo', q())
+    await downloadFile(o, link)
+    const keyed = calls.filter((c) => c.headers.apikey !== undefined)
+    expect(keyed).toHaveLength(2)
+    for (const c of keyed) expect(c.redirect).toBe('error')
   })
 })

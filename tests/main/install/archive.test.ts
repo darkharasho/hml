@@ -16,6 +16,7 @@ import path from 'node:path'
 import { path7za } from '7zip-bin'
 import { strToU8, zipSync } from 'fflate'
 import { archiveKind, readArchive } from '../../../src/main/install/archive'
+import { readZipEntries } from '../../../src/main/install/zipEntries'
 
 const have7z = existsSync(path7za)
 const text = (u: Uint8Array): string => new TextDecoder().decode(u)
@@ -100,6 +101,33 @@ describe('readArchive', () => {
       readArchive(Uint8Array.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0]))
     ).rejects.toThrow(
       "HML can't open .rar archives yet. Download it from Nexus Mods and install the extracted files from a zip."
+    )
+  })
+
+  test('reads a zip that starts with a junk prefix', async () => {
+    const zip = zipSync({ 'a.txt': strToU8('hello'), 'd/b.txt': strToU8('bb') })
+    const prefixed = new Uint8Array(16 + zip.length)
+    prefixed.set(strToU8('MZ-not-a-zip-hdr'), 0)
+    prefixed.set(zip, 16)
+    expect(archiveKind(prefixed)).toBe('unknown')
+    const entries = await readArchive(prefixed)
+    expect(entries.names.sort()).toEqual(['a.txt', 'd/b.txt'])
+    expect(text(entries.read('a.txt'))).toBe('hello')
+  })
+
+  test('refuses a zip whose declared sizes exceed the cap before inflating', async () => {
+    const zip = zipSync({ 'a.txt': strToU8('abcd'), 'b.txt': strToU8('efg') })
+    await expect(readArchive(zip, { maxBytes: 6 })).rejects.toThrow(
+      'This archive is too large to extract.'
+    )
+    expect((await readArchive(zip, { maxBytes: 7 })).names).toHaveLength(2)
+    expect(() => readZipEntries(zip, { maxBytes: 6 })).toThrow(
+      'This archive is too large to extract.'
+    )
+    const prefixed = new Uint8Array(4 + zip.length)
+    prefixed.set(zip, 4)
+    await expect(readArchive(prefixed, { maxBytes: 6 })).rejects.toThrow(
+      'This archive is too large to extract.'
     )
   })
 

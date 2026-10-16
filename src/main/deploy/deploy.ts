@@ -325,7 +325,7 @@ async function removeFromManifest(
 export async function removeDeployment(
   paths: AppPaths,
   game: GameDef,
-  gameDir: string,
+  gameDir?: string,
   opts: DeployOptions = {}
 ): Promise<void> {
   void gameDir

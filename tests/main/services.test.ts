@@ -164,8 +164,9 @@ describe('services', () => {
     await api.addNexusGame('skyrimspecialedition')
     const profile = await api.createProfile(label, 'p')
     await expect(api.deployProfile(label, profile.id)).rejects.toThrow('Set the game folder first.')
-    await expect(api.removeDeployment(label)).rejects.toThrow('Set the game folder first.')
-    await expect(api.getDeployment(label)).rejects.toThrow('Set the game folder first.')
+    // Without a folder and without a deployment there is nothing to show or remove.
+    await expect(api.removeDeployment(label)).resolves.toBeUndefined()
+    expect(await api.getDeployment(label)).toBeNull()
     expect(await api.getLaunchWarnings(label, profile.id)).toEqual(['game-not-found'])
     for (const call of [
       () => api.deployProfile('repo', 'x'),
@@ -191,6 +192,15 @@ describe('services', () => {
     const status = await api.deployProfile(label, profile.id)
     expect(status).toMatchObject({ profileId: profile.id, profileName: 'p', files: 1 })
     expect(readFileSync(path.join(dir, 'Data/a.esp'), 'utf8')).toBe('esp')
+    expect(await api.getDeployment(label)).toMatchObject({ files: 1 })
+    await api.removeDeployment(label)
+    expect(existsSync(path.join(dir, 'Data'))).toBe(false)
+    expect(await api.getDeployment(label)).toBeNull()
+
+    // Clearing the folder setting while deployed: the deployment still shows and removes from
+    // the folder recorded at deploy time.
+    await api.deployProfile(label, profile.id)
+    await api.setGamePath(label, null)
     expect(await api.getDeployment(label)).toMatchObject({ files: 1 })
     await api.removeDeployment(label)
     expect(existsSync(path.join(dir, 'Data'))).toBe(false)
@@ -1862,6 +1872,36 @@ describe('services', () => {
       await expect(none.nxUpdate('repo', pid, [])).rejects.toThrow(NO_DOMAIN)
     })
 
+    test('installs into a game whose loader HML does not support are refused', async () => {
+      const UNSUPPORTED = "BONELAB uses a mod loader HML doesn't support yet."
+      const s = JSON.parse(readFileSync(deps.paths.settings, 'utf8'))
+      const bp = (await api.createProfile('bonelab', 'p')).id
+      writeFileSync(
+        deps.paths.settings,
+        JSON.stringify({
+          ...s,
+          lastProfile: { bonelab: bp },
+          nexusDomainOverrides: { bonelab: 'bonelab' }
+        })
+      )
+      await withKey()
+      calls = []
+      await expect(api.nxInstall('bonelab', bp, 5)).rejects.toThrow(UNSUPPORTED)
+      await expect(api.nxUpdate('bonelab', bp, ['nexus-5'])).rejects.toThrow(UNSUPPORTED)
+      await expect(
+        createNexusServicesOf(api)({
+          domain: 'bonelab',
+          modId: 5,
+          fileId: 11,
+          key: 'k',
+          expires: 1,
+          userId: 77
+        })
+      ).rejects.toThrow(UNSUPPORTED)
+      expect(calls.some((c) => c.url.includes('download_link.json'))).toBe(false)
+      expect((await api.listProfiles('bonelab'))[0].mods).toEqual([])
+    })
+
     test('search and detail go through the domain', async () => {
       const q = {
         text: 'cool',
@@ -2034,6 +2074,17 @@ describe('services', () => {
           lastProfile()
           await withKey()
           await api.handleNxm(raw('78'))
+          expect(last()).toEqual({
+            type: 'nexus-failed',
+            message: 'This download link is for a different Nexus Mods account.'
+          })
+          expect(calls.some((c) => c.url.includes('download_link.json'))).toBe(false)
+        })
+
+        test('a link without a user id is refused once the user is known', async () => {
+          lastProfile()
+          await withKey()
+          await api.handleNxm('nxm://repo/mods/5/files/11?key=LINKKEY&expires=1234')
           expect(last()).toEqual({
             type: 'nexus-failed',
             message: 'This download link is for a different Nexus Mods account.'
