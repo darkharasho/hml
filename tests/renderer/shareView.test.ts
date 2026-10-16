@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HmlEvent, ImportResult, ProfileManifest } from '../../src/shared/types'
 import {
+  COPY_FAILED,
   SHARE_SOURCE_BADGE,
   fileNameOf,
   gameMismatchNote,
@@ -114,5 +115,11 @@ describe('SHARE_SOURCE_BADGE', () => {
     expect(
       Object.fromEntries(Object.entries(SHARE_SOURCE_BADGE).map(([k, v]) => [k, v.label]))
     ).toEqual({ thunderstore: 'Thunderstore', github: 'GitHub', nexus: 'Nexus', local: 'Local' })
+  })
+})
+
+describe('COPY_FAILED', () => {
+  it('tells the user to copy the code by hand', () => {
+    expect(COPY_FAILED).toBe("Couldn't copy. Select the code and copy it manually.")
   })
 })

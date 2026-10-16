@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ProfileManifest } from '../../../shared/types'
 import { formatCode } from '../../../shared/shareCode'
 import { api, errorMessage } from '../api'
-import { fileNameOf, localModsNote } from '../shareView'
+import { COPY_FAILED, fileNameOf, localModsNote } from '../shareView'
 import { useStore } from '../store'
 import { Button, Icon, Modal } from './ui'
 
@@ -67,8 +67,8 @@ export function ShareDialog({
       if (!mounted.current) return
       setCopied(true)
       setError(null)
-    } catch (e) {
-      if (mounted.current) setError(errorMessage(e))
+    } catch {
+      if (mounted.current) setError(COPY_FAILED)
     }
   }
 

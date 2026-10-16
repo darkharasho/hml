@@ -16,6 +16,9 @@ export function localModsNote(localMods: number): string | null {
     : `${localMods} local mods won't be included. Others will see them as missing.`
 }
 
+/** Shown in the Share dialog when the code can't be put on the clipboard. */
+export const COPY_FAILED = "Couldn't copy. Select the code and copy it manually."
+
 /** The headline of an import's result. */
 export function importSummary(result: ImportResult): string {
   const total = result.installed + result.unresolved.length
