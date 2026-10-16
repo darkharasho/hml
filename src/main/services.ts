@@ -1023,6 +1023,8 @@ export function createServices(
       if (stored && customLoaderSpec(customGameDef(stored))) {
         try {
           await customApi.installLoader(game, profile.id)
+          // Return the manifest with the loader in it, so the renderer shows it straight away.
+          return await getProfile(paths, game, profile.id)
         } catch (e) {
           // The profile stays; its launch warnings offer the install again.
           deps.emit({

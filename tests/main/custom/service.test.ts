@@ -443,6 +443,8 @@ describe('custom game loaders, launches and manual installs', () => {
     const api = createServices(deps)
     await addTrash(api, 'bepinex5')
     const profile = await api.createProfile(label, 'p')
+    // The returned manifest already lists the loader, so the renderer shows it without a reload.
+    expect(profile.mods).toHaveLength(1)
     const { mods } = (await api.listProfiles(label)).find((p) => p.id === profile.id)!
     expect(mods).toHaveLength(1)
     expect(mods[0].source).toMatchObject({
