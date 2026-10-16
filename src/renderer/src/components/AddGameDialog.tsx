@@ -2,13 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import type { GameSummary } from '../../../shared/ipc'
 import type { GameDetection, LoaderChoice, Runner } from '../../../shared/types'
 import { api, errorMessage } from '../api'
-import { loaderChoicesFor, loaderOptionLabel, runnerLabel } from '../customView'
+import {
+  isLinux,
+  loaderChoicesFor,
+  loaderOptionLabel,
+  runnerIndexOf,
+  runnerLabel
+} from '../customView'
 import { useStore } from '../store'
 import { Button, Modal } from './ui'
 
 const NATIVE_LINUX_NOTE = "Force Proton in the game's Steam properties, then add it again"
 const NO_RUNNER_NOTE = 'Install Proton through Steam or Wine to run this game.'
-const IS_LINUX = typeof navigator !== 'undefined' && /Linux/.test(navigator.userAgent)
 
 /** Adds an installed Steam game or a game folder, or edits an added custom game. */
 export function AddGameDialog({
@@ -42,7 +47,8 @@ export function AddGameDialog({
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const mounted = useRef(true)
-  const showRunner = mode === 'folder' && IS_LINUX
+  const showRunner =
+    isLinux() && (mode === 'folder' || (mode === 'edit' && game?.custom?.source === 'folder'))
   const showName = mode !== 'steam'
 
   useEffect(() => {
@@ -56,7 +62,9 @@ export function AddGameDialog({
     let stale = false
     api.listRunners().then(
       (list) => {
-        if (!stale) setRunners(list)
+        if (stale) return
+        setRunners(list)
+        if (mode === 'edit') setRunnerIndex(runnerIndexOf(list, game?.custom?.runner))
       },
       (e) => {
         if (!stale) {
@@ -68,6 +76,7 @@ export function AddGameDialog({
     return () => {
       stale = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showRunner])
 
   const close = (): void => {
@@ -98,7 +107,8 @@ export function AddGameDialog({
       } else if (game) {
         const updated = await api.updateCustomGame(game.label, {
           displayName: trimmed,
-          loaderChoice: loader
+          loaderChoice: loader,
+          ...(showRunner ? { runner: runners?.[runnerIndex] ?? null } : {})
         })
         if (useStore.getState().currentGame?.label === game.label)
           useStore.setState({ currentGame: updated })

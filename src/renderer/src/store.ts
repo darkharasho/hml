@@ -303,7 +303,6 @@ export const useStore = create<State>()((set, get) => {
     get().toast('info', `${e.count} GitHub ${mods} an update. Use Update to install it.`)
   }
 
-  /** Re-reads what is deployed for the current game; only deploy games have deployments. */
   /** Offers to remove a hand-installed BepInEx from the game folder, unless the user already kept it. */
   async function checkManualLoader(game: GameSummary): Promise<void> {
     if (game.loader !== 'bepinex') return
@@ -312,6 +311,7 @@ export const useStore = create<State>()((set, get) => {
       set({ manualLoader: { game: game.label, entries: found.entries } })
   }
 
+  /** Re-reads what is deployed for the current game; only deploy games have deployments. */
   async function refreshDeployment(): Promise<void> {
     const game = get().currentGame
     if (game?.loader !== 'deploy') return set({ deployment: null })

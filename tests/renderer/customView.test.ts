@@ -51,3 +51,23 @@ describe('customView', () => {
     expect(runnerLabel({ kind: 'wine' })).toBe('Wine')
   })
 })
+
+import { isLinux, runnerIndexOf } from '../../src/renderer/src/customView'
+describe('platform and runner helpers', () => {
+  test('isLinux reads the given platform and is false without one', () => {
+    expect(isLinux('linux')).toBe(true)
+    expect(isLinux('win32')).toBe(false)
+    expect(isLinux(undefined)).toBe(false)
+  })
+  test('runnerIndexOf matches kind and path, falling back to the first', () => {
+    const list = [
+      { kind: 'proton' as const, name: 'A', path: '/a' },
+      { kind: 'proton' as const, name: 'B', path: '/b' },
+      { kind: 'wine' as const }
+    ]
+    expect(runnerIndexOf(list, { kind: 'proton', name: 'B', path: '/b' })).toBe(1)
+    expect(runnerIndexOf(list, { kind: 'wine' })).toBe(2)
+    expect(runnerIndexOf(list, { kind: 'proton', name: 'Z', path: '/z' })).toBe(0)
+    expect(runnerIndexOf(list, null)).toBe(0)
+  })
+})

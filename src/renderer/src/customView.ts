@@ -25,3 +25,19 @@ export function loaderChoicesFor(detection: GameDetection): LoaderChoice[] {
 }
 
 export const runnerLabel = (r: Runner): string => (r.kind === 'proton' ? r.name : 'Wine')
+
+/** True on Linux. Reads the platform the preload exposes; false when it is absent (tests). */
+export function isLinux(platform: string | undefined = globalThis.window?.hmlPlatform): boolean {
+  return platform === 'linux'
+}
+
+/** Index of the runner in the list that matches `current` (same kind and path/name); 0 if none does. */
+export function runnerIndexOf(runners: Runner[], current: Runner | null | undefined): number {
+  if (!current) return 0
+  const i = runners.findIndex((r) =>
+    r.kind === 'wine'
+      ? current.kind === 'wine'
+      : current.kind === 'proton' && r.path === current.path && r.name === current.name
+  )
+  return i < 0 ? 0 : i
+}

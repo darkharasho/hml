@@ -19,6 +19,9 @@ const api = Object.fromEntries(
 
 contextBridge.exposeInMainWorld('hml', api)
 
+// Lets the renderer tell Linux (runners, native builds) from Windows.
+contextBridge.exposeInMainWorld('hmlPlatform', process.platform)
+
 // Dropped File objects carry no path under contextIsolation; Electron resolves it here.
 contextBridge.exposeInMainWorld('hmlFiles', {
   getPathForFile: (f: File) => webUtils.getPathForFile(f)
