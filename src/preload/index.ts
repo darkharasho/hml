@@ -1,8 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { HML_METHODS, channel, type HmlApi } from '../shared/ipc'
+import { HML_METHODS, channel, stripIpcErrorPrefix, type HmlApi } from '../shared/ipc'
 
 const api = Object.fromEntries(
-  HML_METHODS.map((m) => [m, (...args: unknown[]) => ipcRenderer.invoke(channel(m), ...args)])
+  HML_METHODS.map((m) => [
+    m,
+    async (...args: unknown[]) => {
+      try {
+        return await ipcRenderer.invoke(channel(m), ...args)
+      } catch (e) {
+        throw new Error(stripIpcErrorPrefix(e instanceof Error ? e.message : String(e)), {
+          cause: e
+        })
+      }
+    }
+  ])
 ) as unknown as HmlApi
 
 contextBridge.exposeInMainWorld('hml', api)

@@ -7,3 +7,4 @@ out
 *.log
 .superpowers
 .sai/
+*.tsbuildinfo

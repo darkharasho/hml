@@ -1,9 +1,14 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, dialog, BrowserWindow } from 'electron'
+import { spawn } from 'node:child_process'
+import { homedir } from 'node:os'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { isAllowedNavigation, isSafeExternalUrl } from './security'
 import { registerIpc } from './ipc'
+import { createServices } from './services'
+import { makePaths } from './store/paths'
 import icon from '../../resources/icon.png?asset'
+import snapshotPath from '../../resources/ecosystem-snapshot.json?asset'
 
 function createWindow(): void {
   // Create the browser window.
@@ -58,7 +63,33 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  registerIpc({ ping: async () => 'pong' })
+  registerIpc(
+    createServices({
+      paths: makePaths(app.getPath('userData')),
+      fetch: globalThis.fetch,
+      snapshotPath,
+      platform: process.platform,
+      home: homedir(),
+      dialog: {
+        async pickFiles({ title, filters }) {
+          const win = BrowserWindow.getFocusedWindow()
+          const opts = { title, filters, properties: ['openFile', 'multiSelections'] as const }
+          const r = win
+            ? await dialog.showOpenDialog(win, { ...opts, properties: [...opts.properties] })
+            : await dialog.showOpenDialog({ ...opts, properties: [...opts.properties] })
+          return r.canceled ? [] : r.filePaths
+        },
+        async pickFolder(title) {
+          const win = BrowserWindow.getFocusedWindow()
+          const opts = { title, properties: ['openDirectory' as const] }
+          const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+          return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+        }
+      },
+      shell,
+      spawn
+    })
+  )
 
   createWindow()
 
