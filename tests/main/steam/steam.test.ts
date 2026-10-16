@@ -133,6 +133,24 @@ describe('steam locator', () => {
   })
 })
 
+describe('readLaunchOptions edge cases', () => {
+  const cfg = (opts: string): string =>
+    `"UserLocalConfigStore" { "software" { "valve" { "STEAM" { "Apps" { "3241660" { "launchoptions" "${opts}" } } } } } }`
+
+  test('null when there is no userdata directory', async () => {
+    const root = await makeRoot([])
+    expect(await readLaunchOptions(root, '3241660')).toBeNull()
+  })
+
+  test('skips a user whose launch options are only whitespace', async () => {
+    const root = await makeRoot([])
+    await write(path.join(root, 'userdata', '111', 'config', 'localconfig.vdf'), cfg('   '))
+    expect(await readLaunchOptions(root, '3241660')).toBeNull()
+    await write(path.join(root, 'userdata', '222', 'config', 'localconfig.vdf'), cfg('-foo'))
+    expect(await readLaunchOptions(root, '3241660')).toBe('-foo')
+  })
+})
+
 describe('readWinSteamPath', () => {
   const OUT =
     '\r\nHKEY_CURRENT_USER\\Software\\Valve\\Steam\r\n    SteamPath    REG_SZ    c:/program files (x86)/steam\r\n\r\n'
