@@ -155,6 +155,13 @@ async function pruneEmptyDirs(root: string, files: string[]): Promise<void> {
   }
 }
 
+/** Files recorded by any mod outside `excluded`; removing or renaming them would break that mod. */
+function filesOwnedByOthers(mods: InstalledMod[], excluded: Set<string>): Set<string> {
+  const owned = new Set<string>()
+  for (const m of mods) if (!excluded.has(m.id)) for (const f of m.files) owned.add(f)
+  return owned
+}
+
 async function removeFiles(root: string, files: string[]): Promise<void> {
   for (const f of files) {
     const abs = path.resolve(root, f)
@@ -258,9 +265,11 @@ export async function installZip(
     if (!loaderPackage) for (const p of previous) for (const f of p.files) keep.add(f)
     for (const p of previous) for (const d of p.disableable) keep.delete(d)
     keptOwned = [...keep]
+    // Files another (surviving) mod also records stay; the replaced mods' own are removed.
+    const shared = filesOwnedByOthers(profile.mods, replaced)
     await removeFiles(
       root,
-      previous.flatMap((p) => p.files).filter((f) => !keep.has(f))
+      previous.flatMap((p) => p.files).filter((f) => !keep.has(f) && !shared.has(f))
     )
     await saveProfile(paths, {
       ...profile,
@@ -329,7 +338,11 @@ export async function uninstallMod(
   const mod = profile.mods.find((m) => m.id === modId)
   if (!mod) return
   const root = path.resolve(paths.profileDir(game.label, profileId))
-  await removeFiles(root, mod.files)
+  const shared = filesOwnedByOthers(profile.mods, new Set([modId]))
+  await removeFiles(
+    root,
+    mod.files.filter((f) => !shared.has(f))
+  )
   await saveProfile(paths, { ...profile, mods: profile.mods.filter((m) => m.id !== modId) })
 }
 
@@ -344,7 +357,9 @@ export async function setModEnabled(
   const mod = profile.mods.find((m) => m.id === modId)
   if (!mod) throw new Error(`Mod not installed: ${modId}`)
   const root = path.resolve(paths.profileDir(game.label, profileId))
+  const shared = filesOwnedByOthers(profile.mods, new Set([modId]))
   for (const f of mod.disableable) {
+    if (shared.has(f)) continue
     const abs = path.resolve(root, f)
     if (!abs.startsWith(root + path.sep)) continue
     const [from, to] = enabled ? [abs + '.old', abs] : [abs, abs + '.old']

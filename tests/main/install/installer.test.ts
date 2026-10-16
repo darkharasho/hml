@@ -13,7 +13,7 @@ import path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import { parseEcosystem } from '../../../src/main/catalog/ecosystem'
 import { makePaths, type AppPaths } from '../../../src/main/store/paths'
-import { createProfile, getProfile } from '../../../src/main/profiles/profiles'
+import { createProfile, getProfile, saveProfile } from '../../../src/main/profiles/profiles'
 import { UnsafeEntryError } from '../../../src/main/install/planInstall'
 import {
   installZip,
@@ -401,6 +401,77 @@ describe('installer', () => {
     const entries = readZipEntries(modZip('1.0.0'))
     const mod = await installZip(paths, game, catalog, pid, entries, src, { packageId: 'A-Mod' })
     expect(mod.files).toContain('BepInEx/plugins/A-Mod/Mod.dll')
+  })
+
+  describe('files recorded by more than one mod', () => {
+    const shared = 'BepInEx/plugins/A-Mod/Mod.dll'
+    // Installs A-Mod, then records its Mod.dll on a second mod too.
+    async function twoOwners(): Promise<void> {
+      await installZip(paths, game, catalog, pid, modZip('1.0.0'), src, { packageId: 'A-Mod' })
+      const profile = await getProfile(paths, 'repo', pid)
+      await saveProfile(paths, {
+        ...profile,
+        mods: [
+          ...profile.mods,
+          {
+            id: 'B-Mod',
+            name: 'B',
+            version: '1.0.0',
+            source: { kind: 'thunderstore', fullName: 'B-Mod' },
+            enabled: true,
+            files: [shared],
+            disableable: [shared],
+            installedAt: ''
+          }
+        ]
+      })
+    }
+
+    test('uninstalling one owner keeps the file until the last owner goes', async () => {
+      await twoOwners()
+      await uninstallMod(paths, game, pid, 'A-Mod')
+      expect(existsSync(path.join(profDir, shared))).toBe(true)
+      expect(existsSync(path.join(profDir, 'BepInEx/config/mod.cfg'))).toBe(false)
+      await uninstallMod(paths, game, pid, 'B-Mod')
+      expect(existsSync(path.join(profDir, shared))).toBe(false)
+    })
+
+    test('upgrading one owner does not remove the other owner file', async () => {
+      await twoOwners()
+      const next = zipSync({
+        'manifest.json': manifest('Mod', '2.0.0'),
+        'Other.dll': strToU8('o')
+      })
+      await installZip(paths, game, catalog, pid, next, src, { packageId: 'A-Mod' })
+      expect(readFileSync(path.join(profDir, shared), 'utf8')).toBe('dll1.0.0')
+    })
+
+    test('disabling one owner does not rename the shared file', async () => {
+      await twoOwners()
+      await setModEnabled(paths, game, pid, 'A-Mod', false)
+      expect(existsSync(path.join(profDir, shared))).toBe(true)
+      expect(existsSync(path.join(profDir, shared + '.old'))).toBe(false)
+    })
+
+    test('a replaced mod still loses its files, shared with a surviving mod or not', async () => {
+      await twoOwners()
+      // C replaces A-Mod and B-Mod: neither survives, so Mod.dll goes with them.
+      await installZip(
+        paths,
+        game,
+        catalog,
+        pid,
+        zipSync({ 'manifest.json': manifest('C', '1.0.0'), 'c.dll': strToU8('c') }),
+        { kind: 'github', owner: 'o', repo: 'c', tag: 't', asset: 'a', sha256: '' },
+        { packageId: 'C-Mod', replaces: ['A-Mod', 'B-Mod'] }
+      )
+      expect(existsSync(path.join(profDir, shared))).toBe(false)
+      // User config (non-disableable) is kept and handed to the replacement.
+      const mods = (await getProfile(paths, 'repo', pid)).mods
+      expect(mods.map((m) => m.id)).toEqual(['C-Mod'])
+      expect(mods[0].files).toContain('BepInEx/config/mod.cfg')
+      expect(existsSync(path.join(profDir, 'BepInEx/config/mod.cfg'))).toBe(true)
+    })
   })
 
   describe('a raw BepInEx release (GitHub)', () => {
