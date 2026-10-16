@@ -88,3 +88,55 @@ describe('store GitHub update check errors', () => {
     expect(useStore.getState().toasts.some((t) => t.kind === 'error')).toBe(false)
   })
 })
+
+describe('store notify-mode GitHub updates', () => {
+  const repo = { label: 'repo', displayName: 'R.E.P.O.', loader: 'bepinex', packageIndex: null }
+  const update = {
+    modId: 'a-ra',
+    owner: 'a',
+    repo: 'ra',
+    current: 'v1.0.0',
+    latest: 'v2.0.0',
+    mode: 'notify'
+  }
+  beforeEach(() => {
+    api.ghCheckUpdates.mockReset().mockResolvedValue([update])
+    useStore.setState({
+      currentGame: repo as unknown as GameSummary,
+      currentProfile: 'p',
+      profiles: [],
+      ghUpdates: [],
+      toasts: []
+    })
+  })
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+
+  test('for the current profile, refreshes updates and shows one info toast', async () => {
+    useStore
+      .getState()
+      .handleEvent({ type: 'github-updates-available', game: 'repo', profileId: 'p', count: 1 })
+    await settle()
+    expect(api.ghCheckUpdates).toHaveBeenCalledWith('repo', 'p')
+    expect(useStore.getState().ghUpdates).toEqual([update])
+    expect(useStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([
+      ['info', '1 GitHub mod has an update. Use Update to install it.']
+    ])
+    useStore.setState({ toasts: [] })
+    useStore
+      .getState()
+      .handleEvent({ type: 'github-updates-available', game: 'repo', profileId: 'p', count: 3 })
+    await settle()
+    expect(useStore.getState().toasts.map((t) => t.message)).toEqual([
+      '3 GitHub mods have an update. Use Update to install it.'
+    ])
+  })
+
+  test('for another profile, does nothing', async () => {
+    useStore
+      .getState()
+      .handleEvent({ type: 'github-updates-available', game: 'repo', profileId: 'q', count: 1 })
+    await settle()
+    expect(api.ghCheckUpdates).not.toHaveBeenCalled()
+    expect(useStore.getState().toasts).toEqual([])
+  })
+})

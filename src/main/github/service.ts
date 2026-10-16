@@ -428,6 +428,9 @@ export function createGithubServices(ctx: GhContext): Pick<
     })
   }
 
+  /** `game/profile/modId@tag` of notify-mode releases already announced this session. */
+  const announced = new Set<string>()
+
   async function autoUpdateProfile(
     def: GameDef,
     catalog: Catalog,
@@ -437,7 +440,20 @@ export function createGithubServices(ctx: GhContext): Pick<
   ): Promise<void> {
     const { mods } = await getProfile(paths, def.label, profileId)
     const done: { name: string; tag: string }[] = []
+    const fresh: string[] = []
     for (const m of mods.filter(isGhMod)) {
+      if (configOf(m).updateMode === 'notify') {
+        try {
+          const latest = await latestOf(m.source.owner, m.source.repo)
+          const key = `${def.label}/${profileId}/${m.id}@${latest.tag}`
+          if (needsUpdate(m, latest) && !announced.has(key)) fresh.push(key)
+        } catch (e) {
+          console.warn(
+            `GitHub update check of ${m.source.owner}/${m.source.repo} failed: ${errMsg(e)}`
+          )
+        }
+        continue
+      }
       if (!autoAllows(configOf(m).updateMode)) continue
       try {
         const latest = await latestOf(m.source.owner, m.source.repo)
@@ -452,6 +468,15 @@ export function createGithubServices(ctx: GhContext): Pick<
     }
     if (done.length > 0) {
       deps.emit({ type: 'github-updated', game: def.label, profileId, mods: done })
+    }
+    if (fresh.length > 0) {
+      for (const key of fresh) announced.add(key)
+      deps.emit({
+        type: 'github-updates-available',
+        game: def.label,
+        profileId,
+        count: fresh.length
+      })
     }
   }
 

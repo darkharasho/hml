@@ -1583,6 +1583,49 @@ describe('services', () => {
       }
     })
 
+    test('auto-update announces new notify-mode releases once per release', async () => {
+      await setup()
+      const p2 = (await api.createProfile('repo', 'q')).id
+      publish('a', 'ra', 'v1.0.0', { 'x.zip': zipOf('ramod', '1.0.0') })
+      publish('b', 'rb', 'v1.0.0', { 'x.zip': zipOf('rbmod', '1.0.0') })
+      publish('c', 'rc', 'v1.0.0', { 'x.zip': zipOf('rcmod', '1.0.0') })
+      await api.ghInstall('repo', pid, 'a/ra')
+      await api.ghInstall('repo', pid, 'b/rb')
+      await api.ghInstall('repo', pid, 'c/rc')
+      await api.ghInstall('repo', p2, 'a/ra')
+      for (const id of ['a-ra', 'b-rb']) await api.ghSetUpdateMode('repo', pid, id, 'notify')
+      await api.ghSetUpdateMode('repo', p2, 'a-ra', 'notify')
+      const available = (): HmlEvent[] =>
+        emitted.filter((e) => e.type === 'github-updates-available')
+
+      emitted.length = 0
+      await api.ghAutoUpdateAll()
+      expect(available()).toEqual([])
+
+      publish('a', 'ra', 'v2.0.0', { 'x.zip': zipOf('ramod', '2.0.0') })
+      publish('b', 'rb', 'v2.0.0', { 'x.zip': zipOf('rbmod', '2.0.0') })
+      await api.ghAutoUpdateAll()
+      expect(available()).toEqual([
+        { type: 'github-updates-available', game: 'repo', profileId: pid, count: 2 },
+        { type: 'github-updates-available', game: 'repo', profileId: p2, count: 1 }
+      ])
+      // notify mods are not installed
+      expect((await modsOf(pid)).find((m) => m.id === 'a-ra')!.source).toMatchObject({
+        tag: 'v1.0.0'
+      })
+
+      // Already announced: no new event until a newer release.
+      emitted.length = 0
+      await api.ghAutoUpdateAll()
+      expect(available()).toEqual([])
+      publish('a', 'ra', 'v3.0.0', { 'x.zip': zipOf('ramod', '3.0.0') })
+      await api.ghAutoUpdateAll()
+      expect(available()).toEqual([
+        { type: 'github-updates-available', game: 'repo', profileId: pid, count: 1 },
+        { type: 'github-updates-available', game: 'repo', profileId: p2, count: 1 }
+      ])
+    })
+
     test('pinned mods are skipped by ghUpdate and ghAutoUpdateAll', async () => {
       await setup()
       publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })

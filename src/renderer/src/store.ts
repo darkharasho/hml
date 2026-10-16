@@ -281,6 +281,16 @@ export const useStore = create<State>()((set, get) => {
     await get().checkUpdates()
   }
 
+  async function onGithubUpdatesAvailable(
+    e: Extract<HmlEvent, { type: 'github-updates-available' }>
+  ): Promise<void> {
+    const { currentGame, currentProfile } = get()
+    if (currentGame?.label !== e.game || currentProfile !== e.profileId) return
+    await get().checkUpdates()
+    const mods = e.count === 1 ? 'mod has' : 'mods have'
+    get().toast('info', `${e.count} GitHub ${mods} an update. Use Update to install it.`)
+  }
+
   /** Re-reads what is deployed for the current game; only deploy games have deployments. */
   async function refreshDeployment(): Promise<void> {
     const game = get().currentGame
@@ -796,6 +806,7 @@ export const useStore = create<State>()((set, get) => {
 
     handleEvent(e) {
       if (e.type === 'github-updated') return void onGithubUpdated(e)
+      if (e.type === 'github-updates-available') return void onGithubUpdatesAvailable(e)
       if (e.type === 'nexus-installed') return void onNexusInstalled(e)
       if (e.type === 'nexus-failed') return get().toast('error', e.message)
       if (progressIdle(get())) return

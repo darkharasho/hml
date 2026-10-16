@@ -291,3 +291,5 @@ export type HmlEvent =
       mod: { name: string; version: string }
     }
   | { type: 'nexus-failed'; message: string }
+  /** Notify-mode GitHub mods with a release not announced before this session. */
+  | { type: 'github-updates-available'; game: string; profileId: string; count: number }
