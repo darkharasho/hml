@@ -312,6 +312,9 @@ export async function installZip(
   )
   const previous = profile.mods.filter((m) => replaced.has(m.id))
   let keptOwned: string[] = []
+  // A loader's files that a surviving mod also records stay on disk; the new version still
+  // overwrites them and records them as its own instead of leaving them stale and unowned.
+  let loaderShared = new Set<string>()
   if (previous.length > 0) {
     // Upgrade: keep user config (non-disableable files) of regular mods; loader
     // packages are all non-disableable and must be replaced wholesale.
@@ -321,6 +324,9 @@ export async function installZip(
     keptOwned = [...keep]
     // Files another (surviving) mod also records stay; the replaced mods' own are removed.
     const shared = filesOwnedByOthers(profile.mods, replaced)
+    if (loaderPackage) {
+      loaderShared = new Set(previous.flatMap((p) => p.files).filter((f) => shared.has(f)))
+    }
     await removeFiles(
       root,
       previous.flatMap((p) => p.files).filter((f) => !keep.has(f) && !shared.has(f))
@@ -339,7 +345,7 @@ export async function installZip(
   try {
     for (const [to, f] of byTo) {
       const abs = path.resolve(root, to)
-      if (!f.disableable && (await exists(abs))) {
+      if (!f.disableable && !loaderShared.has(to) && (await exists(abs))) {
         // Keep user config; it stays owned only if a previous version owned it.
         if (keptOwned.includes(to)) files.push(to)
         continue

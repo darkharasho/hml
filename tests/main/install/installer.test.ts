@@ -453,6 +453,42 @@ describe('installer', () => {
       expect(existsSync(path.join(profDir, shared + '.old'))).toBe(false)
     })
 
+    test('a loader update overwrites and records a file another mod also records', async () => {
+      const ts = { kind: 'thunderstore', fullName: 'BepInEx-BepInExPack' } as const
+      const pack = (v: string): Uint8Array =>
+        zipSync({
+          'manifest.json': manifest('BepInExPack', v),
+          'BepInExPack/winhttp.dll': strToU8('w' + v),
+          'BepInExPack/BepInEx/core/BepInEx.dll': strToU8('c' + v)
+        })
+      const opts = (v: string): Parameters<typeof installZip>[6] => ({
+        packageId: 'BepInEx-BepInExPack',
+        name: 'BepInExPack',
+        version: v
+      })
+      await installZip(paths, game, catalog, pid, pack('1'), ts, opts('1'))
+      const profile = await getProfile(paths, 'repo', pid)
+      await saveProfile(paths, {
+        ...profile,
+        mods: [
+          ...profile.mods,
+          {
+            id: 'B-Mod',
+            name: 'B',
+            version: '1.0.0',
+            source: { kind: 'thunderstore', fullName: 'B-Mod' },
+            enabled: true,
+            files: ['winhttp.dll'],
+            disableable: [],
+            installedAt: ''
+          }
+        ]
+      })
+      const mod = await installZip(paths, game, catalog, pid, pack('2'), ts, opts('2'))
+      expect(readFileSync(path.join(profDir, 'winhttp.dll'), 'utf8')).toBe('w2')
+      expect(mod.files.sort()).toEqual(['BepInEx/core/BepInEx.dll', 'winhttp.dll'])
+    })
+
     test('a replaced mod still loses its files, shared with a surviving mod or not', async () => {
       await twoOwners()
       // C replaces A-Mod and B-Mod: neither survives, so Mod.dll goes with them.
