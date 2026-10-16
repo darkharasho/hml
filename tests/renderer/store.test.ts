@@ -9,7 +9,11 @@ const api = vi.hoisted(() => ({
   removeDeployment: vi.fn(),
   listProfiles: vi.fn(),
   ghCheckUpdates: vi.fn(),
-  nxInstall: vi.fn()
+  nxInstall: vi.fn(),
+  getSettings: vi.fn(),
+  saveSettings: vi.fn(),
+  getGame: vi.fn(),
+  getLaunchWarnings: vi.fn()
 }))
 vi.mock('../../src/renderer/src/api', () => ({
   api,
@@ -212,5 +216,62 @@ describe('store nxInstall without an API key', () => {
     api.nxInstall.mockRejectedValue(new Error('boom'))
     expect(await useStore.getState().nxInstall(mod, 1, { inlineNoKey: true })).toBe('done')
     expect(useStore.getState().toasts.map((t) => t.message)).toEqual(['boom'])
+  })
+})
+
+describe('store openImportedProfile', () => {
+  const gameOf = (label: string): GameSummary =>
+    ({ label, displayName: label, loader: 'deploy', installDir: null }) as unknown as GameSummary
+  const prof = (id: string): ProfileManifest =>
+    ({ id, name: id, mods: [] }) as unknown as ProfileManifest
+
+  beforeEach(() => {
+    api.getDeployment.mockReset().mockResolvedValue(null)
+    api.listProfiles.mockReset()
+    api.ghCheckUpdates.mockReset().mockResolvedValue([])
+    api.getSettings.mockReset().mockResolvedValue({ lastProfile: {}, lastGame: null })
+    api.saveSettings.mockReset().mockResolvedValue(undefined)
+    api.getGame.mockReset()
+    api.getLaunchWarnings.mockReset().mockResolvedValue([])
+    useStore.setState({
+      currentGame: gameOf('nexus-x'),
+      currentProfile: 'a',
+      profiles: [prof('a')],
+      settings: null,
+      toasts: []
+    })
+  })
+
+  test('for the current game it reloads profiles and selects the id', async () => {
+    api.listProfiles.mockResolvedValue([prof('a'), prof('b')])
+    await useStore.getState().openImportedProfile('nexus-x', 'b')
+    expect(api.listProfiles).toHaveBeenCalledWith('nexus-x')
+    expect(api.getGame).not.toHaveBeenCalled()
+    const s = useStore.getState()
+    expect(s.profiles.map((p) => p.id)).toEqual(['a', 'b'])
+    expect(s.currentProfile).toBe('b')
+    expect(s.currentGame?.label).toBe('nexus-x')
+  })
+
+  test('for another game it looks the game up with getGame and selects it', async () => {
+    const other = gameOf('nexus-y')
+    api.getGame.mockResolvedValue(other)
+    api.listProfiles.mockResolvedValue([prof('q1'), prof('q2')])
+    await useStore.getState().openImportedProfile('nexus-y', 'q2')
+    expect(api.getGame).toHaveBeenCalledWith('nexus-y')
+    const s = useStore.getState()
+    expect(s.currentGame?.label).toBe('nexus-y')
+    expect(s.currentProfile).toBe('q2')
+    expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ lastGame: 'nexus-y' }))
+  })
+
+  test('an unknown game is reported and leaves the current game alone', async () => {
+    api.getGame.mockResolvedValue(null)
+    await useStore.getState().openImportedProfile('nexus-z', 'p')
+    const s = useStore.getState()
+    expect(s.currentGame?.label).toBe('nexus-x')
+    expect(s.toasts.some((t) => t.message.includes("HML couldn't find the game nexus-z."))).toBe(
+      true
+    )
   })
 })
