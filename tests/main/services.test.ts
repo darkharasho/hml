@@ -2751,6 +2751,42 @@ describe('services', () => {
         expect(after.find((m) => m.id === 'nexus-5')?.source).toMatchObject({ fileId: 13 })
         expect(after.find((m) => m.id === 'nexus-6')?.source).toMatchObject({ fileId: 21 })
       })
+
+      test('nxUpdate does not count website hand-offs as updated', async () => {
+        await withKey()
+        cdn[21] = zipOf('Other', '1.0.0')
+        cdn[31] = zipOf('Third', '1.0.0')
+        for (const [modId, fileId] of [
+          [5, 11],
+          [6, 21],
+          [7, 31]
+        ]) {
+          files = [{ fileId, category: 'MAIN', date: 50 }]
+          await api.nxInstall('repo', pid, modId)
+        }
+        files = [11, 21, 31, 13].map((fileId) => ({
+          fileId,
+          category: 'MAIN' as const,
+          date: fileId === 13 ? 300 : 50
+        }))
+        failMod = 7
+        const fresh = createServices({
+          ...deps,
+          fetch: (async (url: string, init?: { body?: string }) =>
+            url.includes('/mods/6/') && url.includes('download_link')
+              ? reply({}, 403)
+              : nxFetch(url, init as never)) as unknown as typeof fetch
+        })
+        const mods = await modsOf()
+        const err = await fresh
+          .nxUpdate(
+            'repo',
+            pid,
+            mods.map((m) => m.id)
+          )
+          .catch((e: Error) => e)
+        expect((err as Error).message).toMatch(/^Updated 1 of 2 Nexus mods\. /)
+      })
     })
 
     describe('installFromNxm', () => {

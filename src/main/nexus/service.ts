@@ -317,10 +317,9 @@ export function createNexusServices(ctx: NexusContext): Pick<
       }
     }
     if (failed.length > 0) {
+      const installed = results.filter((r) => r.kind === 'installed').length
       const done =
-        results.length > 0
-          ? `Updated ${results.length} of ${results.length + failed.length} Nexus mods. `
-          : ''
+        installed > 0 ? `Updated ${installed} of ${installed + failed.length} Nexus mods. ` : ''
       throw new Error(done + failed.join(' '))
     }
     return results
