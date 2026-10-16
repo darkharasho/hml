@@ -63,6 +63,11 @@ export interface InstalledMod {
   installedAt: string
   /** Set only on github-source mods. */
   github?: GhModConfig
+  /**
+   * Thunderstore packages (fullNames) this mod stands in for: a GitHub install that replaced a
+   * Thunderstore copy, or a raw loader release. Dependencies on them count as satisfied.
+   */
+  provides?: string[]
 }
 
 export interface ProfileManifest {
@@ -174,7 +179,7 @@ export interface TsInstallResult {
   installed: InstalledMod[]
   skipped: string[] // fullNames already satisfied
   missing: string[] // dependency strings not found in the index
-  replaced?: string[] // ids of local mods superseded by the Thunderstore copy
+  replaced?: string[] // ids of local or GitHub mods superseded by the Thunderstore copy
   enabled?: string[] // fullNames of disabled dependencies that were turned back on
 }
 export interface ModUpdate {

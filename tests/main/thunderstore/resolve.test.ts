@@ -4,6 +4,7 @@ import {
   findUpdates,
   installedVersions,
   mergePlans,
+  providedPackages,
   parseDependency,
   resolveInstall
 } from '../../../src/main/thunderstore/resolve'
@@ -256,6 +257,47 @@ describe('installedVersions', () => {
     expect(m.get('BepInEx-BepInExPack')).toBe('5.4.1')
     expect(m.has('bbepis-BepInExPack')).toBe(false)
     expect(m.has('x')).toBe(false)
+  })
+})
+
+describe('provided packages', () => {
+  const gh = (provides?: string[]): InstalledMod => ({
+    ...mod('o-r', '2.0.0', {
+      kind: 'github',
+      owner: 'o',
+      repo: 'r',
+      tag: 'v2.0.0',
+      asset: 'a.zip',
+      sha256: ''
+    }),
+    ...(provides ? { provides } : {})
+  })
+
+  it('installedVersions maps a provided package at the GitHub mod version', () => {
+    const m = installedVersions([gh(['O-Lib'])], [])
+    expect(m.get('O-Lib')).toBe('2.0.0')
+    expect(m.has('o-r')).toBe(false)
+  })
+
+  it('a Thunderstore mod of the same package wins over a provider', () => {
+    const m = installedVersions([ts('O-Lib', '1.0.0'), gh(['O-Lib'])], [])
+    expect(m.get('O-Lib')).toBe('1.0.0')
+  })
+
+  it('providedPackages lists what installed mods provide', () => {
+    expect([...providedPackages([gh(['O-Lib', 'O-Other']), ts('O-A', '1.0.0')])]).toEqual([
+      'O-Lib',
+      'O-Other'
+    ])
+    expect(providedPackages([gh()]).size).toBe(0)
+  })
+
+  it('a provided dependency is satisfied at any version and not planned', () => {
+    const i = idx(pkg('O-A', { '1.0.0': ['O-Lib-9.0.0'] }), pkg('O-Lib', { '9.0.0': [] }))
+    const have = installedVersions([gh(['O-Lib'])], [])
+    const r = resolveInstall(i, { fullName: 'O-A' }, have, new Set(['O-Lib']))
+    expect(names(r)).toEqual(['O-A@1.0.0'])
+    expect(r.skipped).toEqual(['O-Lib'])
   })
 })
 

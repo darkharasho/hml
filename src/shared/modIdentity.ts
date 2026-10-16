@@ -10,14 +10,16 @@ export function loaderAlias(loaderPackageId: string): string {
 
 /**
  * The installed mod that stands for Thunderstore package `fullName`: the mod recorded under that
- * id, or for a loader package a mod recorded under its local alias.
+ * id, else a mod that `provides` it, else for a loader package a mod recorded under its local
+ * alias.
  */
 export function findInstalledMod(
   mods: InstalledMod[],
   fullName: string,
   loaderPackageIds: readonly string[]
 ): InstalledMod | undefined {
-  const exact = mods.find((m) => m.id === fullName)
+  const exact =
+    mods.find((m) => m.id === fullName) ?? mods.find((m) => m.provides?.includes(fullName))
   if (exact || !loaderPackageIds.includes(fullName)) return exact
   const alias = loaderAlias(fullName)
   return mods.find((m) => m.id === alias)

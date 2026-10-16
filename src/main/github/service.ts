@@ -178,7 +178,16 @@ export function createGithubServices(ctx: GhContext): Pick<
         sameRepo(m.source.repo, repo) &&
         m.id !== packageId
     )
+    // A Thunderstore copy of the same package: only an unambiguous single match is replaced.
+    const tsNamed = mods.filter((m) => m.source.kind === 'thunderstore' && m.name === name)
+    const tsCopy = tsNamed.length === 1 ? tsNamed[0] : undefined
     const previous = mods.find((m) => m.id === packageId) ?? sameRepoMods[0]
+    const provides = [
+      ...new Set([
+        ...(previous?.provides ?? []),
+        ...(tsCopy?.source.kind === 'thunderstore' ? [tsCopy.source.fullName] : [])
+      ])
+    ]
     const mod = await installZip(
       paths,
       def,
@@ -196,11 +205,14 @@ export function createGithubServices(ctx: GhContext): Pick<
       {
         packageId,
         version,
-        replaces: [...local, ...sameRepoMods].map((m) => m.id).filter((id) => id !== packageId),
-        github: o.config(previous)
+        replaces: [...local, ...sameRepoMods, ...(tsCopy ? [tsCopy] : [])]
+          .map((m) => m.id)
+          .filter((id) => id !== packageId),
+        github: o.config(previous),
+        provides
       }
     )
-    return { mod, replaced: local.map((m) => m.id) }
+    return { mod, replaced: [...local, ...(tsCopy ? [tsCopy] : [])].map((m) => m.id) }
   }
 
   /**

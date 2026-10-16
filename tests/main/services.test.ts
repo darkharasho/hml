@@ -980,6 +980,136 @@ describe('services', () => {
       expect(existsSync(path.join(dir, 'BepInEx/plugins/Lib'))).toBe(false)
     })
 
+    describe('a GitHub copy of a Thunderstore package', () => {
+      /** Serves `gh/<repo>` releases: the latest is the last published zip. */
+      const ghReleases = new Map<string, { tag: string; zip: Uint8Array }[]>()
+      const ghPublish = (repo: string, tag: string, zip: Uint8Array): void => {
+        ghReleases.set(repo, [...(ghReleases.get(repo) ?? []), { tag, zip }])
+      }
+      const both = (async (url: string, init?: never) => {
+        const u = new URL(url)
+        const api = /^\/repos\/gh\/([^/]+)\/releases\/latest$/.exec(u.pathname)
+        if (u.host === 'api.github.com' && api) {
+          const rels = ghReleases.get(api[1])
+          const rel = rels?.[rels.length - 1]
+          if (!rel)
+            return { ok: false, status: 404, headers: new Headers(), json: async () => ({}) }
+          const body = {
+            tag_name: rel.tag,
+            name: rel.tag,
+            prerelease: false,
+            draft: false,
+            published_at: '2026-01-01T00:00:00Z',
+            html_url: `https://github.com/gh/${api[1]}/releases/tag/${rel.tag}`,
+            assets: [
+              {
+                id: 1,
+                name: 'lib.zip',
+                size: rel.zip.length,
+                browser_download_url: `https://github.com/gh/${api[1]}/releases/download/${rel.tag}/lib.zip`,
+                url: `https://api.github.com/repos/gh/${api[1]}/releases/assets/1`,
+                digest: `sha256:${createHash('sha256').update(rel.zip).digest('hex')}`
+              }
+            ]
+          }
+          return { ok: true, status: 200, headers: new Headers(), json: async () => body }
+        }
+        const down = /^\/gh\/([^/]+)\/releases\/download\/([^/]+)\/lib\.zip$/.exec(u.pathname)
+        if (u.host === 'github.com' && down) {
+          const b = ghReleases.get(down[1])!.find((r) => r.tag === down[2])!.zip
+          const buf = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
+          return { ok: true, status: 200, headers: new Headers(), arrayBuffer: async () => buf }
+        }
+        return tsFetch(url, init)
+      }) as unknown as typeof fetch
+      const makeBoth = (): ReturnType<typeof createServices> =>
+        createServices({ ...deps, fetch: both })
+      const modsIn = async (
+        api: ReturnType<typeof createServices>
+      ): Promise<import('../../src/shared/types').InstalledMod[]> =>
+        (await api.listProfiles('repo'))[0].mods
+      beforeEach(() => ghReleases.clear())
+
+      test('a GitHub install replaces the one Thunderstore mod with its manifest name', async () => {
+        const api = makeBoth()
+        const profile = await api.createProfile('repo', 'T')
+        await api.tsInstall('repo', profile.id, 'Own-Mod')
+        ghPublish('lib', 'v1.5.0', zipOf('Lib', '1.5.0'))
+        const r = await api.ghInstall('repo', profile.id, 'gh/lib')
+        if (r.kind !== 'installed') throw new Error('expected install')
+        expect(r.replaced).toEqual(['Dep-Lib'])
+        expect(r.mod).toMatchObject({ id: 'gh-lib', version: '1.5.0', provides: ['Dep-Lib'] })
+        const mods = await modsIn(api)
+        expect(mods.map((m) => m.id).sort()).toEqual(['Own-Mod', 'gh-lib'])
+        const dir = deps.paths.profileDir('repo', profile.id)
+        expect(existsSync(path.join(dir, 'BepInEx/plugins/Dep-Lib'))).toBe(false)
+        expect(existsSync(path.join(dir, 'BepInEx/plugins/gh-lib/Lib.dll'))).toBe(true)
+
+        // An update of the GitHub mod keeps what it provides.
+        ghPublish('lib', 'v1.6.0', zipOf('Lib', '1.6.0'))
+        const [u] = await api.ghUpdate('repo', profile.id, ['gh-lib'])
+        expect(u.provides).toEqual(['Dep-Lib'])
+      })
+
+      test('a Thunderstore dependency on the provided package is satisfied, at any version', async () => {
+        const api = makeBoth()
+        const profile = await api.createProfile('repo', 'T')
+        await api.tsInstall('repo', profile.id, 'Dep-Lib')
+        ghPublish('lib', 'v1.5.0', zipOf('Lib', '1.5.0'))
+        await api.ghInstall('repo', profile.id, 'gh/lib')
+        const r = await api.tsInstall('repo', profile.id, 'Own-Mod')
+        expect(r.installed.map((m) => m.id)).toEqual(['Own-Mod'])
+        expect(r.skipped).toEqual(['Dep-Lib'])
+        expect((await modsIn(api)).map((m) => m.id).sort()).toEqual(['Own-Mod', 'gh-lib'])
+
+        // A newer Own-Mod that needs a newer Lib than the GitHub copy still doesn't bring it back.
+        packages = [
+          rawPkg('Own', 'Mod', ['1.1.0', '1.0.0'], ['Dep-Lib-9.0.0']),
+          rawPkg('Dep', 'Lib', ['9.0.0', '1.0.0'])
+        ]
+        blobs.set(dl('Own-Mod', '1.1.0'), zipOf('Mod', '1.1.0'))
+        blobs.set(dl('Dep-Lib', '9.0.0'), zipOf('Lib', '9.0.0'))
+        CHUNK = 'https://ts.test/chunk-2'
+        await api.tsRefresh('repo')
+        const u = await api.tsUpdate('repo', profile.id, ['Own-Mod'])
+        expect(u.installed.map((m) => m.id)).toEqual(['Own-Mod'])
+        expect((await modsIn(api)).map((m) => m.id).sort()).toEqual(['Own-Mod', 'gh-lib'])
+      })
+
+      test('installing the provided package itself replaces the GitHub mod', async () => {
+        const api = makeBoth()
+        const profile = await api.createProfile('repo', 'T')
+        ghPublish('lib', 'v1.0.0', zipOf('Lib', '1.0.0'))
+        await api.tsInstall('repo', profile.id, 'Dep-Lib')
+        await api.ghInstall('repo', profile.id, 'gh/lib')
+        const r = await api.tsInstall('repo', profile.id, 'Dep-Lib')
+        expect(r.installed.map((m) => m.id)).toEqual(['Dep-Lib'])
+        expect(r.replaced).toEqual(['gh-lib'])
+        expect((await modsIn(api)).map((m) => m.id)).toEqual(['Dep-Lib'])
+        const dir = deps.paths.profileDir('repo', profile.id)
+        expect(existsSync(path.join(dir, 'BepInEx/plugins/gh-lib'))).toBe(false)
+      })
+
+      test('two Thunderstore mods with the manifest name are ambiguous: none is replaced', async () => {
+        packages = [rawPkg('Dep', 'Lib', ['1.0.0']), rawPkg('Alt', 'Lib', ['1.0.0'])]
+        blobs.set(dl('Alt-Lib', '1.0.0'), zipOf('Lib', '1.0.0'))
+        const api = makeBoth()
+        const profile = await api.createProfile('repo', 'T')
+        await api.tsInstall('repo', profile.id, 'Dep-Lib')
+        await api.tsInstall('repo', profile.id, 'Alt-Lib')
+        ghPublish('lib', 'v1.5.0', zipOf('Lib', '1.5.0'))
+        const r = await api.ghInstall('repo', profile.id, 'gh/lib')
+        if (r.kind !== 'installed') throw new Error('expected install')
+        expect(r.replaced).toEqual([])
+        expect(r.mod.provides).toBeUndefined()
+        expect((await modsIn(api)).map((m) => m.id).sort()).toEqual([
+          'Alt-Lib',
+          'Dep-Lib',
+          'gh-lib'
+        ])
+      })
+    })
+
     test('a disabled dependency that is already satisfied is enabled', async () => {
       const api = make()
       const profile = await api.createProfile('repo', 'T')

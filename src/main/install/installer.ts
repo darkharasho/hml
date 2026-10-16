@@ -143,6 +143,8 @@ export async function installZip(
     replaces?: string[]
     /** Recorded on the new mod in the same save (github-source mods). */
     github?: GhModConfig
+    /** Thunderstore packages the new mod stands in for, recorded on it. */
+    provides?: string[]
   } = {}
 ): Promise<InstalledMod> {
   const profile = await getProfile(paths, game.label, profileId)
@@ -235,7 +237,8 @@ export async function installZip(
       files,
       disableable,
       installedAt: new Date().toISOString(),
-      ...(opts.github ? { github: opts.github } : {})
+      ...(opts.github ? { github: opts.github } : {}),
+      ...(opts.provides && opts.provides.length > 0 ? { provides: opts.provides } : {})
     }
     const current = await getProfile(paths, game.label, profileId)
     await saveProfile(paths, {

@@ -45,10 +45,15 @@ interface Pass {
   missing: string[]
 }
 
+/**
+ * Resolves `target` and its dependencies against what is installed. A dependency in `provided`
+ * (stood in for by another mod, see `providedPackages`) counts as satisfied at any version.
+ */
 export function resolveInstall(
   index: Map<string, TsPackage>,
   target: { fullName: string; version?: string },
-  installed: Map<string, string>
+  installed: Map<string, string>,
+  provided: ReadonlySet<string> = new Set()
 ): { plan: PlannedPackage[]; skipped: string[]; missing: string[] } {
   const targetPkg = index.get(target.fullName)
   if (!targetPkg) throw new Error(`${target.fullName} isn't on Thunderstore for this game.`)
@@ -84,7 +89,7 @@ export function resolveInstall(
         // An installed version that satisfies the minimum is enough; the index is
         // only consulted when something has to be downloaded.
         const have = installed.get(fullName)
-        if (have !== undefined && compareVersions(have, min) >= 0) {
+        if (provided.has(fullName) || (have !== undefined && compareVersions(have, min) >= 0)) {
           visited.add(fullName)
           skipped.add(fullName)
           continue
@@ -188,11 +193,19 @@ export function findUpdates(mods: InstalledMod[], index: Map<string, TsPackage>)
   return updates
 }
 
+/** Thunderstore packages that installed mods stand in for (their `provides`). */
+export function providedPackages(mods: InstalledMod[]): Set<string> {
+  return new Set(mods.flatMap((m) => m.provides ?? []))
+}
+
 export function installedVersions(
   mods: InstalledMod[],
   loaderPackageIds: string[]
 ): Map<string, string> {
   const out = new Map<string, string>()
+  for (const mod of mods) {
+    for (const fullName of mod.provides ?? []) out.set(fullName, mod.version)
+  }
   for (const mod of mods) {
     if (mod.source.kind === 'thunderstore') out.set(mod.source.fullName, mod.version)
   }

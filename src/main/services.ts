@@ -48,6 +48,7 @@ import {
   findUpdates,
   installedVersions,
   mergePlans,
+  providedPackages,
   resolveInstall,
   type PlannedPackage
 } from './thunderstore/resolve'
@@ -424,7 +425,8 @@ export function createServices(
 
   /**
    * Installs a resolved plan in order (dependencies first), inside the profile's queue. A local
-   * mod whose id is a planned package's manifest name is replaced by the Thunderstore copy.
+   * mod whose id is a planned package's manifest name, or a mod that `provides` the package, is
+   * replaced by the Thunderstore copy.
    */
   async function installPlan(
     def: GameDef,
@@ -451,7 +453,13 @@ export function createServices(
           fetch: deps.fetch
         })
         const { mods } = await getProfile(paths, def.label, profileId)
-        const local = mods.some((m) => m.source.kind === 'local' && m.id === pkg.name)
+        const supersedes = mods
+          .filter(
+            (m) =>
+              (m.source.kind === 'local' && m.id === pkg.name) ||
+              (m.id !== pkg.fullName && m.provides?.includes(pkg.fullName))
+          )
+          .map((m) => m.id)
         installed.push(
           await installZip(
             paths,
@@ -464,11 +472,11 @@ export function createServices(
               packageId: pkg.fullName,
               name: pkg.name,
               version: pkg.version,
-              replaces: local ? [pkg.name] : []
+              replaces: supersedes
             }
           )
         )
-        if (local) replaced.push(pkg.name)
+        replaced.push(...supersedes)
       } catch (e) {
         throw new Error(`${pkg.fullName}: ${errMsg(e)}`, { cause: e })
       }
@@ -533,10 +541,19 @@ export function createServices(
       const loaders = await loaderIds(def)
       return serialize(game, profileId, async () => {
         const profile = await getProfile(paths, game, profileId)
+        const installedNow = installedVersions(profile.mods, loaders)
+        const provided = providedPackages(profile.mods)
+        // Installing a provided package itself replaces the mod that stands in for it.
+        const tsCopy = profile.mods.some(
+          (m) => m.source.kind === 'thunderstore' && m.source.fullName === fullName
+        )
+        if (provided.has(fullName) && !tsCopy) installedNow.delete(fullName)
+        provided.delete(fullName)
         const { plan, skipped, missing } = resolveInstall(
           idx.byName,
           { fullName, version },
-          installedVersions(profile.mods, loaders)
+          installedNow,
+          provided
         )
         const satisfied = skipped.filter((s) => s !== fullName)
         const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
@@ -564,11 +581,12 @@ export function createServices(
         const wanted = new Set(modIds)
         const targets = findUpdates(profile.mods, idx.byName).filter((u) => wanted.has(u.modId))
         const installedNow = installedVersions(profile.mods, loaders)
+        const provided = providedPackages(profile.mods)
         const plans: PlannedPackage[][] = []
         const skipped = new Set<string>()
         const missing = new Set<string>()
         for (const t of targets) {
-          const r = resolveInstall(idx.byName, { fullName: t.fullName }, installedNow)
+          const r = resolveInstall(idx.byName, { fullName: t.fullName }, installedNow, provided)
           plans.push(r.plan)
           r.skipped.forEach((s) => skipped.add(s))
           r.missing.forEach((m) => missing.add(m))
