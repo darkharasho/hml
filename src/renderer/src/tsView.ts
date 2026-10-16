@@ -47,12 +47,20 @@ export function newestVersion(pkg: TsPackage): TsVersion | undefined {
 
 export type InstallState =
   | { kind: 'install' }
-  | { kind: 'installed'; version: string }
+  /** `providedBy`: the package is stood in for by a mod from that source (its `provides`). */
+  | { kind: 'installed'; version: string; providedBy?: string }
   | { kind: 'update'; installed: string; latest: string }
+
+const PROVIDER_NAMES: Partial<Record<InstalledMod['source']['kind'], string>> = {
+  github: 'GitHub',
+  nexus: 'Nexus Mods'
+}
 
 /**
  * Thunderstore mods are recorded with id `Owner-Name`, which equals the package's fullName. A
- * loader package (one of `loaderPackageIds`) also matches a local install under its alias.
+ * loader package (one of `loaderPackageIds`) also matches a local install under its alias. A
+ * GitHub (or Nexus) mod that provides the package shows as installed, never as an update: its
+ * versions don't follow Thunderstore's, and replacing it is a deliberate pick of a version.
  */
 export function installState(
   pkg: TsPackage,
@@ -61,6 +69,8 @@ export function installState(
 ): InstallState {
   const mod = findInstalledMod(mods, pkg.fullName, loaderPackageIds)
   if (!mod) return { kind: 'install' }
+  const providedBy = PROVIDER_NAMES[mod.source.kind]
+  if (providedBy) return { kind: 'installed', version: mod.version, providedBy }
   const latest = newestVersion(pkg)?.version
   if (latest && compareVersions(mod.version, latest) < 0)
     return { kind: 'update', installed: mod.version, latest }

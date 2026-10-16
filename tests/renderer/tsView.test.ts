@@ -153,6 +153,27 @@ describe('installState loader alias', () => {
   })
 })
 
+describe('installState for a package a GitHub mod provides', () => {
+  const lib = pkg('Dep-Lib', ['2.0.0', '1.0.0'])
+  const gh = (v: string): InstalledMod => ({
+    ...mod('gh-lib', v),
+    source: { kind: 'github', owner: 'gh', repo: 'lib', tag: `v${v}`, asset: 'a.zip', sha256: '' },
+    provides: ['Dep-Lib']
+  })
+  it('shows installed, not update, even when the GitHub version is older', () => {
+    expect(installState(lib, [gh('1.0.0')])).toEqual({
+      kind: 'installed',
+      version: '1.0.0',
+      providedBy: 'GitHub'
+    })
+    expect(installState(lib, [gh('3.0.0')])).toEqual({
+      kind: 'installed',
+      version: '3.0.0',
+      providedBy: 'GitHub'
+    })
+  })
+})
+
 describe('installToast', () => {
   const r = (over: Partial<TsInstallResult> = {}): TsInstallResult => ({
     installed: [mod('Owner-Mod', '1.0.0')],

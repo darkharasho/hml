@@ -375,9 +375,14 @@ function ResultRow({ pkg, onOpen }: { pkg: TsPackage; onOpen(): void }): React.J
       </div>
       <div className="flex w-28 shrink-0 justify-end" onClick={(e) => e.stopPropagation()}>
         {state.kind === 'installed' ? (
-          <span className="text-right text-xs leading-tight text-teal">
+          <span
+            className="text-right text-xs leading-tight text-teal"
+            title={state.providedBy ? `Provided by a ${state.providedBy} mod` : undefined}
+          >
             Installed
-            <span className="block text-muted tabular-nums">{state.version}</span>
+            <span className="block text-muted tabular-nums">
+              {state.providedBy ? `${state.providedBy} ${state.version}` : state.version}
+            </span>
           </span>
         ) : (
           <Button
