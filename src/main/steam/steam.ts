@@ -141,17 +141,22 @@ export async function listLibraries(root: string): Promise<string[]> {
   return libraries
 }
 
+/** True for an `installdir` that is a single plain folder name (no separators, not `.`/`..`). */
+export function isSafeInstallDir(installdir: unknown): installdir is string {
+  return (
+    typeof installdir === 'string' &&
+    installdir !== '' &&
+    !/[/\\]/.test(installdir) &&
+    installdir !== '.' &&
+    installdir !== '..'
+  )
+}
+
 export async function findAppInstall(root: string, appId: string): Promise<string | null> {
   for (const lib of await listLibraries(root)) {
     const manifest = await readVdf(path.join(lib, 'steamapps', `appmanifest_${appId}.acf`))
     const installdir = manifest && vdfGet(manifest, 'AppState', 'installdir')
-    if (
-      typeof installdir === 'string' &&
-      installdir &&
-      !/[/\\]/.test(installdir) &&
-      installdir !== '.' &&
-      installdir !== '..'
-    ) {
+    if (isSafeInstallDir(installdir)) {
       return path.join(lib, 'steamapps', 'common', installdir)
     }
   }
