@@ -188,7 +188,45 @@ describe('launch', () => {
     const { fake } = fakeChild('error')
     await expect(
       launch({ command: 'steam', args: [], copyToGameDir: [] }, profile, gameDir, fake)
-    ).rejects.toThrow('ENOENT')
+    ).rejects.toThrow('Could not start Steam: spawn steam ENOENT')
+  })
+
+  test('names the file when copying into the game folder fails, and does not spawn', async () => {
+    await fs.writeFile(path.join(profile, 'winhttp.dll'), 'dll')
+    // A directory in the way makes the copy fail the same way a locked file would.
+    await fs.mkdir(path.join(gameDir, 'winhttp.dll'))
+    const { calls, fake } = fakeChild('spawn')
+    const err = await launch(
+      { command: 'steam', args: [], copyToGameDir: ['winhttp.dll'] },
+      profile,
+      gameDir,
+      fake
+    ).catch((e: unknown) => e as Error)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(
+      /^Couldn't copy winhttp\.dll into the game folder\. If the game is running, close it and try again\. \(.+\)$/
+    )
+    expect((err as Error).message).not.toContain('Could not start Steam')
+    expect((err as Error).cause).toBeInstanceOf(Error)
+    expect(calls).toEqual([])
+  })
+
+  test('names the file when the game folder is read-only', async () => {
+    if (process.platform === 'win32' || process.getuid?.() === 0) return
+    await fs.writeFile(path.join(profile, 'winhttp.dll'), 'dll')
+    await fs.chmod(gameDir, 0o555)
+    try {
+      await expect(
+        launch(
+          { command: 'steam', args: [], copyToGameDir: ['winhttp.dll'] },
+          profile,
+          gameDir,
+          fakeChild('spawn').fake
+        )
+      ).rejects.toThrow(/^Couldn't copy winhttp\.dll into the game folder/)
+    } finally {
+      await fs.chmod(gameDir, 0o755)
+    }
   })
 
   test('rejects non-basename copy entries before copying or spawning', async () => {

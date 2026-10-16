@@ -918,11 +918,7 @@ export function createServices(
         preloaderRelPath: preloader,
         doorstop: await detectDoorstopVersion(modded ? profileDir : gameDir)
       })
-      try {
-        await launch(plan, profileDir, gameDir, deps.spawn)
-      } catch (e) {
-        throw new Error(`Could not start Steam: ${errMsg(e)}`, { cause: e })
-      }
+      await launch(plan, profileDir, gameDir, deps.spawn)
     },
 
     async openProfileFolder(game: string, profileId: string): Promise<void> {

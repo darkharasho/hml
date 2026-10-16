@@ -91,14 +91,32 @@ export async function launch(
   }
   for (const rel of plan.copyToGameDir) {
     const src = path.join(profileDir, rel)
-    if (await exists(src)) await fs.copyFile(src, path.join(gameDir, rel))
+    if (!(await exists(src))) continue
+    try {
+      await fs.copyFile(src, path.join(gameDir, rel))
+    } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(
+        `Couldn't copy ${rel} into the game folder. If the game is running, close it and try again. (${msg})`,
+        { cause }
+      )
+    }
   }
-  const child = spawnFn(plan.command, plan.args, { detached: true, stdio: 'ignore', shell: false })
-  await new Promise<void>((resolve, reject) => {
-    child.once('error', reject)
-    child.once('spawn', () => {
-      child.unref()
-      resolve()
+  try {
+    const child = spawnFn(plan.command, plan.args, {
+      detached: true,
+      stdio: 'ignore',
+      shell: false
     })
-  })
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('spawn', () => {
+        child.unref()
+        resolve()
+      })
+    })
+  } catch (cause) {
+    const msg = cause instanceof Error ? cause.message : String(cause)
+    throw new Error(`Could not start Steam: ${msg}`, { cause })
+  }
 }
