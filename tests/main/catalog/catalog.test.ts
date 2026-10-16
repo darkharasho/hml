@@ -127,6 +127,8 @@ describe('makePaths', () => {
     const p = makePaths('/r')
     expect(p.schemaCache).toBe(path.join('/r', 'cache', 'ecosystem.json'))
     expect(p.downloads).toBe(path.join('/r', 'cache', 'downloads'))
+    expect(p.ghCache).toBe(path.join('/r', 'cache', 'github.json'))
+    expect(p.ghToken).toBe(path.join('/r', 'secrets', 'github-token.bin'))
     expect(p.profileDir('repo', 'x')).toBe(path.join('/r', 'games', 'repo', 'profiles', 'x'))
   })
 })

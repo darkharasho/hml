@@ -1,0 +1,329 @@
+import { createHash } from 'node:crypto'
+import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  downloadAsset,
+  fetchLogin,
+  fetchRelease,
+  isNewerTag,
+  GH_RELEASE_MEMO_MS
+} from '../../../src/main/github/api'
+import type { GhReleaseAsset } from '../../../src/main/github/assets'
+
+const API = 'https://api.github.com/repos/o/r'
+let tmp: string
+let cacheFile: string
+beforeEach(async () => {
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'hml-gh-'))
+  cacheFile = path.join(tmp, 'cache', 'github.json')
+})
+afterEach(async () => {
+  await fs.rm(tmp, { recursive: true, force: true })
+})
+
+interface Reply {
+  status: number
+  body?: unknown
+  headers?: Record<string, string>
+  raw?: Uint8Array
+}
+interface Call {
+  url: string
+  headers: Record<string, string>
+}
+function fakeFetch(routes: Record<string, Reply | Reply[]>): {
+  fetch: typeof fetch
+  calls: Call[]
+} {
+  const calls: Call[] = []
+  const f = (async (url: string, init?: { headers?: Record<string, string> }) => {
+    calls.push({ url, headers: init?.headers ?? {} })
+    const r = routes[url]
+    if (!r) throw new Error(`unrouted ${url}`)
+    const reply = Array.isArray(r) ? (r.shift() as Reply) : r
+    const h = new Headers(reply.headers)
+    return {
+      ok: reply.status >= 200 && reply.status < 300,
+      status: reply.status,
+      headers: h,
+      json: async () => reply.body,
+      arrayBuffer: async () => {
+        const b = reply.raw ?? new Uint8Array()
+        return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
+      }
+    }
+  }) as unknown as typeof fetch
+  return { fetch: f, calls }
+}
+
+const rawAsset = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  id: 7,
+  name: 'Mod-1.0.0.zip',
+  size: 10,
+  browser_download_url: 'https://github.com/o/r/releases/download/v1.0.0/Mod-1.0.0.zip',
+  url: 'https://api.github.com/repos/o/r/releases/assets/7',
+  digest: 'sha256:abc',
+  ...over
+})
+const rawRelease = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  tag_name: 'v1.0.0',
+  name: 'One',
+  prerelease: false,
+  draft: false,
+  published_at: '2026-01-01T00:00:00Z',
+  html_url: 'https://github.com/o/r/releases/tag/v1.0.0',
+  assets: [rawAsset()],
+  ...over
+})
+const base = (f: typeof fetch, extra = {}): Parameters<typeof fetchRelease>[0] => ({
+  fetch: f,
+  token: null,
+  cacheFile,
+  owner: 'o',
+  repo: 'r',
+  ...extra
+})
+
+describe('fetchRelease', () => {
+  it('fetches latest, normalizes, sends headers without auth', async () => {
+    const { fetch: f, calls } = fakeFetch({
+      [`${API}/releases/latest`]: { status: 200, body: rawRelease(), headers: { etag: 'W/"1"' } }
+    })
+    const rel = await fetchRelease(base(f))
+    expect(calls).toHaveLength(1)
+    expect(calls[0].headers).toEqual({
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'HML'
+    })
+    expect(rel).toEqual({
+      tag: 'v1.0.0',
+      name: 'One',
+      prerelease: false,
+      publishedAt: '2026-01-01T00:00:00Z',
+      htmlUrl: 'https://github.com/o/r/releases/tag/v1.0.0',
+      assets: [
+        {
+          id: 7,
+          name: 'Mod-1.0.0.zip',
+          size: 10,
+          downloadUrl: 'https://github.com/o/r/releases/download/v1.0.0/Mod-1.0.0.zip',
+          apiUrl: 'https://api.github.com/repos/o/r/releases/assets/7',
+          digest: 'sha256:abc'
+        }
+      ]
+    })
+  })
+
+  it('sends Authorization with a token', async () => {
+    const { fetch: f, calls } = fakeFetch({
+      [`${API}/releases/latest`]: { status: 200, body: rawRelease() }
+    })
+    await fetchRelease(base(f, { token: 't0k' }))
+    expect(calls[0].headers.Authorization).toBe('Bearer t0k')
+  })
+
+  it('uses If-None-Match and the cached body on 304', async () => {
+    const { fetch: f, calls } = fakeFetch({
+      [`${API}/releases/latest`]: [
+        { status: 200, body: rawRelease(), headers: { etag: 'W/"1"' } },
+        { status: 304 }
+      ]
+    })
+    const a = await fetchRelease(base(f, { now: () => 1000 }))
+    const b = await fetchRelease(base(f, { now: () => 2000 }))
+    expect(calls[1].headers['If-None-Match']).toBe('W/"1"')
+    expect(b).toEqual(a)
+    const cache = JSON.parse(await fs.readFile(cacheFile, 'utf8'))
+    expect(cache[`${API}/releases/latest`]).toMatchObject({ etag: 'W/"1"', fetchedAt: 2000 })
+  })
+
+  it('honours maxAgeMs', async () => {
+    const { fetch: f, calls } = fakeFetch({
+      [`${API}/releases/latest`]: [
+        { status: 200, body: rawRelease(), headers: { etag: 'e' } },
+        { status: 304 }
+      ]
+    })
+    await fetchRelease(base(f, { now: () => 0 }))
+    await fetchRelease(base(f, { now: () => 599_999, maxAgeMs: GH_RELEASE_MEMO_MS }))
+    expect(calls).toHaveLength(1)
+    await fetchRelease(base(f, { now: () => 600_001, maxAgeMs: GH_RELEASE_MEMO_MS }))
+    expect(calls).toHaveLength(2)
+    expect(calls[1].headers['If-None-Match']).toBe('e')
+  })
+
+  it('falls back to the list on 404 and skips drafts', async () => {
+    const { fetch: f } = fakeFetch({
+      [`${API}/releases/latest`]: { status: 404 },
+      [`${API}/releases?per_page=10`]: {
+        status: 200,
+        body: [
+          rawRelease({ tag_name: 'd', draft: true }),
+          rawRelease({ tag_name: 'v2-beta', prerelease: true })
+        ]
+      }
+    })
+    const rel = await fetchRelease(base(f))
+    expect(rel.tag).toBe('v2-beta')
+    expect(rel.prerelease).toBe(true)
+  })
+
+  it('reports empty lists, missing repos and missing tags', async () => {
+    const empty = fakeFetch({
+      [`${API}/releases/latest`]: { status: 404 },
+      [`${API}/releases?per_page=10`]: { status: 200, body: [] }
+    })
+    await expect(fetchRelease(base(empty.fetch))).rejects.toThrow('o/r has no releases yet.')
+    const gone = fakeFetch({
+      [`${API}/releases/latest`]: { status: 404 },
+      [`${API}/releases?per_page=10`]: { status: 404 }
+    })
+    await expect(fetchRelease(base(gone.fetch))).rejects.toThrow(
+      "Couldn't find github.com/o/r. Check the URL; private repositories need a GitHub token in Settings."
+    )
+    const tag = fakeFetch({ [`${API}/releases/tags/v9`]: { status: 404 } })
+    await expect(fetchRelease(base(tag.fetch, { tag: 'v9' }))).rejects.toThrow(
+      'o/r has no release v9.'
+    )
+  })
+
+  it('encodes slash tags', async () => {
+    const { fetch: f, calls } = fakeFetch({
+      [`${API}/releases/tags/rel%2F1`]: { status: 200, body: rawRelease() }
+    })
+    await fetchRelease(base(f, { tag: 'rel/1' }))
+    expect(calls[0].url).toBe(`${API}/releases/tags/rel%2F1`)
+  })
+
+  it('maps errors', async () => {
+    const rl = fakeFetch({
+      [`${API}/releases/latest`]: {
+        status: 403,
+        headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1800000000' }
+      }
+    })
+    await expect(fetchRelease(base(rl.fetch))).rejects.toThrow(
+      "GitHub's rate limit was reached. Try again after"
+    )
+    const un = fakeFetch({ [`${API}/releases/latest`]: { status: 401 } })
+    await expect(fetchRelease(base(un.fetch))).rejects.toThrow(
+      'GitHub rejected the saved token. Update or remove it in Settings.'
+    )
+    const down = (async () => {
+      throw new Error('ECONNRESET')
+    }) as unknown as typeof fetch
+    await expect(fetchRelease(base(down))).rejects.toThrow(
+      "Couldn't reach GitHub. Check your connection and try again."
+    )
+    const odd = fakeFetch({ [`${API}/releases/latest`]: { status: 500 } })
+    await expect(fetchRelease(base(odd.fetch))).rejects.toThrow('GitHub returned HTTP 500 for o/r.')
+  })
+
+  it('drops assets with non-github urls', async () => {
+    const { fetch: f } = fakeFetch({
+      [`${API}/releases/latest`]: {
+        status: 200,
+        body: rawRelease({
+          assets: [
+            rawAsset({ browser_download_url: 'https://evil.example/x.zip' }),
+            rawAsset({ id: 8, url: 'https://evil.example/api' }),
+            rawAsset({ id: 9, digest: undefined })
+          ]
+        })
+      }
+    })
+    const rel = await fetchRelease(base(f))
+    expect(rel.assets.map((a) => a.id)).toEqual([9])
+    expect(rel.assets[0].digest).toBeNull()
+  })
+
+  it('treats a corrupt cache as empty', async () => {
+    await fs.mkdir(path.dirname(cacheFile), { recursive: true })
+    await fs.writeFile(cacheFile, '{nope')
+    const { fetch: f, calls } = fakeFetch({
+      [`${API}/releases/latest`]: { status: 200, body: rawRelease() }
+    })
+    await fetchRelease(base(f))
+    expect(calls[0].headers['If-None-Match']).toBeUndefined()
+  })
+})
+
+describe('downloadAsset', () => {
+  const bytes = new TextEncoder().encode('hello zip')
+  const sha = createHash('sha256').update(bytes).digest('hex')
+  const asset = (digest: string | null = null): GhReleaseAsset => ({
+    id: 7,
+    name: 'Mod.zip',
+    size: bytes.length,
+    downloadUrl: 'https://github.com/o/r/releases/download/v1/Mod.zip',
+    apiUrl: 'https://api.github.com/repos/o/r/releases/assets/7',
+    digest
+  })
+
+  it('downloads via the public url without a token', async () => {
+    const a = asset(`sha256:${sha}`)
+    const { fetch: f, calls } = fakeFetch({ [a.downloadUrl]: { status: 200, raw: bytes } })
+    const out = await downloadAsset({ fetch: f, token: null, asset: a })
+    expect(calls[0].headers).toEqual({ 'User-Agent': 'HML' })
+    expect(out.sha256).toBe(sha)
+    expect(Buffer.from(out.data).toString()).toBe('hello zip')
+  })
+
+  it('downloads via the api url with a token', async () => {
+    const a = asset()
+    const { fetch: f, calls } = fakeFetch({ [a.apiUrl]: { status: 200, raw: bytes } })
+    await downloadAsset({ fetch: f, token: 't0k', asset: a })
+    expect(calls[0].headers).toEqual({
+      Accept: 'application/octet-stream',
+      'User-Agent': 'HML',
+      Authorization: 'Bearer t0k'
+    })
+  })
+
+  it('rejects on digest mismatch and http errors', async () => {
+    const a = asset('sha256:deadbeef')
+    const ok = fakeFetch({ [a.downloadUrl]: { status: 200, raw: bytes } })
+    await expect(downloadAsset({ fetch: ok.fetch, token: null, asset: a })).rejects.toThrow(
+      'Download of Mod.zip failed: checksum mismatch'
+    )
+    const nf = fakeFetch({ [a.downloadUrl]: { status: 404 } })
+    await expect(downloadAsset({ fetch: nf.fetch, token: null, asset: a })).rejects.toThrow(
+      'Download of Mod.zip failed: HTTP 404'
+    )
+    const down = (async () => {
+      throw new Error('boom')
+    }) as unknown as typeof fetch
+    await expect(downloadAsset({ fetch: down, token: null, asset: a })).rejects.toThrow(
+      'Download of Mod.zip failed: boom'
+    )
+  })
+})
+
+describe('fetchLogin', () => {
+  it('returns the login', async () => {
+    const { fetch: f, calls } = fakeFetch({
+      'https://api.github.com/user': { status: 200, body: { login: 'octo' } }
+    })
+    expect(await fetchLogin({ fetch: f, token: 't' })).toBe('octo')
+    expect(calls[0].headers.Authorization).toBe('Bearer t')
+  })
+  it('maps 401', async () => {
+    const { fetch: f } = fakeFetch({ 'https://api.github.com/user': { status: 401 } })
+    await expect(fetchLogin({ fetch: f, token: 't' })).rejects.toThrow(
+      "GitHub didn't accept that token."
+    )
+  })
+})
+
+describe('isNewerTag', () => {
+  it('compares version-like tags numerically, others by difference', () => {
+    expect(isNewerTag('v1.10.0', 'v1.9.0')).toBe(true)
+    expect(isNewerTag('1.0', 'v1.0.0')).toBe(false)
+    expect(isNewerTag('v1.0', 'v2.0')).toBe(false)
+    expect(isNewerTag('nightly-b', 'nightly-a')).toBe(true)
+    expect(isNewerTag('same', 'same')).toBe(false)
+  })
+})
