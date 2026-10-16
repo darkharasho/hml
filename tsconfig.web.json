@@ -4,7 +4,8 @@
     "src/renderer/src/env.d.ts",
     "src/renderer/src/**/*",
     "src/renderer/src/**/*.tsx",
-    "src/shared/**/*"
+    "src/shared/**/*",
+    "worker/src/code.ts"
   ],
   "compilerOptions": {
     "composite": true,

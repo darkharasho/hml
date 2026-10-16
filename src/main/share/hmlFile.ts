@@ -1,0 +1,122 @@
+import { promises as fs } from 'node:fs'
+import { join } from 'node:path'
+import { strToU8, zipSync } from 'fflate'
+import { z } from 'zod'
+import type { HmlExport, ProfileManifest } from '../../shared/types'
+import { readZipEntries, TOO_LARGE } from '../install/zipEntries'
+
+export const MAX_HML_BYTES = 10485760
+
+const NOT_HML = "This isn't an HML profile file."
+const DAMAGED = 'This HML profile file is damaged or from a newer HML.'
+const TOO_BIG = "This profile's config files are too large to share (over 10 MB)."
+const CONFIG_PREFIX = 'BepInEx/config/'
+
+const sourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('thunderstore'), fullName: z.string() }),
+  z.object({
+    kind: z.literal('github'),
+    owner: z.string(),
+    repo: z.string(),
+    tag: z.string(),
+    asset: z.string(),
+    sha256: z.string()
+  }),
+  z.object({ kind: z.literal('nexus'), domain: z.string(), modId: z.number(), fileId: z.number() }),
+  z.object({ kind: z.literal('local'), fileName: z.string(), sha256: z.string() })
+])
+
+const exportSchema = z.object({
+  formatVersion: z.literal(1),
+  game: z.string(),
+  profileName: z.string(),
+  mods: z.array(
+    z.object({
+      source: sourceSchema,
+      version: z.string(),
+      enabled: z.boolean(),
+      name: z.string().optional()
+    })
+  )
+})
+
+async function collectConfigs(
+  dir: string,
+  prefix: string,
+  out: Record<string, Uint8Array>,
+  budget: { left: number }
+): Promise<void> {
+  let entries
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw e
+  }
+  entries.sort((a, b) => (a.name < b.name ? -1 : 1))
+  for (const ent of entries) {
+    const full = join(dir, ent.name)
+    if (ent.isDirectory()) await collectConfigs(full, `${prefix}${ent.name}/`, out, budget)
+    else if (ent.isFile()) {
+      const st = await fs.stat(full)
+      budget.left -= st.size
+      if (budget.left < 0) throw new Error(TOO_BIG)
+      out[`${prefix}${ent.name}`] = new Uint8Array(await fs.readFile(full))
+    }
+  }
+}
+
+/** Builds a .hml zip: export.json first, then the profile's BepInEx/config files. */
+export async function buildHmlFile(
+  profile: ProfileManifest,
+  profileDir: string,
+  opts: { maxBytes?: number } = {}
+): Promise<Uint8Array> {
+  const maxBytes = opts.maxBytes ?? MAX_HML_BYTES
+  const exp: HmlExport = {
+    formatVersion: 1,
+    game: profile.game,
+    profileName: profile.name,
+    mods: profile.mods.map((m) => ({
+      name: m.name,
+      source: m.source,
+      version: m.version,
+      enabled: m.enabled
+    }))
+  }
+  const json = strToU8(JSON.stringify(exp, null, 2))
+  const files: Record<string, Uint8Array> = { 'export.json': json }
+  await collectConfigs(join(profileDir, 'BepInEx', 'config'), CONFIG_PREFIX, files, {
+    left: maxBytes - json.length
+  })
+  return zipSync(files)
+}
+
+function isSafeConfigPath(name: string): boolean {
+  if (!name.startsWith(CONFIG_PREFIX) || name.length === CONFIG_PREFIX.length) return false
+  if (name.includes('\\') || name.startsWith('/') || /^[a-zA-Z]:/.test(name)) return false
+  return !name.split('/').some((seg) => seg === '..' || seg === '.' || seg === '')
+}
+
+export async function readHmlFile(
+  data: Uint8Array,
+  opts: { maxBytes?: number } = {}
+): Promise<{ export: HmlExport; configs: Map<string, Uint8Array> }> {
+  let zip
+  try {
+    zip = readZipEntries(data, { maxBytes: opts.maxBytes ?? MAX_HML_BYTES })
+  } catch (e) {
+    if (e instanceof Error && e.message === TOO_LARGE) throw new Error(TOO_BIG, { cause: e })
+    throw new Error(NOT_HML, { cause: e })
+  }
+  if (!zip.names.includes('export.json')) throw new Error(DAMAGED)
+  let parsed: HmlExport
+  try {
+    parsed = exportSchema.parse(JSON.parse(new TextDecoder().decode(zip.read('export.json'))))
+  } catch {
+    throw new Error(DAMAGED)
+  }
+  const configs = new Map<string, Uint8Array>()
+  for (const name of zip.names) if (isSafeConfigPath(name)) configs.set(name, zip.read(name))
+  return { export: parsed, configs }
+}

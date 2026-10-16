@@ -74,6 +74,47 @@ export interface ProfileManifest {
   mods: InstalledMod[]
 }
 
+export interface HmlExportMod {
+  source: ModSource
+  version: string
+  enabled: boolean
+  /** Display name only; optional when reading. */
+  name?: string
+}
+
+/** The export.json inside a .hml profile file. */
+export interface HmlExport {
+  formatVersion: 1
+  game: string
+  profileName: string
+  mods: HmlExportMod[]
+}
+
+export interface SharePreview {
+  token: string
+  game: string
+  gameName: string
+  profileName: string
+  mods: { name: string; version: string; kind: ModSource['kind'] }[]
+  configFiles: number
+}
+
+export interface UnresolvedMod {
+  name: string
+  version: string
+  kind: ModSource['kind']
+  reason: string
+  url?: string
+}
+
+export interface ImportResult {
+  game: string
+  profile: ProfileManifest
+  installed: number
+  unresolved: UnresolvedMod[]
+  warnings: string[]
+}
+
 export type LaunchMode = 'modded' | 'vanilla'
 
 /** Codes returned by getLaunchWarnings. Blockers stop a modded launch; the rest are advice. */
