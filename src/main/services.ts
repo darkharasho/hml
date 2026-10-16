@@ -54,7 +54,12 @@ import { downloadPackage } from './thunderstore/download'
 import { parseAllowedExternalUrl } from './security'
 import type { SecretPort } from './github/token'
 import { createGithubServices, unsupportedLoaderMessage } from './github/service'
-import { deployProfile, deploymentStatus, removeDeployment } from './deploy/deploy'
+import {
+  deployedProfileId,
+  deployProfile,
+  deploymentStatus,
+  removeDeployment
+} from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
 import { createNexusServices } from './nexus/service'
 import { createShareServices } from './share/service'
@@ -242,6 +247,31 @@ export function createServices(
     const gameDir = (await loadSettings(paths)).gamePathOverrides[def.label]
     if (!gameDir) throw new Error('Set the game folder first.')
     return { def, gameDir }
+  }
+
+  const LOCK_ATTEMPTS = 5
+  const LOCK_BUSY = 'The deployment kept changing while HML waited for it. Try again.'
+  /** The deployed profile, or null when there is none or its id can't be used as a lock key. */
+  async function lockableDeployedProfile(def: GameDef): Promise<string | null> {
+    const id = await deployedProfileId(paths, def)
+    return id === DEPLOY_KEY ? null : id
+  }
+  /**
+   * Removes the deployment under the deployed profile's lock (copy-back writes into that
+   * profile), then the deploy key. If another deployment replaced it while waiting, tries again.
+   */
+  async function removeDeploymentLocked(def: GameDef): Promise<void> {
+    for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
+      const owner = await lockableDeployedProfile(def)
+      const remove = (): Promise<boolean> =>
+        serialize(def.label, DEPLOY_KEY, async () => {
+          if ((await lockableDeployedProfile(def)) !== owner) return false
+          await removeDeployment(paths, def)
+          return true
+        })
+      if (await (owner === null ? remove() : serialize(def.label, owner, remove))) return
+    }
+    throw new Error(LOCK_BUSY)
   }
 
   async function setGamePath(label: string, dir: string | null): Promise<void> {
@@ -719,17 +749,28 @@ export function createServices(
     async deployProfile(game, profileId) {
       const { def, gameDir } = await requireDeploy(game)
       if (profileId === DEPLOY_KEY) throw new Error(`Profile not found: ${game}/${profileId}`)
-      // The profile key is the outer lock and the deploy key the inner one.
-      return serialize(game, profileId, () =>
-        serialize(game, DEPLOY_KEY, () => deployProfile(paths, def, profileId, gameDir))
-      )
+      for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
+        // Removing another profile's deployment copies files back into that profile, so it runs
+        // under that profile's lock as its own step. Two profile locks are never held at once.
+        const current = await lockableDeployedProfile(def)
+        if (current !== null && current !== profileId) await removeDeploymentLocked(def)
+        // The profile key is the outer lock and the deploy key the inner one.
+        const status = await serialize(game, profileId, () =>
+          serialize(game, DEPLOY_KEY, async () => {
+            const now = await lockableDeployedProfile(def)
+            if (now !== null && now !== profileId) return null
+            return deployProfile(paths, def, profileId, gameDir)
+          })
+        )
+        if (status) return status
+      }
+      throw new Error(LOCK_BUSY)
     },
 
     // Remove and status work from the deployment manifest, which records the folder deployed
     // to, so they don't need the folder setting (it may have been cleared since).
     async removeDeployment(game) {
-      const def = await requireDeployGame(game)
-      return serialize(game, DEPLOY_KEY, () => removeDeployment(paths, def))
+      await removeDeploymentLocked(await requireDeployGame(game))
     },
 
     async getDeployment(game) {

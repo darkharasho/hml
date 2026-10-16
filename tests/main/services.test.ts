@@ -219,6 +219,99 @@ describe('services', () => {
     expect(await api.getDeployment(label)).toBeNull()
   })
 
+  /** Nexus responses for any domain: the game is named after its domain. */
+  const nexusFetch = (async (url: string, init?: { body?: string }) => {
+    const domain = /domainName:\\"([a-z0-9_-]+)\\"/.exec(init?.body ?? '')?.[1] ?? 'x'
+    const json = url.includes('graphql')
+      ? { data: { game: { id: '1', name: `Game ${domain}`, domainName: domain } } }
+      : fixture
+    return { ok: true, status: 200, headers: new Headers(), json: async () => json }
+  }) as unknown as typeof fetch
+
+  test('a mod change on the deployed profile queued during remove runs after the copy-back', async () => {
+    deps.fetch = nexusFetch
+    const api = createServices(deps)
+    const label = 'nexus-aaa'
+    await api.addNexusGame('aaa')
+    const profile = await api.createProfile(label, 'p')
+    const dir = path.join(tmp, 'aaa')
+    mkdirSync(dir)
+    await api.setGamePath(label, dir)
+    const file = path.join(tmp, 'm.zip')
+    writeFileSync(file, zipSync({ 'Data/a.esp': strToU8('esp') }))
+    const [mod] = await api.installFromPaths(label, profile.id, [file])
+    await api.deployProfile(label, profile.id)
+    writeFileSync(path.join(dir, 'Data/a.esp'), 'changed in game')
+
+    // Hold the remove inside copy-back (its first profile read), then queue an uninstall.
+    let reached!: () => void
+    const inCopyBack = new Promise<void>((r) => (reached = r))
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const { getProfile } = await vi.importActual<typeof import('../../src/main/profiles/profiles')>(
+      '../../src/main/profiles/profiles'
+    )
+    hooks.getProfile = async (...a) => {
+      hooks.getProfile = null
+      reached()
+      await gate
+      return getProfile(...(a as Parameters<typeof getProfile>))
+    }
+    const order: string[] = []
+    const removing = api.removeDeployment(label).then(() => order.push('remove'))
+    await inCopyBack
+    const uninstalling = api
+      .uninstallMod(label, profile.id, mod.id)
+      .then(() => order.push('uninstall'))
+    await new Promise((r) => setTimeout(r, 50))
+    release()
+    await Promise.all([removing, uninstalling])
+    expect(order).toEqual(['remove', 'uninstall'])
+    expect(existsSync(path.join(dir, 'Data'))).toBe(false)
+    expect((await api.listProfiles(label))[0].mods).toEqual([])
+  })
+
+  test('deploying another profile removes the old deployment under its own profile lock', async () => {
+    deps.fetch = nexusFetch
+    const api = createServices(deps)
+    const label = 'nexus-aaa'
+    await api.addNexusGame('aaa')
+    const a = await api.createProfile(label, 'a')
+    const b = await api.createProfile(label, 'b')
+    const dir = path.join(tmp, 'aaa')
+    mkdirSync(dir)
+    await api.setGamePath(label, dir)
+    const file = path.join(tmp, 'm.zip')
+    writeFileSync(file, zipSync({ 'Data/a.esp': strToU8('esp') }))
+    const [mod] = await api.installFromPaths(label, a.id, [file])
+    await api.deployProfile(label, a.id)
+    writeFileSync(path.join(dir, 'Data/a.esp'), 'changed in game')
+
+    let reached!: () => void
+    const inCopyBack = new Promise<void>((r) => (reached = r))
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const { getProfile } = await vi.importActual<typeof import('../../src/main/profiles/profiles')>(
+      '../../src/main/profiles/profiles'
+    )
+    hooks.getProfile = async (...a2) => {
+      hooks.getProfile = null
+      reached()
+      await gate
+      return getProfile(...(a2 as Parameters<typeof getProfile>))
+    }
+    const order: string[] = []
+    const deploying = api.deployProfile(label, b.id).then(() => order.push('deploy b'))
+    await inCopyBack
+    const uninstalling = api.uninstallMod(label, a.id, mod.id).then(() => order.push('uninstall a'))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(order).toEqual([])
+    release()
+    await Promise.all([deploying, uninstalling])
+    expect(await api.getDeployment(label)).toMatchObject({ profileId: b.id, files: 0 })
+    expect((await api.listProfiles(label)).find((p) => p.id === a.id)?.mods).toEqual([])
+  })
+
   test('installFromFile installs selected zip as local source with sha256', async () => {
     const api = createServices(deps)
     const profile = await api.createProfile('repo', 'Test')
