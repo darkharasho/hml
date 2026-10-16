@@ -22,8 +22,9 @@ import {
   saveProfile,
   getProfile
 } from '../../../src/main/profiles/profiles'
-import { installZip } from '../../../src/main/install/installer'
+import { installZip, setModEnabled, uninstallMod } from '../../../src/main/install/installer'
 import { deployProfile, deploymentStatus, removeDeployment } from '../../../src/main/deploy/deploy'
+import { nexusGameDef } from '../../../src/main/nexus/games'
 import type { Catalog, GameDef, ModSource } from '../../../src/shared/types'
 
 const game: GameDef = {
@@ -114,9 +115,9 @@ describe('deploy', () => {
     writeFileSync(path.join(gameDir, 'Data/a.ini'), 'a much longer edited value')
     await removeDeployment(paths, game, gameDir)
     expect(has('Data/a.ini')).toBe(false)
-    expect(readFileSync(path.join(paths.profileDir(game.label, pid), 'Data/a.ini'), 'utf8')).toBe(
-      'a much longer edited value'
-    )
+    expect(
+      readFileSync(path.join(paths.profileDir(game.label, pid), 'nexus-1/Data/a.ini'), 'utf8')
+    ).toBe('a much longer edited value')
   })
 
   test('unchanged files are not copied back', async () => {
@@ -403,9 +404,9 @@ describe('deploy', () => {
     vi.restoreAllMocks()
     writeFileSync(path.join(gameDir, 'f00.txt'), 'edited in game, longer')
     await removeDeployment(paths, game, gameDir)
-    expect(readFileSync(path.join(paths.profileDir(game.label, pid), 'f00.txt'), 'utf8')).toBe(
-      'edited in game, longer'
-    )
+    expect(
+      readFileSync(path.join(paths.profileDir(game.label, pid), 'nexus-1/f00.txt'), 'utf8')
+    ).toBe('edited in game, longer')
     expect(has('f00.txt')).toBe(false)
   })
 
@@ -439,6 +440,105 @@ describe('deploy', () => {
     expect(read('a.esp')).toBe('AAAA')
     expect(readFileSync(path.join(paths.deployBackup(game.label), 'a.esp'), 'utf8')).toBe('BBBB')
     expect(existsSync(paths.deployment(game.label))).toBe(true)
+  })
+
+  test('mods sharing a path: disabling the later one deploys the earlier one', async () => {
+    await install(pid, 'nexus-1', { 'Data/a.esp': 'a', 'readme.txt': 'one' })
+    await install(pid, 'nexus-2', { 'Data/b.esp': 'b', 'readme.txt': 'two' })
+    await deployProfile(paths, game, pid, gameDir)
+    expect(read('readme.txt')).toBe('two')
+    await setModEnabled(paths, game, pid, 'nexus-2', false)
+    await deployProfile(paths, game, pid, gameDir)
+    expect(read('readme.txt')).toBe('one')
+    expect(has('Data/b.esp')).toBe(false)
+    const m = JSON.parse(readFileSync(paths.deployment(game.label), 'utf8'))
+    expect(m.files).toContainEqual(expect.objectContaining({ path: 'readme.txt', mod: 'nexus-1' }))
+  })
+
+  test('uninstalling the later mod leaves the earlier mod its shared file', async () => {
+    await install(pid, 'nexus-1', { 'readme.txt': 'one' })
+    await install(pid, 'nexus-2', { 'readme.txt': 'two' })
+    await uninstallMod(paths, game, pid, 'nexus-2')
+    expect(
+      readFileSync(path.join(paths.profileDir(game.label, pid), 'nexus-1/readme.txt'), 'utf8')
+    ).toBe('one')
+    await deployProfile(paths, game, pid, gameDir)
+    expect(read('readme.txt')).toBe('one')
+  })
+
+  test('copy-back writes into the folder of the mod that owns the deployed file', async () => {
+    await install(pid, 'nexus-1', { 'a.ini': 'one' })
+    await install(pid, 'nexus-2', { 'a.ini': 'two' })
+    await deployProfile(paths, game, pid, gameDir)
+    writeFileSync(path.join(gameDir, 'a.ini'), 'edited in game')
+    await removeDeployment(paths, game, gameDir)
+    const prof = paths.profileDir(game.label, pid)
+    expect(readFileSync(path.join(prof, 'nexus-2/a.ini'), 'utf8')).toBe('edited in game')
+    expect(readFileSync(path.join(prof, 'nexus-1/a.ini'), 'utf8')).toBe('one')
+  })
+
+  test('a deploy root puts files under it and remove cleans it up', async () => {
+    const sky = nexusGameDef({ name: 'Skyrim SE', domain: 'skyrimspecialedition' })
+    const p = (await createProfile(paths, sky.label, 'p')).id
+    await installZip(paths, sky, catalog, p, zipSync({ 'MyMod.esp': strToU8('esp') }), src, {
+      packageId: 'nexus-1'
+    })
+    await installZip(
+      paths,
+      sky,
+      catalog,
+      p,
+      zipSync({ 'Data/Other.esp': strToU8('o'), 'Data/meshes/a.nif': strToU8('n') }),
+      src,
+      { packageId: 'nexus-2' }
+    )
+    await deployProfile(paths, sky, p, gameDir)
+    expect(read('Data/MyMod.esp')).toBe('esp')
+    expect(read('Data/Other.esp')).toBe('o')
+    expect(read('Data/meshes/a.nif')).toBe('n')
+    expect(has('Data/Data')).toBe(false)
+    expect(has('MyMod.esp')).toBe(false)
+    const m = JSON.parse(readFileSync(paths.deployment(sky.label), 'utf8'))
+    expect(m.deployRoot).toBe('Data')
+    writeFileSync(path.join(gameDir, 'Data/MyMod.esp'), 'edited in game')
+    await removeDeployment(paths, sky, gameDir)
+    expect(has('Data')).toBe(false)
+    expect(
+      readFileSync(path.join(paths.profileDir(sky.label, p), 'nexus-1/MyMod.esp'), 'utf8')
+    ).toBe('edited in game')
+  })
+
+  test('Stardew Valley mods deploy into the game folder itself', async () => {
+    const sdv = nexusGameDef({ name: 'Stardew Valley', domain: 'stardewvalley' })
+    const p = (await createProfile(paths, sdv.label, 'p')).id
+    await installZip(paths, sdv, catalog, p, zipSync({ 'Mods/A/a.dll': strToU8('a') }), src, {
+      packageId: 'nexus-1'
+    })
+    await deployProfile(paths, sdv, p, gameDir)
+    expect(read('Mods/A/a.dll')).toBe('a')
+    expect(has('Data')).toBe(false)
+  })
+
+  test('a deploy root that is not a safe relative path is refused before any write', async () => {
+    await install(pid, 'nexus-1', { 'a.esp': 'A' })
+    for (const deployRoot of ['../out', '/abs', 'a/../b', '']) {
+      await expect(deployProfile(paths, { ...game, deployRoot }, pid, gameDir)).rejects.toThrow(
+        /game folder/
+      )
+    }
+    expect(existsSync(paths.deployment(game.label))).toBe(false)
+    expect(readdirSync(gameDir)).toEqual([])
+  })
+
+  test('a deploy root that is a symlink out of the game folder is refused', async () => {
+    const outside = path.join(tmp, 'outside')
+    mkdirSync(outside)
+    symlinkSync(outside, path.join(gameDir, 'Data'))
+    await install(pid, 'nexus-1', { 'a.esp': 'A' })
+    await expect(
+      deployProfile(paths, { ...game, deployRoot: 'Data' }, pid, gameDir)
+    ).rejects.toThrow(/outside the game folder/)
+    expect(readdirSync(outside)).toEqual([])
   })
 
   test('restore checks containment before creating folders', async () => {

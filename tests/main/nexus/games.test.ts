@@ -96,6 +96,30 @@ describe('domainFor', () => {
   })
 })
 
+describe('nexusGameDef', () => {
+  it('deploys Bethesda games into Data and everything else into the game folder', () => {
+    const bethesda = [
+      'skyrim',
+      'skyrimspecialedition',
+      'fallout4',
+      'fallout3',
+      'newvegas',
+      'falloutnv',
+      'oblivion',
+      'morrowind',
+      'starfield',
+      'enderal',
+      'enderalspecialedition'
+    ]
+    for (const domain of bethesda) {
+      expect(nexusGameDef({ name: domain, domain }).deployRoot).toBe('Data')
+    }
+    for (const domain of ['stardewvalley', 'cyberpunk2077', 'baldursgate3']) {
+      expect(nexusGameDef({ name: domain, domain })).not.toHaveProperty('deployRoot')
+    }
+  })
+})
+
 const emptyCatalog = (games: GameDef[]): Catalog => ({
   games,
   modloaderPackages: [],

@@ -21,6 +21,8 @@ export interface GameDef {
   supported: boolean
   /** Nexus-only search results: the game's mod count on Nexus Mods. */
   nexusModCount?: number
+  /** Deploy games: the game-relative folder mods deploy into (e.g. `Data`). Unset is the game folder. */
+  deployRoot?: string
 }
 
 export interface ModloaderPackage {

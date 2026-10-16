@@ -19,7 +19,7 @@ export interface DeployOptions {
 }
 
 interface DeployedFile {
-  /** Path relative to the game folder, posix separators. */
+  /** Path relative to the game folder (including any deploy root), posix separators. */
   path: string
   mod: string
   /** -1 until the file has been copied and measured. */
@@ -36,6 +36,8 @@ interface DeploymentManifest {
   phase?: Phase
   /** The game folder treats names that differ only in case as the same file. */
   foldCase?: boolean
+  /** The game-relative folder mods were deployed into; unset is the game folder itself. */
+  deployRoot?: string
   files: DeployedFile[]
   createdDirs: string[]
 }
@@ -161,6 +163,7 @@ async function readManifest(paths: AppPaths, game: GameDef): Promise<DeploymentM
     gameDir: m.gameDir,
     phase: m.phase === 'copy' || m.phase === 'done' || m.phase === 'restoring' ? m.phase : 'backup',
     foldCase: m.foldCase === true,
+    ...(safeRel(m.deployRoot) !== null ? { deployRoot: m.deployRoot } : {}),
     files: m.files.filter(
       (f): f is DeployedFile =>
         typeof f === 'object' &&
@@ -196,6 +199,12 @@ function profileFile(mod: InstalledMod, rel: string): string {
   return !mod.enabled && mod.disableable.includes(rel) ? rel + '.old' : rel
 }
 
+/** A deploy-game mod keeps its files in `<profile>/<mod id>/`; this is the part after that. */
+function modRelative(mod: InstalledMod, rel: string): string | null {
+  const prefix = `${mod.id}/`
+  return rel.startsWith(prefix) && rel.length > prefix.length ? rel.slice(prefix.length) : null
+}
+
 /** Copies files the game changed since deploy back into their mods in the profile. */
 async function copyBack(paths: AppPaths, game: GameDef, m: DeploymentManifest): Promise<void> {
   if (m.phase !== 'done' && m.phase !== 'copy') return
@@ -203,12 +212,15 @@ async function copyBack(paths: AppPaths, game: GameDef, m: DeploymentManifest): 
   if (!profile) return
   const profileRoot = path.resolve(paths.profileDir(game.label, m.profileId))
   const gameRoot = path.resolve(m.gameDir)
+  const rootPrefix = m.deployRoot ? `${m.deployRoot}/` : ''
   for (const f of m.files) {
-    if (f.size < 0) continue
+    if (f.size < 0 || !f.path.startsWith(rootPrefix)) continue
     const mod = profile.mods.find((x) => x.id === f.mod)
-    if (!mod || !mod.files.includes(f.path)) continue
+    // The owning mod's copy: `<profile>/<mod>/<path inside the deploy root>`.
+    const modRel = `${f.mod}/${f.path.slice(rootPrefix.length)}`
+    if (!mod || !mod.files.includes(modRel)) continue
     const src = within(gameRoot, f.path)
-    const dst = within(profileRoot, profileFile(mod, f.path))
+    const dst = within(profileRoot, profileFile(mod, modRel))
     if (!src || !dst) continue
     const st = await lstat(src)
     if (!st || !st.isFile()) continue
@@ -325,6 +337,8 @@ export async function removeDeployment(
 /**
  * Copies the profile's enabled mods into the game folder, after removing any current deployment.
  * Mods are applied in the profile's mod order, so the later-installed mod wins a conflict.
+ * Each mod's files are read from `<profile>/<mod id>/` and written under the game's deploy root
+ * (`game.deployRoot`, default the game folder), which must resolve inside the real game folder.
  * The caller serializes on the profile and then on `<game>/__deploy__`.
  */
 export async function deployProfile(
@@ -336,6 +350,10 @@ export async function deployProfile(
 ): Promise<DeploymentStatus> {
   const move = opts.move ?? moveFile
   const gameRoot = path.resolve(gameDir)
+  const deployRoot = game.deployRoot
+  if (deployRoot !== undefined && safeRel(deployRoot) === null) {
+    throw new Error(`The mod folder "${deployRoot}" isn't a folder inside the game folder.`)
+  }
   if (!(await fs.stat(gameRoot).catch(() => null))?.isDirectory()) {
     throw new Error(`The game folder ${gameRoot} doesn't exist.`)
   }
@@ -348,17 +366,20 @@ export async function deployProfile(
     throw new Error(`${backupRoot} already exists. Remove it before deploying.`)
   }
 
-  // Later mods overwrite earlier ones. On a case-insensitive folder, names that differ only in
-  // case are one file.
+  // Each mod's files are in `<profile>/<mod>/`. Later mods overwrite earlier ones. On a
+  // case-insensitive folder, names that differ only in case are one file.
   const foldCase = opts.caseInsensitive ?? (await detectCaseInsensitive(gameRoot))
   const fold = (p: string): string => (foldCase ? p.toLowerCase() : p)
   const realRoot = await fs.realpath(gameRoot)
   const chosen = new Map<string, { rel: string; mod: string; src: string }>()
   for (const mod of profile.mods) {
     if (!mod.enabled) continue
-    for (const rel of mod.files) {
+    for (const file of mod.files) {
+      const inMod = modRelative(mod, file)
+      if (inMod === null) continue
+      const rel = deployRoot ? `${deployRoot}/${inMod}` : inMod
       const dst = within(gameRoot, rel)
-      const src = within(profileRoot, rel)
+      const src = within(profileRoot, file)
       if (!dst || !src) continue
       const st = await lstat(src)
       if (!st || !st.isFile()) continue
@@ -397,6 +418,7 @@ export async function deployProfile(
     gameDir: gameRoot,
     phase: 'backup',
     foldCase,
+    ...(deployRoot !== undefined ? { deployRoot } : {}),
     files: planned.map((p) => ({
       path: p.rel,
       mod: p.mod,

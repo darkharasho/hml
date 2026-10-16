@@ -212,4 +212,15 @@ describe('planDeploy', () => {
   test('rejects unsafe entries', () => {
     expect(() => planDeploy(['../x'])).toThrow(UnsafeEntryError)
   })
+  test('with a root, strips a sole top-level folder equal to it (case-insensitive)', () => {
+    const toR = (e: string[]): string[] => planDeploy(e, { root: 'Data' }).files.map((f) => f.to)
+    expect(toR(['Data/x.esp', 'Data/meshes/a.nif'])).toEqual(['x.esp', 'meshes/a.nif'])
+    expect(toR(['data/x.esp'])).toEqual(['x.esp'])
+    expect(toR(['Mod/Data/x.esp'])).toEqual(['x.esp'])
+    expect(toR(['MyMod.esp', 'meshes/a.nif'])).toEqual(['MyMod.esp', 'meshes/a.nif'])
+    expect(toR(['Data/x.esp', 'readme.txt'])).toEqual(['Data/x.esp', 'readme.txt'])
+  })
+  test('without a root a lone Data folder is kept', () => {
+    expect(planDeploy(['Data/x.esp'], {}).files.map((f) => f.to)).toEqual(['Data/x.esp'])
+  })
 })

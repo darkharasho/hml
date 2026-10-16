@@ -112,19 +112,29 @@ const LAYOUT_DIRS = new Set(
   )
 )
 
-/** Deploy games mirror the game folder: install as-is, minus one sole wrapping folder unless it is a known game-layout directory. */
-export function planDeploy(entries: string[]): InstallPlan {
+/**
+ * Deploy games mirror the game folder (or its `root` folder): install as-is, minus one sole
+ * wrapping folder unless it is a known game-layout directory. With a root, a sole top-level
+ * folder named like the root is stripped too, so `Data/x.esp` lands in `<root>/x.esp`.
+ */
+export function planDeploy(entries: string[], opts: { root?: string } = {}): InstallPlan {
   const items = entries.map((from) => ({ from, segs: normalize(from) }))
-  const wrapped =
-    items.length > 0 &&
-    items.every((i) => i.segs.length >= 2) &&
-    items.every((i) => eq(i.segs[0], items[0].segs[0])) &&
-    !LAYOUT_DIRS.has(items[0].segs[0].toLowerCase())
+  const soleTop = (list: Item[]): string | null =>
+    list.length > 0 &&
+    list.every((i) => i.segs.length >= 2) &&
+    list.every((i) => eq(i.segs[0], list[0].segs[0]))
+      ? list[0].segs[0]
+      : null
+  let cur: Item[] = items
+  const wrapper = soleTop(cur)
+  if (wrapper !== null && !LAYOUT_DIRS.has(wrapper.toLowerCase())) {
+    cur = cur.map((i) => ({ ...i, segs: i.segs.slice(1) }))
+  }
+  const top = soleTop(cur)
+  if (opts.root && top !== null && eq(top, opts.root)) {
+    cur = cur.map((i) => ({ ...i, segs: i.segs.slice(1) }))
+  }
   return {
-    files: items.map((i) => ({
-      from: i.from,
-      to: (wrapped ? i.segs.slice(1) : i.segs).join('/'),
-      disableable: true
-    }))
+    files: cur.map((i) => ({ from: i.from, to: i.segs.join('/'), disableable: true }))
   }
 }

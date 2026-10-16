@@ -307,11 +307,57 @@ describe('installer', () => {
     const p = (await createProfile(paths, 'nexus-x', 'p')).id
     const zip = zipSync({ 'Wrap/Data/a.esp': strToU8('esp'), 'Wrap/readme.txt': strToU8('r') })
     const mod = await installZip(paths, deployGame, catalog, p, zip, src, { packageId: 'nexus-1' })
-    expect(mod.files.sort()).toEqual(['Data/a.esp', 'readme.txt'])
-    expect(mod.disableable.sort()).toEqual(['Data/a.esp', 'readme.txt'])
-    expect(readFileSync(path.join(paths.profileDir('nexus-x', p), 'Data/a.esp'), 'utf8')).toBe(
-      'esp'
-    )
+    expect(mod.files.sort()).toEqual(['nexus-1/Data/a.esp', 'nexus-1/readme.txt'])
+    expect(mod.disableable.sort()).toEqual(['nexus-1/Data/a.esp', 'nexus-1/readme.txt'])
+    expect(
+      readFileSync(path.join(paths.profileDir('nexus-x', p), 'nexus-1/Data/a.esp'), 'utf8')
+    ).toBe('esp')
+  })
+
+  test('a deploy game strips a Data folder that equals its deploy root', async () => {
+    const deployGame: GameDef = {
+      ...game,
+      label: 'nexus-x',
+      loader: 'deploy',
+      installRules: [],
+      deployRoot: 'Data'
+    }
+    const p = (await createProfile(paths, 'nexus-x', 'p')).id
+    const zip = zipSync({ 'Mod/Data/x.esp': strToU8('esp'), 'Mod/Data/meshes/a.nif': strToU8('n') })
+    const mod = await installZip(paths, deployGame, catalog, p, zip, src, { packageId: 'nexus-1' })
+    expect(mod.files.sort()).toEqual(['nexus-1/meshes/a.nif', 'nexus-1/x.esp'])
+  })
+
+  test('a deploy game refuses a package id that is not one safe path segment', async () => {
+    const deployGame: GameDef = { ...game, label: 'nexus-x', loader: 'deploy', installRules: [] }
+    const p = (await createProfile(paths, 'nexus-x', 'p')).id
+    const zip = zipSync({ 'a.esp': strToU8('esp') })
+    for (const packageId of ['..', '.', 'a b', 'a/b', 'a\\b', '']) {
+      await expect(
+        installZip(paths, deployGame, catalog, p, zip, src, { packageId })
+      ).rejects.toThrow(UnsafeEntryError)
+    }
+    expect((await getProfile(paths, 'nexus-x', p)).mods).toEqual([])
+  })
+
+  test('deploy game mods sharing a path each keep their own copy', async () => {
+    const deployGame: GameDef = { ...game, label: 'nexus-x', loader: 'deploy', installRules: [] }
+    const p = (await createProfile(paths, 'nexus-x', 'p')).id
+    const dir = paths.profileDir('nexus-x', p)
+    const z = (v: string): Uint8Array => zipSync({ 'readme.txt': strToU8(v) })
+    await installZip(paths, deployGame, catalog, p, z('one'), src, { packageId: 'nexus-1' })
+    await installZip(paths, deployGame, catalog, p, z('two'), src, { packageId: 'nexus-2' })
+    await setModEnabled(paths, deployGame, p, 'nexus-2', false)
+    expect(readFileSync(path.join(dir, 'nexus-1/readme.txt'), 'utf8')).toBe('one')
+    await uninstallMod(paths, deployGame, p, 'nexus-2')
+    expect(readFileSync(path.join(dir, 'nexus-1/readme.txt'), 'utf8')).toBe('one')
+    expect(existsSync(path.join(dir, 'nexus-2'))).toBe(false)
+    // Reinstalling replaces the mod's old folder.
+    await installZip(paths, deployGame, catalog, p, zipSync({ 'b.txt': strToU8('b') }), src, {
+      packageId: 'nexus-1'
+    })
+    expect(existsSync(path.join(dir, 'nexus-1/readme.txt'))).toBe(false)
+    expect(readFileSync(path.join(dir, 'nexus-1/b.txt'), 'utf8')).toBe('b')
   })
 
   test('accepts a ZipEntries object instead of bytes', async () => {

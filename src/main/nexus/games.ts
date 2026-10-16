@@ -29,6 +29,21 @@ export interface NexusGames {
   forgetDomain(label: string): Promise<void>
 }
 
+/** Domains whose mods go in the game's `Data` folder (Bethesda engine games). */
+const DATA_ROOT_DOMAINS = new Set([
+  'skyrim',
+  'skyrimspecialedition',
+  'fallout4',
+  'fallout3',
+  'newvegas',
+  'falloutnv',
+  'oblivion',
+  'morrowind',
+  'starfield',
+  'enderal',
+  'enderalspecialedition'
+])
+
 export function nexusGameDef(g: { name: string; domain: string; modCount?: number }): GameDef {
   return {
     label: `${DEPLOY_PREFIX}${g.domain}`,
@@ -43,7 +58,8 @@ export function nexusGameDef(g: { name: string; domain: string; modCount?: numbe
     searchStrings: [g.domain],
     iconUrl: null,
     supported: true,
-    ...(g.modCount !== undefined ? { nexusModCount: g.modCount } : {})
+    ...(g.modCount !== undefined ? { nexusModCount: g.modCount } : {}),
+    ...(DATA_ROOT_DOMAINS.has(g.domain) ? { deployRoot: 'Data' } : {})
   }
 }
 

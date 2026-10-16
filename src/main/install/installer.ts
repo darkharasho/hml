@@ -59,6 +59,11 @@ function assertSafePackageId(id: string): void {
   }
 }
 
+/** Deploy games keep each mod in its own profile folder, so the id must be one plain segment. */
+function assertDeployPackageId(id: string): void {
+  if (!/^[A-Za-z0-9._-]+$/.test(id) || id === '.' || id === '..') throw new UnsafeEntryError(id)
+}
+
 function findLoaderPackage(
   game: GameDef,
   catalog: Catalog,
@@ -146,12 +151,16 @@ export async function installZip(
   const name = opts.name ?? meta?.name ?? packageId
 
   const deploy = game.loader === 'deploy'
+  if (deploy) assertDeployPackageId(packageId)
   const loaderPackage = deploy
     ? undefined
     : findLoaderPackage(game, catalog, zip, packageId, meta?.name)
   const plan = deploy
-    ? planDeploy(zip.names)
+    ? planDeploy(zip.names, { root: game.deployRoot })
     : planInstall(zip.names, { packageId, rules: game.installRules, loaderPackage })
+  // Deploy games store each mod in `<profile>/<packageId>/`, so mods that ship the same path
+  // never share a file; deploy chooses between them.
+  if (deploy) for (const f of plan.files) f.to = `${packageId}/${f.to}`
 
   // Duplicate destinations: last write wins, recorded once.
   const byTo = new Map<string, { from: string; disableable: boolean }>()
