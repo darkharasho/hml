@@ -31,13 +31,16 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   }, [])
 
   // Only the import's own events move the line; each mod's install reports on the same channel.
+  // Subscribed once on mount, so no event slips by between the import starting and an effect
+  // re-subscribing; the ref says whether an import is running.
+  const importingRef = useRef(false)
   useEffect(() => {
-    if (!importing) return
     return window.hmlEvents.on((e) => {
+      if (!importingRef.current) return
       const p = importProgress(e)
       if (p) setProgress(p)
     })
-  }, [importing])
+  }, [])
 
   const busy = opening !== null || importing
   const done = (): void => {
@@ -72,6 +75,7 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
     if (!preview || busy) return
     setError(null)
     setProgress(null)
+    importingRef.current = true
     setImporting(true)
     try {
       const r = await api.importShare(preview.token, name.trim())
@@ -79,6 +83,7 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
     } catch (e) {
       if (mounted.current) setError(errorMessage(e))
     } finally {
+      importingRef.current = false
       if (mounted.current) setImporting(false)
     }
   }
