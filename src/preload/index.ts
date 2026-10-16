@@ -42,7 +42,13 @@ contextBridge.exposeInMainWorld('hmlEvents', {
       const held = early
       early = null
       ipcRenderer.removeListener('hml:event', holdEarly)
-      for (const e of held) cb(e)
+      for (const e of held) {
+        try {
+          cb(e)
+        } catch (err) {
+          console.error('HML event handler failed', err)
+        }
+      }
     }
     return () => {
       ipcRenderer.removeListener('hml:event', listener)
