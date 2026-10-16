@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createServices, type DialogPort, type ServiceDeps } from '../../src/main/services'
 import { makePaths } from '../../src/main/store/paths'
 import { loadCatalog } from '../../src/main/catalog/catalog'
+import { createNexusServices } from '../../src/main/nexus/service'
+import { createNexusGames } from '../../src/main/nexus/games'
 import { createGithubServices } from '../../src/main/github/service'
 import { HML_METHODS } from '../../src/shared/ipc'
 import type { HmlEvent, TsQuery } from '../../src/shared/types'
@@ -70,6 +72,8 @@ beforeEach(() => {
   emitted = []
   deps = {
     paths,
+    appVersion: '1.0.0',
+    os: { type: 'Linux', release: '6', arch: 'x64' },
     emit: (e) => emitted.push(e),
     fetch: (async () => ({ ok: true, json: async () => fixture })) as unknown as typeof fetch,
     snapshotPath: path.join(__dirname, '../fixtures/ecosystem-min.json'),
@@ -1541,6 +1545,466 @@ describe('services', () => {
       } finally {
         warn.mockRestore()
       }
+    })
+  })
+
+  describe('nexus', () => {
+    const KEY = 'test-key-not-real'
+    const EMAIL = 'someone@example.com'
+    interface Call {
+      url: string
+      headers: Record<string, string>
+    }
+    interface F {
+      fileId: number
+      category: string
+      date: number
+      version?: string
+      primary?: number
+    }
+    let calls: Call[]
+    let files: F[]
+    let premium: boolean
+    let validateStatus: number
+    let downloadStatus: number
+    let failMod: number | null
+    let cdn: Record<number, Uint8Array>
+    let api: ReturnType<typeof createServices>
+    let pid: string
+
+    const zipOf = (name: string, version: string): Uint8Array =>
+      zipSync({
+        'manifest.json': strToU8(JSON.stringify({ name, version_number: version })),
+        [`${name}.dll`]: strToU8('dll')
+      })
+    const reply = (body: unknown, status = 200): Response =>
+      new Response(JSON.stringify(body), { status })
+    const gqlReply = (body: string): Response => {
+      if (body.includes('modFiles')) {
+        return reply({
+          data: {
+            modFiles: files.map((f) => ({
+              fileId: String(f.fileId),
+              name: `file${f.fileId}`,
+              version: f.version ?? `v${f.fileId}`,
+              category: f.category,
+              primary: f.primary ?? 0,
+              size: 1,
+              sizeInBytes: '1024',
+              date: f.date
+            }))
+          }
+        })
+      }
+      if (body.includes('game(domainName')) {
+        return reply({ data: { game: { id: '7398', name: 'R.E.P.O.', domainName: 'repo' } } })
+      }
+      if (body.includes('games(')) {
+        return reply({
+          data: { games: { nodes: [{ id: '7398', name: 'R.E.P.O.', domainName: 'repo' }] } }
+        })
+      }
+      return reply({
+        data: {
+          mods: {
+            totalCount: 1,
+            nodes: [
+              {
+                modId: '5',
+                name: 'Cool Mod',
+                summary: 's',
+                author: 'a',
+                version: '9.9',
+                downloads: 1,
+                endorsements: 1,
+                updatedAt: 'x',
+                adultContent: false
+              }
+            ]
+          }
+        }
+      })
+    }
+    const nxFetch = (async (
+      url: string,
+      init?: { headers?: Record<string, string>; body?: string }
+    ) => {
+      calls.push({ url, headers: init?.headers ?? {} })
+      const u = new URL(url)
+      if (u.host === 'api.nexusmods.com' && u.pathname === '/v2/graphql') {
+        return gqlReply(init?.body ?? '')
+      }
+      if (u.pathname === '/v1/users/validate.json') {
+        if (validateStatus !== 200) return reply({}, validateStatus)
+        return reply({ user_id: 77, name: 'Haro', is_premium: premium, email: EMAIL, key: KEY })
+      }
+      const dl = /\/files\/(\d+)\/download_link\.json$/.exec(u.pathname)
+      if (dl) {
+        if (downloadStatus !== 200) return reply({}, downloadStatus)
+        if (failMod !== null && u.pathname.includes(`/mods/${failMod}/`)) return reply({}, 404)
+        return reply([
+          { name: 'CDN', short_name: 'CDN', URI: `https://cf-files.nexusmods.com/f/${dl[1]}.zip` }
+        ])
+      }
+      const cd = /^\/f\/(\d+)\.zip$/.exec(u.pathname)
+      if (u.host === 'cf-files.nexusmods.com' && cd) {
+        return new Response((cdn[Number(cd[1])] ?? new Uint8Array()) as BodyInit)
+      }
+      return deps.fetch(url)
+    }) as unknown as typeof fetch
+
+    beforeEach(async () => {
+      calls = []
+      premium = true
+      validateStatus = 200
+      downloadStatus = 200
+      failMod = null
+      files = [
+        { fileId: 11, category: 'MAIN', date: 100 },
+        { fileId: 12, category: 'OPTIONAL', date: 400 },
+        { fileId: 13, category: 'MAIN', date: 300, primary: 0 }
+      ]
+      cdn = {
+        11: zipOf('CoolMod', '1.0.0'),
+        13: zipOf('CoolMod', '2.0.0'),
+        12: zipOf('Opt', '1.0.0')
+      }
+      api = createServices({ ...deps, fetch: nxFetch })
+      pid = (await api.createProfile('repo', 'p')).id
+    })
+    const modsOf = async (): Promise<import('../../src/shared/types').InstalledMod[]> =>
+      (await api.listProfiles('repo')).find((p) => p.id === pid)!.mods
+    // Task 6 exposes handleNxm; until then installFromNxm is reached through the nexus service.
+    const createNexusServicesOf = (
+      a: unknown
+    ): ((l: unknown) => Promise<{ game: string; profileId: string; mod: { id: string } }>) => {
+      void a
+      const client = { fetch: nxFetch, appVersion: '1.0.0', os: deps.os }
+      const catalog = loadCatalog(deps.paths, deps.fetch, deps.snapshotPath)
+      const nx = createNexusServices({
+        deps: { ...deps, fetch: nxFetch },
+        client,
+        games: createNexusGames({ paths: deps.paths, client, now: Date.now }),
+        getCatalog: () => catalog,
+        requireGame: async (l) => (await catalog).games.find((g) => g.label === l)!,
+        serialize: (_g, _p, fn) => fn()
+      })
+      return nx.installFromNxm as never
+    }
+    const withKey = async (): Promise<void> => void (await api.nxSetKey(KEY))
+    const NO_DOMAIN = "R.E.P.O. isn't on Nexus Mods. Set its Nexus domain in the game's menu."
+
+    test('setting the key validates, saves and reports the user without secrets', async () => {
+      expect(await api.nxSetKey(`  ${KEY}\n`)).toEqual({ name: 'Haro', isPremium: true })
+      const st = await api.nxStatus()
+      expect(st).toMatchObject({ set: true, user: { name: 'Haro', isPremium: true } })
+      const json = JSON.stringify(st)
+      expect(json).not.toContain(KEY)
+      expect(json).not.toContain(EMAIL)
+      expect(readFileSync(deps.paths.nxKey).toString()).toBe(KEY)
+      expect(calls.find((c) => c.url.endsWith('validate.json'))?.headers.apikey).toBe(KEY)
+    })
+
+    test.each(['has space', 'bad\u0007key', 'x'.repeat(513)])(
+      'rejects bad format %#',
+      async (k) => {
+        await expect(api.nxSetKey(k)).rejects.toThrow(
+          "That doesn't look like a Nexus Mods API key."
+        )
+        expect(calls).toEqual([])
+        expect(existsSync(deps.paths.nxKey)).toBe(false)
+      }
+    )
+
+    test('a 401 gives the message and saves nothing', async () => {
+      validateStatus = 401
+      await expect(api.nxSetKey(KEY)).rejects.toThrow("Nexus Mods didn't accept that API key.")
+      expect(existsSync(deps.paths.nxKey)).toBe(false)
+    })
+
+    test('unavailable storage is reported before any request', async () => {
+      const a = createServices({
+        ...deps,
+        fetch: nxFetch,
+        secrets: { ...deps.secrets, isAvailable: () => false }
+      })
+      await expect(a.nxSetKey(KEY)).rejects.toThrow(
+        "Secure storage isn't available on this system, so HML can't save a Nexus Mods API key."
+      )
+      expect(calls).toEqual([])
+    })
+
+    test('null removes the key', async () => {
+      await withKey()
+      expect(await api.nxSetKey(null)).toBeNull()
+      expect(existsSync(deps.paths.nxKey)).toBe(false)
+      expect((await api.nxStatus()).set).toBe(false)
+    })
+
+    test('a later 401 in status clears the user but keeps the key', async () => {
+      await withKey()
+      const again = createServices({ ...deps, fetch: nxFetch })
+      validateStatus = 401
+      expect(await again.nxStatus()).toMatchObject({ set: true, user: null })
+      expect(existsSync(deps.paths.nxKey)).toBe(true)
+    })
+
+    test('a premium install picks the newest MAIN file and keys only /v1/', async () => {
+      await withKey()
+      calls = []
+      const r = await api.nxInstall('repo', pid, 5)
+      expect(r.kind).toBe('installed')
+      const mods = await modsOf()
+      expect(mods).toHaveLength(1)
+      expect(mods[0]).toMatchObject({
+        id: 'nexus-5',
+        name: 'Cool Mod',
+        version: 'v13',
+        source: { kind: 'nexus', domain: 'repo', modId: 5, fileId: 13 }
+      })
+      const keyed = calls.filter((c) => c.headers.apikey)
+      expect(keyed.length).toBeGreaterThan(0)
+      for (const c of keyed) expect(c.url.startsWith('https://api.nexusmods.com/v1/')).toBe(true)
+      for (const c of calls.filter((x) => x.url.includes('api.nexusmods.com'))) {
+        expect(c.headers['Application-Name']).toBe('HML')
+      }
+    })
+
+    test('installing a chosen file works', async () => {
+      await withKey()
+      await api.nxInstall('repo', pid, 5, 12)
+      expect((await modsOf())[0].source).toMatchObject({ fileId: 12 })
+    })
+
+    test('a free install opens the website and downloads nothing', async () => {
+      premium = false
+      await withKey()
+      calls = []
+      expect(await api.nxInstall('repo', pid, 5)).toEqual({
+        kind: 'open-website',
+        url: 'https://www.nexusmods.com/repo/mods/5?tab=files&file_id=13'
+      })
+      expect(calls.some((c) => c.url.includes('download_link') || c.url.includes('cf-files'))).toBe(
+        false
+      )
+      expect(await modsOf()).toEqual([])
+    })
+
+    test('a 403 from the download link falls back to the website', async () => {
+      await withKey()
+      downloadStatus = 403
+      expect((await api.nxInstall('repo', pid, 5)).kind).toBe('open-website')
+    })
+
+    test('without a key it asks for one', async () => {
+      await expect(api.nxInstall('repo', pid, 5)).rejects.toThrow(
+        'Add your Nexus Mods API key in Settings to download.'
+      )
+    })
+
+    test('a mod without a main file is refused', async () => {
+      await withKey()
+      files = [{ fileId: 12, category: 'OPTIONAL', date: 1 }]
+      await expect(api.nxInstall('repo', pid, 5)).rejects.toThrow(
+        'This mod has no main file to install.'
+      )
+    })
+
+    test('a local mod with the manifest name is replaced', async () => {
+      await withKey()
+      const zip = join()
+      await api.installFromPaths('repo', pid, [zip])
+      expect((await modsOf()).map((m) => m.id)).toEqual(['CoolMod'])
+      const r = await api.nxInstall('repo', pid, 5)
+      expect(r).toMatchObject({ kind: 'installed', replaced: ['CoolMod'] })
+      expect((await modsOf()).map((m) => m.id)).toEqual(['nexus-5'])
+    })
+    const join = (): string => {
+      const f = path.join(tmp, 'CoolMod.zip')
+      writeFileSync(f, zipOf('CoolMod', '0.1.0'))
+      picked = [f]
+      return f
+    }
+
+    test('a 7z download installs', async () => {
+      const { path7za } = await import('7zip-bin')
+      if (!existsSync(path7za)) return
+      const { execFileSync } = await import('node:child_process')
+      const src = path.join(tmp, 'src7z')
+      mkdirSync(src, { recursive: true })
+      writeFileSync(path.join(src, 'Seven.dll'), 'dll')
+      const out = path.join(tmp, 'o.7z')
+      chmodSync(path7za, 0o755)
+      execFileSync(path7za, ['a', '-bd', out, '.'], { cwd: src, stdio: 'ignore' })
+      cdn[13] = readFileSync(out)
+      await withKey()
+      expect((await api.nxInstall('repo', pid, 5)).kind).toBe('installed')
+      expect((await modsOf())[0].files.some((f) => f.endsWith('Seven.dll'))).toBe(true)
+    })
+
+    test('a game without a domain gives the exact message everywhere', async () => {
+      await withKey()
+      const none = createServices({
+        ...deps,
+        fetch: (async (url: string, init?: { body?: string }) =>
+          String(init?.body).includes('games(')
+            ? reply({ data: { games: { nodes: [] } } })
+            : nxFetch(url, init as never)) as unknown as typeof fetch
+      })
+      const q = { text: '', sort: 'downloads', includeAdult: false, offset: 0, limit: 10 } as const
+      await expect(none.nxSearch('repo', q)).rejects.toThrow(NO_DOMAIN)
+      await expect(none.nxGetMod('repo', 5)).rejects.toThrow(NO_DOMAIN)
+      await expect(none.nxInstall('repo', pid, 5)).rejects.toThrow(NO_DOMAIN)
+      await expect(none.nxCheckUpdates('repo', pid)).rejects.toThrow(NO_DOMAIN)
+      await expect(none.nxUpdate('repo', pid, [])).rejects.toThrow(NO_DOMAIN)
+    })
+
+    test('search and detail go through the domain', async () => {
+      const q = {
+        text: 'cool',
+        sort: 'downloads',
+        includeAdult: false,
+        offset: 0,
+        limit: 10
+      } as const
+      expect((await api.nxSearch('repo', q)).items[0].name).toBe('Cool Mod')
+      const d = await api.nxGetMod('repo', 5)
+      expect(d.domain).toBe('repo')
+      expect(d.files.map((f) => f.fileId)).toEqual([12, 13, 11])
+    })
+
+    describe('updates', () => {
+      test('flags a newer MAIN file, skips OPTIONAL-installed mods', async () => {
+        await withKey()
+        files = [{ fileId: 11, category: 'MAIN', date: 100 }]
+        await api.nxInstall('repo', pid, 5)
+        expect(await api.nxCheckUpdates('repo', pid)).toEqual([])
+        files = [
+          { fileId: 11, category: 'MAIN', date: 100 },
+          { fileId: 13, category: 'MAIN', date: 300 }
+        ]
+        // memoized for 10 minutes: a fresh service sees the new list
+        const fresh = createServices({ ...deps, fetch: nxFetch })
+        expect(await fresh.nxCheckUpdates('repo', pid)).toEqual([
+          {
+            modId: 'nexus-5',
+            domain: 'repo',
+            nexusModId: 5,
+            current: 'v11',
+            latest: 'v13',
+            latestFileId: 13
+          }
+        ])
+        const res = await fresh.nxUpdate('repo', pid, ['nexus-5'])
+        expect(res.map((r) => r.kind)).toEqual(['installed'])
+        expect((await modsOf())[0].source).toMatchObject({ fileId: 13 })
+      })
+
+      test('an OPTIONAL-installed mod is not checked', async () => {
+        await withKey()
+        await api.nxInstall('repo', pid, 5, 12)
+        const fresh = createServices({ ...deps, fetch: nxFetch })
+        expect(await fresh.nxCheckUpdates('repo', pid)).toEqual([])
+      })
+
+      test('lookups are memoized and failures skipped', async () => {
+        await withKey()
+        files = [{ fileId: 11, category: 'MAIN', date: 100 }]
+        await api.nxInstall('repo', pid, 5)
+        calls = []
+        await api.nxCheckUpdates('repo', pid)
+        await api.nxCheckUpdates('repo', pid)
+        expect(calls.filter((c) => c.url.endsWith('graphql'))).toHaveLength(1)
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const broken = createServices({
+          ...deps,
+          fetch: (async (url: string, init?: { body?: string }) =>
+            String(init?.body).includes('modFiles')
+              ? reply({ errors: [{ message: 'boom' }] })
+              : nxFetch(url, init as never)) as unknown as typeof fetch
+        })
+        expect(await broken.nxCheckUpdates('repo', pid)).toEqual([])
+        expect(warn).toHaveBeenCalled()
+        warn.mockRestore()
+      })
+
+      test('nxUpdate continues past a failing mod and reports it', async () => {
+        await withKey()
+        cdn[21] = zipOf('Other', '1.0.0')
+        files = [{ fileId: 11, category: 'MAIN', date: 100 }]
+        await api.nxInstall('repo', pid, 5)
+        files = [{ fileId: 21, category: 'MAIN', date: 50 }]
+        await api.nxInstall('repo', pid, 6)
+        files = [
+          { fileId: 11, category: 'MAIN', date: 100 },
+          { fileId: 21, category: 'MAIN', date: 50 },
+          { fileId: 13, category: 'MAIN', date: 300 }
+        ]
+        failMod = 6
+        const mods = await modsOf()
+        await expect(
+          api.nxUpdate(
+            'repo',
+            pid,
+            mods.map((m) => m.id)
+          )
+        ).rejects.toThrow(/^Updated 1 of 2 Nexus mods\. Cool Mod: That file is no longer/)
+        const after = await modsOf()
+        expect(after.find((m) => m.id === 'nexus-5')?.source).toMatchObject({ fileId: 13 })
+        expect(after.find((m) => m.id === 'nexus-6')?.source).toMatchObject({ fileId: 21 })
+      })
+    })
+
+    describe('installFromNxm', () => {
+      const link = {
+        domain: 'repo',
+        modId: 5,
+        fileId: 11,
+        key: 'LINKKEY',
+        expires: 1234,
+        userId: 77
+      }
+      const lastProfile = (): void => {
+        const s = JSON.parse(readFileSync(deps.paths.settings, 'utf8'))
+        writeFileSync(
+          deps.paths.settings,
+          JSON.stringify({
+            ...s,
+            lastProfile: { repo: pid },
+            nexusDomainOverrides: { repo: 'repo' }
+          })
+        )
+      }
+
+      test('routes to the game and last profile and sends key and expires', async () => {
+        lastProfile()
+        await withKey()
+        premium = false
+        const nx = createNexusServicesOf(api)
+        const r = await nx(link)
+        expect(r).toMatchObject({ game: 'repo', profileId: pid, mod: { id: 'nexus-5' } })
+        expect(
+          calls.some((c) => c.url.includes('download_link.json?key=LINKKEY&expires=1234'))
+        ).toBe(true)
+      })
+
+      test('no matching game', async () => {
+        lastProfile()
+        await expect(createNexusServicesOf(api)({ ...link, domain: 'nowhere' })).rejects.toThrow(
+          'Open nowhere in HML before downloading its mods.'
+        )
+      })
+
+      test('no profile', async () => {
+        const s = JSON.parse(readFileSync(deps.paths.settings, 'utf8'))
+        writeFileSync(
+          deps.paths.settings,
+          JSON.stringify({ ...s, nexusDomainOverrides: { repo: 'repo' } })
+        )
+        await expect(createNexusServicesOf(api)(link)).rejects.toThrow(
+          'Pick a profile for R.E.P.O. in HML first.'
+        )
+      })
     })
   })
 

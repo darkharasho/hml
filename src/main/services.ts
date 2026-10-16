@@ -56,6 +56,7 @@ import type { SecretPort } from './github/token'
 import { createGithubServices, unsupportedLoaderMessage } from './github/service'
 import { deployProfile, deploymentStatus, removeDeployment } from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
+import { createNexusServices } from './nexus/service'
 import { gameByDomain } from './nexus/api'
 import { findInstalledMod } from '../shared/modIdentity'
 
@@ -91,9 +92,9 @@ export interface ServiceDeps {
   /** Clock for index freshness; defaults to Date.now. */
   now?: () => number
   /** HML's version, sent to Nexus Mods in request headers. */
-  appVersion?: string
+  appVersion: string
   /** OS details for the Nexus User-Agent. */
-  os?: { type: string; release: string; arch: string }
+  os: { type: string; release: string; arch: string }
 }
 
 interface LoadedIndex extends TsIndex {
@@ -134,11 +135,7 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
   const now = deps.now ?? Date.now
 
-  const nexusClient = {
-    fetch: deps.fetch,
-    appVersion: deps.appVersion ?? '0.0.0',
-    os: deps.os ?? { type: 'unknown', release: '', arch: process.arch }
-  }
+  const nexusClient = { fetch: deps.fetch, appVersion: deps.appVersion, os: deps.os }
   const nexus = createNexusGames({ paths, client: nexusClient, now })
 
   let catalogPromise: Promise<Catalog> | null = null
@@ -519,9 +516,22 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
     isGameRunning: () => false
   })
 
+  const { installFromNxm, ...nexusApi } = createNexusServices({
+    deps,
+    client: nexusClient,
+    games: nexus,
+    getCatalog,
+    requireGame,
+    serialize
+  })
+
+  // Task 6 wires this into handleNxm.
+  void installFromNxm
+
   return {
     ...tsServices,
     ...ghServices,
+    ...nexusApi,
     async searchGames(query: string): Promise<GameSummary[]> {
       const catalog = await getCatalog()
       const ranked = searchGames(catalog.games, query)

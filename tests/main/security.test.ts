@@ -6,13 +6,17 @@ describe('parseAllowedExternalUrl', () => {
     'https://thunderstore.io/c/repo/p/A/B/',
     'https://ccdn.thunderstore.io/x.png',
     'https://github.com/a/b',
-    'https://www.github.com/a/b'
+    'https://www.github.com/a/b',
+    'https://www.nexusmods.com/repo/mods/1',
+    'https://nexusmods.com/repo/mods/1'
   ])('allows %s', (u) => expect(parseAllowedExternalUrl(u)?.href).toBe(u))
   test.each([
     'http://github.com/a/b',
     'https://example.com',
     'https://evilthunderstore.io/',
     'https://github.com.evil.com/',
+    'http://www.nexusmods.com/repo/mods/1',
+    'https://evil-nexusmods.com/repo/mods/1',
     'file:///etc/passwd',
     'javascript:alert(1)',
     'custom-scheme://x',

@@ -15,7 +15,9 @@ export function parseAllowedExternalUrl(raw: string): URL | null {
     h === 'thunderstore.io' ||
     h.endsWith('.thunderstore.io') ||
     h === 'github.com' ||
-    h === 'www.github.com'
+    h === 'www.github.com' ||
+    h === 'nexusmods.com' ||
+    h === 'www.nexusmods.com'
   return ok ? u : null
 }
 

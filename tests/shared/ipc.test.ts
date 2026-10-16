@@ -45,3 +45,17 @@ test('HML_METHODS lists the deployment methods', () => {
     expect.arrayContaining(['deployProfile', 'removeDeployment', 'getDeployment'])
   )
 })
+test('HML_METHODS lists the nexus methods', () => {
+  expect(HML_METHODS).toEqual(
+    expect.arrayContaining([
+      'nxSetKey',
+      'nxStatus',
+      'nxSearch',
+      'nxGetMod',
+      'nxInstall',
+      'nxCheckUpdates',
+      'nxUpdate'
+    ])
+  )
+  expect(HML_METHODS).not.toContain('installFromNxm')
+})

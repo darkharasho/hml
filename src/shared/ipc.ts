@@ -8,6 +8,13 @@ import type {
   LaunchMode,
   LaunchWarning,
   ModUpdate,
+  NxInstallResult,
+  NxModDetail,
+  NxQuery,
+  NxSearchResult,
+  NxStatus,
+  NxUpdate,
+  NxUser,
   ProfileManifest,
   Settings,
   TsInstallResult,
@@ -71,6 +78,19 @@ export interface HmlApi {
   nxGetDomain(game: string): Promise<string | null>
   /** Sets (after validating) or, with null, clears the Nexus domain override for a game. */
   nxSetDomain(game: string, domain: string | null): Promise<void>
+  /** Saves (after verifying) or, with null/empty, removes the Nexus Mods API key. Never returns it. */
+  nxSetKey(key: string | null): Promise<NxUser | null>
+  nxStatus(): Promise<NxStatus>
+  nxSearch(game: string, q: NxQuery): Promise<NxSearchResult>
+  nxGetMod(game: string, modId: number): Promise<NxModDetail>
+  nxInstall(
+    game: string,
+    profileId: string,
+    modId: number,
+    fileId?: number
+  ): Promise<NxInstallResult>
+  nxCheckUpdates(game: string, profileId: string): Promise<NxUpdate[]>
+  nxUpdate(game: string, profileId: string, modIds: string[]): Promise<NxInstallResult[]>
   /** Copies the profile's enabled mods into the game folder (deploy games), replacing any current deployment. */
   deployProfile(game: string, profileId: string): Promise<DeploymentStatus>
   /** Restores the game folder to how it was before the deployment. */
@@ -115,6 +135,13 @@ const METHOD_TABLE = {
   addNexusGame: true,
   nxGetDomain: true,
   nxSetDomain: true,
+  nxSetKey: true,
+  nxStatus: true,
+  nxSearch: true,
+  nxGetMod: true,
+  nxInstall: true,
+  nxCheckUpdates: true,
+  nxUpdate: true,
   deployProfile: true,
   removeDeployment: true,
   getDeployment: true,
