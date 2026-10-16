@@ -12,6 +12,8 @@ describe('parseAllowedExternalUrl', () => {
   ])('allows %s', (u) => expect(parseAllowedExternalUrl(u)?.href).toBe(u))
   test.each([
     'http://github.com/a/b',
+    'https://github.com:8443/a/b',
+    'https://thunderstore.io:444/',
     'https://example.com',
     'https://evilthunderstore.io/',
     'https://github.com.evil.com/',

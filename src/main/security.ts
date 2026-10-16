@@ -9,7 +9,7 @@ export function parseAllowedExternalUrl(raw: string): URL | null {
   } catch {
     return null
   }
-  if (u.protocol !== 'https:') return null
+  if (u.protocol !== 'https:' || u.port !== '') return null
   const h = u.hostname
   const ok =
     h === 'thunderstore.io' ||
