@@ -32,6 +32,13 @@ export class NxPremiumRequiredError extends Error {
   }
 }
 
+export class NxRejectedKeyError extends Error {
+  constructor() {
+    super("Nexus Mods didn't accept that API key.")
+    this.name = 'NxRejectedKeyError'
+  }
+}
+
 const isTimeout = (e: unknown): boolean => e instanceof Error && e.name === 'TimeoutError'
 
 export function nxHeaders(o: NxClientOpts): Record<string, string> {
@@ -156,7 +163,7 @@ export async function validateKey(
 ): Promise<NxUser & { userId: number }> {
   const url = `${V1_ROOT}users/validate.json`
   const res = await send(o, url, { headers: headersFor(o, url, key) })
-  if (res.status === 401) throw new Error("Nexus Mods didn't accept that API key.")
+  if (res.status === 401) throw new NxRejectedKeyError()
   if (res.status === 429) throwRateLimit(res)
   if (!res.ok) throw new Error(`Nexus Mods returned HTTP ${res.status}.`)
   const b = (await res.json()) as Record<string, unknown>
@@ -295,7 +302,7 @@ export async function downloadLinks(
   }
   const res = await send(o, url, { headers: headersFor(o, url, key) })
   if (res.status === 403) throw new NxPremiumRequiredError()
-  if (res.status === 401) throw new Error("Nexus Mods didn't accept that API key.")
+  if (res.status === 401) throw new NxRejectedKeyError()
   if (res.status === 410) {
     throw new Error('This Nexus download link has expired. Click "Mod Manager Download" again.')
   }

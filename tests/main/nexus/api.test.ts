@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   NX_MAX_DOWNLOAD,
+  NxRejectedKeyError,
   NxPremiumRequiredError,
   downloadFile,
   downloadLinks,
@@ -217,6 +218,12 @@ describe('validateKey', () => {
     const err = (await validateKey(o, KEY).catch((e: Error) => e)) as Error
     expect(err.message).toBe("Nexus Mods didn't accept that API key.")
     expect(err.message).not.toContain(KEY)
+    expect(err).toBeInstanceOf(NxRejectedKeyError)
+  })
+  it('downloadLinks throws the typed rejected-key error on 401', async () => {
+    const { o } = fake(() => ({ status: 401 }))
+    const err = await downloadLinks(o, KEY, 'repo', 5, 9).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(NxRejectedKeyError)
   })
 })
 

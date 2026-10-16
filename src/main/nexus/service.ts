@@ -22,6 +22,7 @@ import {
   getMod,
   modFiles,
   NxPremiumRequiredError,
+  NxRejectedKeyError,
   searchMods,
   validateKey,
   type NxClientOpts
@@ -41,7 +42,6 @@ export interface NexusContext {
 const NX_FILES_MEMO_MS = 600_000
 const BAD_KEY = "That doesn't look like a Nexus Mods API key."
 const NO_KEY = 'Add your Nexus Mods API key in Settings to download.'
-const REJECTED_KEY = "Nexus Mods didn't accept that API key."
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 type NxMod = InstalledMod & { source: Extract<InstalledMod['source'], { kind: 'nexus' }> }
@@ -112,7 +112,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
       } catch (e) {
         user = null
         // A rejected key is final for this session; a network failure is retried next time.
-        if (errMsg(e) === REJECTED_KEY) validated = true
+        if (e instanceof NxRejectedKeyError) validated = true
       }
     }
     return {
