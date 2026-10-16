@@ -8,7 +8,8 @@ import {
   fetchLogin,
   fetchRelease,
   isNewerTag,
-  GH_RELEASE_MEMO_MS
+  GH_RELEASE_MEMO_MS,
+  MAX_DOWNLOAD_BYTES
 } from '../../../src/main/github/api'
 import type { GhReleaseAsset } from '../../../src/main/github/assets'
 
@@ -352,6 +353,61 @@ describe('downloadAsset', () => {
     await expect(downloadAsset({ fetch: down, token: null, asset: a })).rejects.toThrow(
       'Download of Mod.zip failed: boom'
     )
+  })
+})
+
+describe('downloadAsset size cap', () => {
+  const base: GhReleaseAsset = {
+    id: 7,
+    name: 'Big.zip',
+    size: 10,
+    downloadUrl: 'https://github.com/o/r/releases/download/v1/Big.zip',
+    apiUrl: 'https://api.github.com/repos/o/r/releases/assets/7',
+    digest: null
+  }
+  const LIMIT = "over HML's 512 MB limit"
+
+  it('exports a 512 MiB cap', () => {
+    expect(MAX_DOWNLOAD_BYTES).toBe(512 * 1024 * 1024)
+  })
+  it('refuses an asset whose reported size is over the cap without fetching', async () => {
+    const { fetch: f, calls } = fakeFetch({})
+    const a = { ...base, size: MAX_DOWNLOAD_BYTES + 1 }
+    await expect(downloadAsset({ fetch: f, token: null, asset: a })).rejects.toThrow(
+      `Download of Big.zip failed: it is 513 MB, ${LIMIT}`
+    )
+    expect(calls).toEqual([])
+  })
+  it('accepts an asset exactly at the cap size', async () => {
+    const bytes = new TextEncoder().encode('ok')
+    const { fetch: f } = fakeFetch({ [base.downloadUrl]: { status: 200, raw: bytes } })
+    const a = { ...base, size: MAX_DOWNLOAD_BYTES }
+    await expect(downloadAsset({ fetch: f, token: null, asset: a })).resolves.toMatchObject({
+      data: bytes
+    })
+  })
+  it('refuses a response whose Content-Length is over the cap', async () => {
+    const { fetch: f } = fakeFetch({
+      [base.downloadUrl]: {
+        status: 200,
+        headers: { 'content-length': String(MAX_DOWNLOAD_BYTES * 2) },
+        raw: new Uint8Array(1)
+      }
+    })
+    await expect(downloadAsset({ fetch: f, token: null, asset: base })).rejects.toThrow(
+      `Download of Big.zip failed: it is 1024 MB, ${LIMIT}`
+    )
+  })
+  it('passes a timeout signal and reports a timeout clearly', async () => {
+    let signal: AbortSignal | undefined
+    const slow = (async (_url: string, init?: { signal?: AbortSignal }) => {
+      signal = init?.signal
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+    }) as unknown as typeof fetch
+    await expect(downloadAsset({ fetch: slow, token: null, asset: base })).rejects.toThrow(
+      'Download of Big.zip failed: it took too long'
+    )
+    expect(signal).toBeInstanceOf(AbortSignal)
   })
 })
 

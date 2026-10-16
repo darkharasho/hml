@@ -35,6 +35,31 @@ describe('assetPattern', () => {
     expect(matchesAssetPattern(p, 'BepInEx_linux_x86_5.4.24.0.zip')).toBe(false)
     expect(matchesAssetPattern(p, 'bepinex_LINUX_x64_5.4.24.0.ZIP')).toBe(true)
   })
+  it('matches only version-like text for {version}', () => {
+    expect(matchesAssetPattern('Mod-{version}.zip', 'Mod-1.2.3.zip')).toBe(true)
+    expect(matchesAssetPattern('Mod-{version}.zip', 'Mod-1.2.3-debug.zip')).toBe(false)
+    expect(matchesAssetPattern('Mod-{version}.zip', 'Mod-latest.zip')).toBe(false)
+    expect(matchesAssetPattern('Mod-{version}.zip', 'Mod-.zip')).toBe(false)
+    for (const v of [
+      'v5.4.23.5',
+      '5.4.23.5',
+      '1.0.0-beta.2',
+      '2.0-rc1',
+      '1.0.0-alpha',
+      'r43',
+      '3'
+    ]) {
+      expect(matchesAssetPattern('Mod-{version}.zip', `Mod-${v}.zip`)).toBe(true)
+    }
+    // patterns built from real tags still match the next release
+    const p = assetPattern('BepInEx_win_x64_v5.4.23.5.zip', 'v5.4.23.5')
+    expect(matchesAssetPattern(p, 'BepInEx_win_x64_v5.4.23.6.zip')).toBe(true)
+    const beta = assetPattern('Mod-1.0.0-beta.2.zip', '1.0.0-beta.2')
+    expect(beta).toBe('Mod-{version}.zip')
+    expect(matchesAssetPattern(beta, 'Mod-1.0.0-beta.3.zip')).toBe(true)
+    expect(matchesAssetPattern(beta, 'Mod-1.0.0.zip')).toBe(true)
+    expect(matchesAssetPattern(beta, 'Mod-1.0.0-debug.zip')).toBe(false)
+  })
 })
 
 describe('chooseAsset', () => {

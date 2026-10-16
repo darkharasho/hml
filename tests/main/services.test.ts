@@ -16,6 +16,8 @@ import { gzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createServices, type DialogPort, type ServiceDeps } from '../../src/main/services'
 import { makePaths } from '../../src/main/store/paths'
+import { loadCatalog } from '../../src/main/catalog/catalog'
+import { createGithubServices } from '../../src/main/github/service'
 import { HML_METHODS } from '../../src/shared/ipc'
 import type { HmlEvent, TsQuery } from '../../src/shared/types'
 
@@ -522,7 +524,7 @@ describe('services', () => {
           const b = url === IDX ? gz([CHUNK]) : url === CHUNK ? gz(packages) : blobs.get(url)!
           if (typeof b === 'number') return { ok: false, status: b }
           const buf = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
-          return { ok: true, status: 200, arrayBuffer: async () => buf }
+          return { ok: true, status: 200, headers: new Headers(), arrayBuffer: async () => buf }
         }
         return deps.fetch(url)
       }) as never
@@ -850,7 +852,7 @@ describe('services', () => {
           const data = rel?.files[decodeURIComponent(m![4])]
           if (!data) return res(404)
           const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
-          return { ok: true, status: 200, arrayBuffer: async () => buf }
+          return { ok: true, status: 200, headers: new Headers(), arrayBuffer: async () => buf }
         }
         return deps.fetch(url)
       }) as never
@@ -1122,9 +1124,154 @@ describe('services', () => {
       await api.ghInstall('repo', pid, 'owner/repo')
       publish('owner', 'repo', 'v2.0.0', { 'one.zip': bare('b.dll'), 'two.zip': bare('c.dll') })
       await expect(api.ghUpdate('repo', pid, ['owner-repo'])).rejects.toThrow(
-        'owner/repo: owner/repo v2.0.0 has several files and none matches the one you picked before. Reinstall it from its GitHub link to choose again.'
+        "owner/repo: owner/repo v2.0.0 has several files and HML can't tell which one replaces mod-1.0.0.zip. Reinstall it from its GitHub link to choose."
       )
       expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
+    })
+
+    test('without a saved pattern, an update picks the file named like the installed one', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'Mod-1.0.0.zip': zipOf('Thing', '1.0.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      expect((await modsOf())[0].github?.assetPattern).toBeNull()
+      publish('owner', 'repo', 'v1.1.0', {
+        'Mod-1.1.0.zip': zipOf('Thing', '1.1.0'),
+        'Mod-1.1.0-debug.zip': zipOf('Thing', '1.1.0', 'Debug.dll')
+      })
+      const downloads: string[] = []
+      const inner = ghFetch
+      api = createServices({
+        ...deps,
+        now: () => clock,
+        fetch: (async (url: string, init?: never) => {
+          if (new URL(url).host === 'github.com') downloads.push(path.posix.basename(url))
+          return inner(url, init)
+        }) as unknown as typeof fetch
+      })
+      const [u] = await api.ghUpdate('repo', pid, ['owner-repo'])
+      expect(u.source).toMatchObject({ tag: 'v1.1.0', asset: 'Mod-1.1.0.zip' })
+      expect(downloads).toEqual(['Mod-1.1.0.zip'])
+      expect(existsSync(path.join(pluginsDir(), 'owner-repo', 'Debug.dll'))).toBe(false)
+    })
+
+    describe('changes while an update downloads', () => {
+      /** Holds the first asset download until `release()`; `reached` resolves when it starts. */
+      const holdFirstDownload = (): {
+        fetch: typeof fetch
+        reached: Promise<void>
+        release(): void
+      } => {
+        let release!: () => void
+        let reach!: () => void
+        const held = new Promise<void>((r) => (release = r))
+        const reached = new Promise<void>((r) => (reach = r))
+        let first = true
+        const inner = ghFetch
+        const f = (async (url: string, init?: never) => {
+          if (first && new URL(url).host === 'github.com') {
+            first = false
+            reach()
+            await held
+          }
+          return inner(url, init)
+        }) as unknown as typeof fetch
+        return { fetch: f, reached, release }
+      }
+      const start = async (): Promise<ReturnType<typeof holdFirstDownload>> => {
+        await setup()
+        publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+        await api.ghInstall('repo', pid, 'owner/repo')
+        publish('owner', 'repo', 'v2.0.0', { 'a.zip': zipOf('Thing', '2.0.0') })
+        const gate = holdFirstDownload()
+        api = createServices({ ...deps, fetch: gate.fetch, now: () => clock })
+        return gate
+      }
+
+      test('ghUpdate installs nothing when the mod is pinned meanwhile', async () => {
+        const gate = await start()
+        const pending = api.ghUpdate('repo', pid, ['owner-repo'])
+        await gate.reached
+        await api.ghSetUpdateMode('repo', pid, 'owner-repo', 'pinned')
+        gate.release()
+        expect(await pending).toEqual([])
+        const [m] = await modsOf()
+        expect(m.source).toMatchObject({ tag: 'v1.0.0' })
+        expect(m.github?.updateMode).toBe('pinned')
+      })
+
+      test('auto-update installs nothing when the mod is set to notify meanwhile', async () => {
+        const gate = await start()
+        emitted.length = 0
+        const pending = api.ghAutoUpdateAll()
+        await gate.reached
+        await api.ghSetUpdateMode('repo', pid, 'owner-repo', 'notify')
+        gate.release()
+        await pending
+        expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
+        expect(emitted.filter((e) => e.type === 'github-updated')).toEqual([])
+      })
+
+      test('auto-update skips a mod whose tag changed meanwhile, so it installs once', async () => {
+        const gate = await start()
+        emitted.length = 0
+        const auto = api.ghAutoUpdateAll()
+        await gate.reached
+        const [manual] = await api.ghUpdate('repo', pid, ['owner-repo'])
+        expect(manual.source).toMatchObject({ tag: 'v2.0.0' })
+        gate.release()
+        await auto
+        expect((await modsOf())[0].source).toMatchObject({ tag: 'v2.0.0' })
+        expect(emitted.filter((e) => e.type === 'github-updated')).toEqual([])
+      })
+
+      test('ghUpdate skips a mod reinstalled at another tag meanwhile', async () => {
+        const gate = await start()
+        const pending = api.ghUpdate('repo', pid, ['owner-repo'])
+        await gate.reached
+        publish('owner', 'repo', 'v1.5.0', { 'a.zip': zipOf('Thing', '1.5.0') })
+        await api.ghInstall('repo', pid, 'https://github.com/owner/repo/releases/tag/v1.5.0')
+        gate.release()
+        expect(await pending).toEqual([])
+        expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.5.0' })
+      })
+    })
+
+    test('ghUpdate updates the rest after one fails, then names the failure', async () => {
+      await setup()
+      publish('good', 'one', 'v1.0.0', { 'a.zip': zipOf('Good', '1.0.0') })
+      publish('bad', 'two', 'v1.0.0', { 'a.zip': zipOf('Bad', '1.0.0') })
+      await api.ghInstall('repo', pid, 'bad/two')
+      await api.ghInstall('repo', pid, 'good/one')
+      publish('bad', 'two', 'v2.0.0', { 'a.zip': zipOf('Bad', '2.0.0') }, true)
+      publish('good', 'one', 'v2.0.0', { 'a.zip': zipOf('Good', '2.0.0') })
+      await expect(api.ghUpdate('repo', pid, ['bad-two', 'good-one'])).rejects.toThrow(
+        'Updated 1 of 2 GitHub mods. bad/two: Download of a.zip failed: checksum mismatch'
+      )
+      const mods = await modsOf()
+      expect(mods.find((m) => m.id === 'good-one')!.source).toMatchObject({ tag: 'v2.0.0' })
+      expect(mods.find((m) => m.id === 'bad-two')!.source).toMatchObject({ tag: 'v1.0.0' })
+    })
+
+    test('the background auto-update skips a game that is running', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      publish('owner', 'repo', 'v2.0.0', { 'a.zip': zipOf('Thing', '2.0.0') })
+      const running = new Set(['repo'])
+      const ghDeps = { ...deps, fetch: ghFetch, now: () => clock }
+      const catalog = loadCatalog(ghDeps.paths, ghFetch, ghDeps.snapshotPath)
+      const gh = createGithubServices({
+        deps: ghDeps,
+        getCatalog: () => catalog,
+        requireGame: async (label) => (await catalog).games.find((g) => g.label === label)!,
+        serialize: (_g, _p, fn) => fn(),
+        isGameRunning: (label) => running.has(label)
+      })
+      await gh.ghAutoUpdateAll()
+      expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
+      running.clear()
+      await gh.ghAutoUpdateAll()
+      expect((await modsOf())[0].source).toMatchObject({ tag: 'v2.0.0' })
     })
 
     test('ghCheckUpdates skips a mod whose lookup fails', async () => {
@@ -1154,7 +1301,12 @@ describe('services', () => {
           const rel = repos.get(slug(m[1], m[2]))!.releases[0]
           const data = Object.values(rel.files)[Number(m[3]) - 1]
           const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
-          return { ok: true, status: 200, arrayBuffer: async () => buf } as never
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers(),
+            arrayBuffer: async () => buf
+          } as never
         }
         return inner(url, init as never)
       }) as unknown as typeof fetch
@@ -1197,7 +1349,7 @@ describe('services', () => {
             const rel = repos.get(slug(m[1], m[2]))!.releases[0]
             const data = Object.values(rel.files)[Number(m[3]) - 1]
             const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
-            return { ok: true, status: 200, arrayBuffer: async () => buf }
+            return { ok: true, status: 200, headers: new Headers(), arrayBuffer: async () => buf }
           }
           return ghFetch(url, init as never)
         }) as unknown as typeof fetch

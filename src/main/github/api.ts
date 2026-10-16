@@ -23,6 +23,13 @@ export const GH_RELEASE_MEMO_MS = 600_000
 
 const API_ROOT = 'https://api.github.com'
 const CONNECTION_ERROR = "Couldn't reach GitHub. Check your connection and try again."
+const TIMEOUT_ERROR = 'GitHub took too long to respond. Try again later.'
+const API_TIMEOUT_MS = 30_000
+const DOWNLOAD_TIMEOUT_MS = 120_000
+/** Largest release asset HML downloads (it is held in memory). */
+export const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
+
+const isTimeout = (e: unknown): boolean => e instanceof Error && e.name === 'TimeoutError'
 
 interface CacheEntry {
   etag: string
@@ -47,9 +54,9 @@ async function send(
   headers: Record<string, string>
 ): Promise<Response> {
   try {
-    return await f(url, { headers })
-  } catch {
-    throw new Error(CONNECTION_ERROR)
+    return await f(url, { headers, signal: AbortSignal.timeout(API_TIMEOUT_MS) })
+  } catch (e) {
+    throw new Error(isTimeout(e) ? TIMEOUT_ERROR : CONNECTION_ERROR, { cause: e })
   }
 }
 
@@ -200,17 +207,38 @@ export async function downloadAsset(opts: {
   const { asset } = opts
   const token = opts.token && asset.apiUrl.startsWith(`${API_ROOT}/`) ? opts.token : null
   const fail = (why: string): Error => new Error(`Download of ${asset.name} failed: ${why}`)
+  const tooBig = (bytes: number): Error =>
+    fail(
+      `it is ${Math.ceil(bytes / 1048576)} MB, over HML's ${MAX_DOWNLOAD_BYTES / 1048576} MB limit`
+    )
+  if (asset.size > MAX_DOWNLOAD_BYTES) throw tooBig(asset.size)
   const headers: Record<string, string> = token
     ? { Accept: 'application/octet-stream', 'User-Agent': 'HML', Authorization: `Bearer ${token}` }
     : { 'User-Agent': 'HML' }
+  const why = (e: unknown): string =>
+    isTimeout(e) ? 'it took too long' : e instanceof Error ? e.message : String(e)
+  let res: Response
+  try {
+    res = await opts.fetch(token ? asset.apiUrl : asset.downloadUrl, {
+      headers,
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)
+    })
+  } catch (e) {
+    throw fail(why(e))
+  }
+  if (!res.ok) throw fail(`HTTP ${res.status}`)
+  const length = Number(res.headers.get('content-length') ?? '')
+  if (length > MAX_DOWNLOAD_BYTES) {
+    void res.body?.cancel().catch(() => undefined)
+    throw tooBig(length)
+  }
   let data: Uint8Array
   try {
-    const res = await opts.fetch(token ? asset.apiUrl : asset.downloadUrl, { headers })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     data = new Uint8Array(await res.arrayBuffer())
   } catch (e) {
-    throw fail(e instanceof Error ? e.message : String(e))
+    throw fail(why(e))
   }
+  if (data.byteLength > MAX_DOWNLOAD_BYTES) throw tooBig(data.byteLength)
   const sha256 = createHash('sha256').update(data).digest('hex')
   const m = /^sha256:([0-9a-f]+)$/i.exec(asset.digest ?? '')
   if (m && m[1].toLowerCase() !== sha256) throw fail('checksum mismatch')

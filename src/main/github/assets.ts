@@ -26,8 +26,14 @@ export function assetPattern(name: string, tag: string): string {
   return out.replace(/(?<![A-Za-z0-9])v?\d+(?:\.\d+)+(?![A-Za-z0-9])/gi, '{version}')
 }
 
+/**
+ * What `{version}` matches: version-like text such as `5.4.23.5`, `v1.2`, `r42` or `1.0.0-beta.2`,
+ * with an optional one-letter prefix and pre-release suffix, but not arbitrary text like `-debug`.
+ */
+const VERSION_SRC = '[a-z]?\\d+(?:[._-]\\d+)*(?:[._-]?(?:alpha|beta|rc|pre|preview)[._-]?\\d*)?'
+
 export function matchesAssetPattern(pattern: string, name: string): boolean {
-  const src = pattern.split('{version}').map(escapeRegExp).join('.+')
+  const src = pattern.split('{version}').map(escapeRegExp).join(VERSION_SRC)
   return new RegExp(`^${src}$`, 'i').test(name)
 }
 

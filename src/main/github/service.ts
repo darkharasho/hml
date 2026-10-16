@@ -31,6 +31,8 @@ export interface GhContext {
   getCatalog(): Promise<Catalog>
   requireGame(label: string): Promise<GameDef>
   serialize<T>(game: string, profileId: string, fn: () => Promise<T>): Promise<T>
+  /** True while a game HML launched is still running; the background auto-update skips it. */
+  isGameRunning(gameLabel: string): boolean
 }
 
 export const unsupportedLoaderMessage = (def: GameDef): string =>
@@ -45,6 +47,12 @@ type GhMod = InstalledMod & { source: Extract<InstalledMod['source'], { kind: 'g
 const isGhMod = (m: InstalledMod): m is GhMod => m.source.kind === 'github'
 const configOf = (m: InstalledMod): GhModConfig =>
   m.github ?? { updateMode: 'auto', assetPattern: null }
+/** The saved asset pattern, else one derived from the installed file's name. */
+const patternOf = (m: GhMod): string =>
+  configOf(m).assetPattern ?? assetPattern(m.source.asset, m.source.tag)
+type ModeCheck = (mode: GhUpdateMode) => boolean
+const manualAllows: ModeCheck = (mode) => mode !== 'pinned'
+const autoAllows: ModeCheck = (mode) => mode === 'auto'
 
 interface Chosen {
   asset: GhReleaseAsset
@@ -195,26 +203,40 @@ export function createGithubServices(ctx: GhContext): Pick<
     return { mod, replaced: local.map((m) => m.id) }
   }
 
-  /** Downloads and installs `release` over an installed GitHub mod, keeping its config. */
+  /**
+   * Downloads and installs `release` over an installed GitHub mod, keeping its config. Returns
+   * null, installing nothing, when the mod changed while downloading: it was removed, its tag
+   * changed, or its update mode no longer passes `allows`.
+   */
   async function updateMod(
     def: GameDef,
     catalog: Catalog,
     profileId: string,
     mod: GhMod,
     release: GhRelease,
-    token: string | null
+    token: string | null,
+    allows: ModeCheck
   ): Promise<InstalledMod | null> {
     const { owner, repo } = mod.source
-    const chosen = await chooseByPattern(token, release, configOf(mod).assetPattern)
+    const chosen = await chooseByPattern(token, release, patternOf(mod))
     if ('ask' in chosen) {
       throw new Error(
-        `${owner}/${repo} ${release.tag} has several files and none matches the one you picked before. Reinstall it from its GitHub link to choose again.`
+        configOf(mod).assetPattern
+          ? `${owner}/${repo} ${release.tag} has several files and none matches the one you picked before. Reinstall it from its GitHub link to choose again.`
+          : `${owner}/${repo} ${release.tag} has several files and HML can't tell which one replaces ${mod.source.asset}. Reinstall it from its GitHub link to choose.`
       )
     }
     return serialize(def.label, profileId, async () => {
       const { mods } = await getProfile(paths, def.label, profileId)
       const current = mods.find((m) => m.id === mod.id)
-      if (!current || !isGhMod(current)) return null
+      if (
+        !current ||
+        !isGhMod(current) ||
+        current.source.tag !== mod.source.tag ||
+        !allows(configOf(current).updateMode)
+      ) {
+        return null
+      }
       const keep = configOf(current)
       const { mod: updated } = await installChosen(def, catalog, profileId, {
         owner,
@@ -254,9 +276,9 @@ export function createGithubServices(ctx: GhContext): Pick<
     const token = await loadToken(paths, deps.secrets)
     const release = await lookup(token, owner, repo, { tag: ref.tag })
     const { mods } = await getProfile(paths, game, profileId)
-    const prior = mods.find(
-      (m) => isGhMod(m) && sameRepo(m.source.owner, owner) && sameRepo(m.source.repo, repo)
-    )
+    const prior = mods
+      .filter(isGhMod)
+      .find((m) => sameRepo(m.source.owner, owner) && sameRepo(m.source.repo, repo))
 
     const named = assetArg ?? ref.asset
     const onDownload = (a: GhReleaseAsset): void => progress(`Downloading ${a.name}`, 1)
@@ -266,12 +288,7 @@ export function createGithubServices(ctx: GhContext): Pick<
       if (!asset) throw new Error(`${release.tag} has no file named ${named}.`)
       chosen = await download(token, asset, onDownload)
     } else {
-      const r = await chooseByPattern(
-        token,
-        release,
-        prior ? configOf(prior).assetPattern : null,
-        onDownload
-      )
+      const r = await chooseByPattern(token, release, prior ? patternOf(prior) : null, onDownload)
       if ('ask' in r) {
         return {
           kind: 'choose-asset',
@@ -346,17 +363,26 @@ export function createGithubServices(ctx: GhContext): Pick<
     const token = await loadToken(paths, deps.secrets)
     const latestOf = memoLookup(token)
     const updated: InstalledMod[] = []
+    const failed: string[] = []
     for (const m of mods.filter(isGhMod)) {
-      if (!wanted.has(m.id) || configOf(m).updateMode === 'pinned') continue
-      const slug = `${m.source.owner}/${m.source.repo}`
+      if (!wanted.has(m.id) || !manualAllows(configOf(m).updateMode)) continue
       try {
         const latest = await latestOf(m.source.owner, m.source.repo)
         if (!needsUpdate(m, latest)) continue
-        const mod = await updateMod(def, catalog, profileId, m, latest, token)
+        const mod = await updateMod(def, catalog, profileId, m, latest, token, manualAllows)
         if (mod) updated.push(mod)
       } catch (e) {
-        throw new Error(`${slug}: ${errMsg(e)}`, { cause: e })
+        failed.push(`${m.source.owner}/${m.source.repo}: ${errMsg(e)}`)
       }
+    }
+    // One failure doesn't stop the rest; the error names every failed mod and, when some did
+    // update, says so (the renderer reloads the profile either way).
+    if (failed.length > 0) {
+      const done =
+        updated.length > 0
+          ? `Updated ${updated.length} of ${updated.length + failed.length} GitHub mods. `
+          : ''
+      throw new Error(done + failed.join(' '))
     }
     return updated
   }
@@ -392,11 +418,11 @@ export function createGithubServices(ctx: GhContext): Pick<
     const { mods } = await getProfile(paths, def.label, profileId)
     const done: { name: string; tag: string }[] = []
     for (const m of mods.filter(isGhMod)) {
-      if (configOf(m).updateMode !== 'auto') continue
+      if (!autoAllows(configOf(m).updateMode)) continue
       try {
         const latest = await latestOf(m.source.owner, m.source.repo)
         if (!needsUpdate(m, latest)) continue
-        const mod = await updateMod(def, catalog, profileId, m, latest, token)
+        const mod = await updateMod(def, catalog, profileId, m, latest, token, autoAllows)
         if (mod) done.push({ name: mod.name, tag: latest.tag })
       } catch (e) {
         console.warn(
@@ -418,7 +444,8 @@ export function createGithubServices(ctx: GhContext): Pick<
       for (const d of dirs) {
         if (!d.isDirectory()) continue
         const def = catalog.games.find((g) => g.label === d.name)
-        if (!def?.supported) continue
+        // Replacing files under a running game can leave a mod half-removed (Windows locks DLLs).
+        if (!def?.supported || ctx.isGameRunning(def.label)) continue
         try {
           for (const profile of await listProfiles(paths, def.label)) {
             try {

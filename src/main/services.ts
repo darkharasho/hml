@@ -456,7 +456,15 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
     }
   }
 
-  const ghServices = createGithubServices({ deps, getCatalog, requireGame, serialize })
+  const ghServices = createGithubServices({
+    deps,
+    getCatalog,
+    requireGame,
+    serialize,
+    // HML launches through Steam (`steam -applaunch`), which hands off to the running Steam client
+    // and exits, so HML never holds the game's process and can't tell whether it's running.
+    isGameRunning: () => false
+  })
 
   return {
     ...tsServices,
