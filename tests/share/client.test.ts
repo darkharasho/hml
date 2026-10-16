@@ -68,6 +68,34 @@ describe('uploadShare', () => {
     ).rejects.toThrow(UNAVAILABLE)
   })
 
+  it.each([
+    [0, 30_000],
+    [5_000_000, 130_000],
+    [100_000_000, 300_000]
+  ])('scales the upload timeout with size (%i bytes -> %i ms)', async (size, ms) => {
+    vi.useFakeTimers()
+    try {
+      const hang = vi.fn(
+        (_u: string, init: RequestInit) =>
+          new Promise<Response>((_res, rej) => {
+            init.signal!.addEventListener('abort', () => rej(new Error('aborted')))
+          })
+      ) as unknown as typeof fetch
+      const p = expect(uploadShare({ fetch: hang, base }, new Uint8Array(size))).rejects.toThrow(
+        UNAVAILABLE
+      )
+      const sig = (): AbortSignal =>
+        (hang as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1].signal
+      await vi.advanceTimersByTimeAsync(ms - 1)
+      expect(sig().aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(sig().aborted).toBe(true)
+      await p
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('uses a 30 s default timeout', async () => {
     vi.useFakeTimers()
     try {

@@ -51,8 +51,10 @@ async function request<T>(
 
 /** Uploads a .hml file and resolves its normalized share code. */
 export async function uploadShare(o: ShareClientOptions, data: Uint8Array): Promise<string> {
+  // 30 s plus 1 s per 50 KB, capped at 5 min; downloads keep the 30 s default.
+  const timeoutMs = Math.min(300_000, 30_000 + Math.ceil(data.byteLength / 50_000) * 1000)
   return request(
-    o,
+    { ...o, timeoutMs: o.timeoutMs ?? timeoutMs },
     UPLOAD_MESSAGES,
     `${baseOf(o)}/v1/profiles`,
     {
