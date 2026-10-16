@@ -126,6 +126,7 @@ describe('searchExtra', () => {
     expect(out.map((g) => g.label)).toEqual(['nexus-skyrimspecialedition'])
     expect(out[0].loader).toBe('deploy')
     expect(out[0].supported).toBe(true)
+    expect(out[0].nexusModCount).toBe(9)
   })
 
   it('makes no request for short queries and swallows failures', async () => {

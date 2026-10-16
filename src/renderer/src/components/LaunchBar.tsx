@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { LaunchWarning } from '../../../shared/types'
 import { api, errorMessage } from '../api'
+import { deploymentLabel } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
 import { Button, Icon, Modal } from './ui'
 
@@ -62,11 +63,16 @@ export function LaunchBar(): React.JSX.Element | null {
   const warnings = useStore((s) => s.warnings)
   const busy = useStore((s) => s.busy)
   const launch = useStore((s) => s.launch)
+  const deployment = useStore((s) => s.deployment)
+  const deploy = useStore((s) => s.deploy)
+  const removeDeployment = useStore((s) => s.removeDeployment)
   const openSettings = useStore((s) => s.setSettingsOpen)
   const [protonOpen, setProtonOpen] = useState(false)
   const [flatpakOpen, setFlatpakOpen] = useState(false)
 
   if (!game) return null
+  // HML doesn't start deploy games: it copies the mods into the game folder and the user starts it.
+  const deploys = game.loader === 'deploy'
 
   function runAction(action: WarningAction): void {
     if (action === 'settings') openSettings(true)
@@ -102,19 +108,44 @@ export function LaunchBar(): React.JSX.Element | null {
             </span>
           )
         })}
+        {deploys && (
+          <span className="truncate text-sm text-muted">
+            {deploymentLabel(deployment, profile?.id ?? null)}
+          </span>
+        )}
       </div>
-      <Button disabled={busy} onClick={() => void launch('vanilla')}>
-        Start vanilla
-      </Button>
-      <Button
-        variant="primary"
-        disabled={busy || !profile}
-        onClick={() => void launch('modded')}
-        className="px-4"
-      >
-        <Icon name="play" />
-        Start modded
-      </Button>
+      {deploys ? (
+        <>
+          <Button disabled={busy || !deployment} onClick={() => void removeDeployment()}>
+            Remove mods
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy || !profile || !game.installDir}
+            title={game.installDir ? undefined : 'Set the game folder first.'}
+            onClick={() => void deploy()}
+            className="px-4"
+          >
+            <Icon name="download" />
+            Deploy mods
+          </Button>
+        </>
+      ) : (
+        <>
+          <Button disabled={busy} onClick={() => void launch('vanilla')}>
+            Start vanilla
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy || !profile}
+            onClick={() => void launch('modded')}
+            className="px-4"
+          >
+            <Icon name="play" />
+            Start modded
+          </Button>
+        </>
+      )}
 
       {protonOpen && <ProtonDialog onClose={() => setProtonOpen(false)} />}
       {flatpakOpen && <FlatpakDialog onClose={() => setFlatpakOpen(false)} />}

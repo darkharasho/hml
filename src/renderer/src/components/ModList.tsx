@@ -1,7 +1,8 @@
 import { useRef, useState, type DragEvent } from 'react'
-import type { GhUpdate, InstalledMod, ModSource, ModUpdate } from '../../../shared/types'
+import type { GhUpdate, InstalledMod, ModSource, ModUpdate, NxUpdate } from '../../../shared/types'
 import { api, errorMessage, pathForFile } from '../api'
 import { ghSubline, githubRepoUrl, UPDATE_MODES, updateModeLabel } from '../ghView'
+import { nexusModUrl } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
 import { UNSUPPORTED_LOADER } from '../tsView'
 import { Browse } from './Browse'
@@ -27,8 +28,11 @@ export function ModList(): React.JSX.Element | null {
   const game = useStore((s) => s.currentGame)
   const updates = useStore((s) => s.updates)
   const ghUpdates = useStore((s) => s.ghUpdates)
+  const nxUpdates = useStore((s) => s.nxUpdates)
   const updateAll = useStore((s) => s.updateAll)
-  const updatingAny = useStore((s) => s.tsInstalling.length > 0 || s.ghUpdating.length > 0)
+  const updatingAny = useStore(
+    (s) => s.tsInstalling.length > 0 || s.ghUpdating.length > 0 || s.nxInstalling.length > 0
+  )
   const [githubOpen, setGithubOpen] = useState(false)
   const [tab, setTab] = useState<'installed' | 'online'>('installed')
   // Browse mounts on first visit and then stays mounted, so search and filters survive tab switches.
@@ -40,7 +44,8 @@ export function ModList(): React.JSX.Element | null {
   if (!profile || !game) return null
   const updateById = new Map(updates.map((u) => [u.modId, u]))
   const ghUpdateById = new Map(ghUpdates.map((u) => [u.modId, u]))
-  const updateCount = updates.length + ghUpdates.length
+  const nxUpdateById = new Map(nxUpdates.map((u) => [u.modId, u]))
+  const updateCount = updates.length + ghUpdates.length + nxUpdates.length
   const openGithub = (): void => setGithubOpen(true)
   const mods = [...profile.mods].sort((a, b) => a.name.localeCompare(b.name))
   const enabledCount = mods.filter((m) => m.enabled).length
@@ -150,6 +155,7 @@ export function ModList(): React.JSX.Element | null {
                 mod={m}
                 update={updateById.get(m.id)}
                 ghUpdate={ghUpdateById.get(m.id)}
+                nxUpdate={nxUpdateById.get(m.id)}
                 supported={game.supported}
               />
             ))}
@@ -200,31 +206,40 @@ function ModRow({
   mod,
   update,
   ghUpdate,
+  nxUpdate,
   supported
 }: {
   mod: InstalledMod
   update?: ModUpdate
   ghUpdate?: GhUpdate
+  nxUpdate?: NxUpdate
   supported: boolean
 }): React.JSX.Element {
   const setModEnabled = useStore((s) => s.setModEnabled)
   const uninstallMod = useStore((s) => s.uninstallMod)
   const tsUpdate = useStore((s) => s.tsUpdate)
   const runGhUpdate = useStore((s) => s.ghUpdate)
+  const runNxUpdate = useStore((s) => s.nxUpdate)
   const setUpdateMode = useStore((s) => s.ghSetUpdateMode)
   const toast = useStore((s) => s.toast)
   const updating = useStore((s) =>
     mod.source.kind === 'thunderstore'
       ? s.tsInstalling.includes(mod.source.fullName)
-      : s.ghUpdating.includes(mod.id)
+      : mod.source.kind === 'nexus'
+        ? s.nxInstalling.includes(mod.source.modId)
+        : s.ghUpdating.includes(mod.id)
   )
   const [confirming, setConfirming] = useState(false)
   const badge = SOURCE_BADGE[mod.source.kind]
   const canToggle = mod.disableable.length > 0
   const source = mod.source
-  const latest = update?.latest ?? ghUpdate?.latest
+  const latest = update?.latest ?? ghUpdate?.latest ?? nxUpdate?.latest
   const runUpdate = (): void =>
-    void (update ? tsUpdate([update]) : ghUpdate && runGhUpdate([ghUpdate]))
+    void (update
+      ? tsUpdate([update])
+      : ghUpdate
+        ? runGhUpdate([ghUpdate])
+        : nxUpdate && runNxUpdate([nxUpdate]))
 
   const uninstall: MenuItem = {
     label: 'Uninstall…',
@@ -248,6 +263,17 @@ function ModRow({
       })),
       { ...uninstall, divider: true }
     ]
+  } else if (source.kind === 'nexus') {
+    menu = [
+      {
+        label: 'Open on Nexus Mods',
+        onSelect: () =>
+          void api
+            .openExternal(nexusModUrl(source.domain, source.modId))
+            .catch((e) => toast('error', errorMessage(e)))
+      },
+      { ...uninstall, divider: true }
+    ]
   }
 
   return (
@@ -268,6 +294,8 @@ function ModRow({
           <ProgressLine className="mt-0.5" />
         ) : source.kind === 'local' ? (
           <p className="truncate text-xs text-muted">{source.fileName}</p>
+        ) : source.kind === 'nexus' ? (
+          <p className="truncate text-xs text-muted">Nexus Mods · {mod.version}</p>
         ) : (
           source.kind === 'github' && (
             <p className="truncate text-xs text-muted">

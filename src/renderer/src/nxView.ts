@@ -1,5 +1,5 @@
 // Pure display helpers for the Nexus Mods views. No DOM, no store, so they unit-test in node.
-import type { InstalledMod, NxFileCategory, NxStatus } from '../../shared/types'
+import type { DeploymentStatus, InstalledMod, NxFileCategory, NxStatus } from '../../shared/types'
 import { compactCount } from './tsView'
 
 export const NX_NO_KEY = 'Add your Nexus Mods API key in Settings to download.'
@@ -54,4 +54,21 @@ export function openWebsiteToast(handler: NxStatus['handler']): string {
   return handler === 'registered'
     ? base
     : `${base} Turn on "Use HML for Nexus downloads" in Settings first.`
+}
+
+/** Shown after updates opened the first few file pages for a free account. */
+export const NX_MORE_UPDATES = "Open the remaining updates from each mod's menu."
+/** How many file pages one Update all opens for a free account. */
+export const NX_MAX_UPDATE_TABS = 5
+
+/** The launch bar's line for a deploy game: what is in its game folder now. */
+export function deploymentLabel(
+  s: DeploymentStatus | null,
+  currentProfileId: string | null
+): string {
+  if (!s) return "Mods aren't deployed."
+  if (s.profileId === currentProfileId) {
+    return `This profile is deployed (${s.files} ${s.files === 1 ? 'file' : 'files'}).`
+  }
+  return `${s.profileName ?? 'Another profile'} is deployed.`
 }

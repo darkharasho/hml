@@ -29,7 +29,7 @@ export interface NexusGames {
   forgetDomain(label: string): Promise<void>
 }
 
-export function nexusGameDef(g: { name: string; domain: string }): GameDef {
+export function nexusGameDef(g: { name: string; domain: string; modCount?: number }): GameDef {
   return {
     label: `${DEPLOY_PREFIX}${g.domain}`,
     displayName: g.name,
@@ -42,7 +42,8 @@ export function nexusGameDef(g: { name: string; domain: string }): GameDef {
     packageIndex: null,
     searchStrings: [g.domain],
     iconUrl: null,
-    supported: true
+    supported: true,
+    ...(g.modCount !== undefined ? { nexusModCount: g.modCount } : {})
   }
 }
 
@@ -153,7 +154,7 @@ export function createNexusGames(ctx: {
     }
     return found
       .filter((n) => DOMAIN_RE.test(n.domain) && !taken.has(n.domain))
-      .map((n) => nexusGameDef({ name: n.name, domain: n.domain }))
+      .map((n) => nexusGameDef({ name: n.name, domain: n.domain, modCount: n.modCount }))
   }
 
   async function addGame(domain: string): Promise<GameDef> {

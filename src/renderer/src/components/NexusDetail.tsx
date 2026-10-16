@@ -35,6 +35,7 @@ export function NexusDetail({
   const toast = useStore((s) => s.toast)
   const openSettings = useStore((s) => s.setSettingsOpen)
   const [needsKey, setNeedsKey] = useState(false)
+  const settingsOpen = useStore((s) => s.settingsOpen)
   const [mod, setMod] = useState(initial)
   const [files, setFiles] = useState<Files>(null)
   const [nonce, setNonce] = useState(0)
@@ -53,6 +54,19 @@ export function NexusDetail({
       live = false
     }
   }, [game, initial.modId, nonce])
+
+  // The notice sends the user to Settings; once a key is saved there, it has done its job.
+  useEffect(() => {
+    if (!needsKey || settingsOpen) return
+    let live = true
+    api.nxStatus().then(
+      (s) => live && s.set && setNeedsKey(false),
+      () => {}
+    )
+    return () => {
+      live = false
+    }
+  }, [needsKey, settingsOpen])
 
   const installed = installedNexusMod(profile?.mods ?? [], mod.modId)
   const installedFileId = installed?.source.kind === 'nexus' ? installed.source.fileId : null

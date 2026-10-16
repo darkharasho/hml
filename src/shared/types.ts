@@ -19,6 +19,8 @@ export interface GameDef {
   searchStrings: string[]
   iconUrl: string | null
   supported: boolean
+  /** Nexus-only search results: the game's mod count on Nexus Mods. */
+  nexusModCount?: number
 }
 
 export interface ModloaderPackage {

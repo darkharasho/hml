@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ProfileManifest } from '../../../shared/types'
+import { api, errorMessage } from '../api'
 import { useStore } from '../store'
 import { GameCover } from './GameCover'
-import { Button, ConfirmDialog, Icon, Menu } from './ui'
+import { Button, ConfirmDialog, Icon, Menu, Modal } from './ui'
 
 export function ProfileSidebar(): React.JSX.Element | null {
   const game = useStore((s) => s.currentGame)
@@ -18,38 +19,49 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const [creating, setCreating] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<ProfileManifest | null>(null)
+  const [domainOpen, setDomainOpen] = useState(false)
 
   if (!game) return null
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-panel">
-      <div className="relative overflow-hidden border-b border-line">
-        {/* The game's own cover, blurred, gives each game's workspace its own color. */}
-        <div className="absolute inset-0 scale-125 opacity-45 blur-2xl" aria-hidden="true">
-          <GameCover game={game} />
-        </div>
-        <div
-          className="absolute inset-0 bg-gradient-to-b from-panel/30 to-panel"
-          aria-hidden="true"
-        />
-        <div className="relative flex items-center gap-3 p-4">
-          <div className="h-16 w-12 shrink-0 overflow-hidden rounded-md shadow-lg ring-1 ring-white/10">
-            <GameCover game={game} className="text-base" />
+      <div className="relative">
+        <div className="relative overflow-hidden border-b border-line">
+          {/* The game's own cover, blurred, gives each game's workspace its own color. */}
+          <div className="absolute inset-0 scale-125 opacity-45 blur-2xl" aria-hidden="true">
+            <GameCover game={game} />
           </div>
-          <div className="min-w-0">
-            <h1 className="line-clamp-2 text-[15px] leading-tight font-semibold tracking-tight">
-              {game.displayName}
-            </h1>
-            <button
-              type="button"
-              onClick={leaveGame}
-              className="mt-1 inline-flex items-center gap-1 text-xs text-muted hover:text-ember"
-            >
-              <Icon name="grid" className="size-3" />
-              Switch game
-            </button>
+          <div
+            className="absolute inset-0 bg-gradient-to-b from-panel/30 to-panel"
+            aria-hidden="true"
+          />
+          <div className="relative flex items-center gap-3 py-4 pr-10 pl-4">
+            <div className="h-16 w-12 shrink-0 overflow-hidden rounded-md shadow-lg ring-1 ring-white/10">
+              <GameCover game={game} className="text-base" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="line-clamp-2 text-[15px] leading-tight font-semibold tracking-tight">
+                {game.displayName}
+              </h1>
+              <button
+                type="button"
+                onClick={leaveGame}
+                className="mt-1 inline-flex items-center gap-1 text-xs text-muted hover:text-ember"
+              >
+                <Icon name="grid" className="size-3" />
+                Switch game
+              </button>
+            </div>
           </div>
         </div>
+        {/* Nexus-only games always use their own domain, so only catalog games get this menu. */}
+        {game.loader !== 'deploy' && (
+          <Menu
+            label={`Actions for ${game.displayName}`}
+            className="absolute! top-2 right-2"
+            items={[{ label: 'Nexus domain…', onSelect: () => setDomainOpen(true) }]}
+          />
+        )}
       </div>
 
       <div className="flex items-center justify-between px-4 pt-4 pb-2">
@@ -150,6 +162,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
           onClose={() => setDeleting(null)}
         />
       )}
+      {domainOpen && <NexusDomainDialog game={game.label} onClose={() => setDomainOpen(false)} />}
     </aside>
   )
 }
@@ -191,5 +204,111 @@ function NameInput({
       }}
       className="my-0.5 h-9 w-full rounded-md border border-ember/60 bg-ink px-3 text-sm text-fg placeholder:text-muted focus:outline-none"
     />
+  )
+}
+
+/** Sets which Nexus Mods game a catalog game browses and updates from. */
+function NexusDomainDialog({
+  game,
+  onClose
+}: {
+  game: string
+  onClose(): void
+}): React.JSX.Element {
+  const busy = useStore((s) => s.busy)
+  const displayName = useStore((s) => s.currentGame?.displayName ?? game)
+  const setDomain = useStore((s) => s.nxSetDomain)
+  // undefined while looking it up; null when the game isn't on Nexus Mods.
+  const [current, setCurrent] = useState<string | null | undefined>(undefined)
+  const [lookupError, setLookupError] = useState<string | null>(null)
+  const [value, setValue] = useState('')
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const domain = value.trim()
+
+  useEffect(() => {
+    let live = true
+    api.nxGetDomain(game).then(
+      (d) => live && setCurrent(d),
+      (e) => {
+        if (!live) return
+        setCurrent(null)
+        setLookupError(errorMessage(e))
+      }
+    )
+    return () => {
+      live = false
+    }
+  }, [game])
+
+  const status =
+    current === undefined
+      ? 'Looking up this game on Nexus Mods…'
+      : lookupError
+        ? `Couldn't look up the domain: ${lookupError}`
+        : current
+          ? `Using nexusmods.com/${current}`
+          : "HML didn't find this game on Nexus Mods."
+
+  async function save(next: string | null): Promise<void> {
+    setSaveError(null)
+    try {
+      await setDomain(next)
+      onClose()
+    } catch (e) {
+      // Toasts sit under the modal, so the reason is shown here.
+      setSaveError(errorMessage(e))
+    }
+  }
+
+  return (
+    <Modal
+      title={`Nexus domain for ${displayName}`}
+      onClose={onClose}
+      width="w-[480px]"
+      footer={
+        <>
+          <Button
+            variant="quiet"
+            className="mr-auto"
+            disabled={busy}
+            onClick={() => void save(null)}
+          >
+            Clear
+          </Button>
+          <Button variant="quiet" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy || !domain} onClick={() => void save(domain)}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (domain && !busy) void save(domain)
+        }}
+      >
+        <p className={lookupError ? 'text-danger select-text' : 'text-fg'}>{status}</p>
+        <p className="mt-1">
+          Enter the name from the game&apos;s address, like skyrimspecialedition in
+          nexusmods.com/skyrimspecialedition. Clear goes back to finding it automatically.
+        </p>
+        <label className="mt-4 block">
+          <span className="sr-only">Nexus domain</span>
+          <input
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={current ?? 'Nexus domain'}
+            spellCheck={false}
+            autoComplete="off"
+            className="h-9 w-full rounded-md border border-line bg-ink px-3 text-sm text-fg placeholder:text-muted focus:border-ember/70 focus:outline-none"
+          />
+        </label>
+        {saveError && <p className="mt-2 text-xs text-danger select-text">{saveError}</p>}
+      </form>
+    </Modal>
   )
 }

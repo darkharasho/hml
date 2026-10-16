@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { GameSummary } from '../../shared/ipc'
 import type {
+  DeploymentStatus,
   GhInstallResult,
   GhUpdate,
   GhUpdateMode,
@@ -10,12 +11,13 @@ import type {
   LaunchWarning,
   ModUpdate,
   NxInstallResult,
+  NxUpdate,
   ProfileManifest,
   Settings
 } from '../../shared/types'
 import { api, errorMessage } from './api'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
-import { NX_NO_KEY, openWebsiteToast } from './nxView'
+import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
 import { displayName, installToast, progressLabel } from './tsView'
 
 export type ToastKind = 'error' | 'success' | 'info'
@@ -54,8 +56,14 @@ interface State {
   ghInstalling: number
   /** GitHub account of a token saved in this session; null when unknown or removed. */
   ghLogin: string | null
-  /** Nexus mod ids being installed. */
+  /** Nexus mod ids being installed or updated. */
   nxInstalling: number[]
+  /** Nexus updates for the current profile, from nxCheckUpdates. */
+  nxUpdates: NxUpdate[]
+  /** Bumped when a game's Nexus domain changes, so views that looked it up look again. */
+  nxDomainVersion: number
+  /** What is deployed into the current deploy game's folder; null when nothing is. */
+  deployment: DeploymentStatus | null
   /** The Online tab's last source per game label. */
   onlineSource: Record<string, OnlineSource>
   /** Latest progress line from the main process while a Thunderstore or GitHub install runs. */
@@ -90,8 +98,16 @@ interface State {
   nxInstall(mod: { modId: number; name: string }, fileId?: number): Promise<'needs-key' | 'done'>
   /** Saves a Nexus Mods API key, or removes it with null. Resolves false when that failed. */
   nxSetKey(key: string | null): Promise<boolean>
+  /** Updates Nexus mods: in place for Premium, by opening each file page for free accounts. */
+  nxUpdate(updates: NxUpdate[]): Promise<void>
+  /** Sets, or clears with null, the current game's Nexus domain. Throws so the dialog can show why. */
+  nxSetDomain(domain: string | null): Promise<void>
+  /** Copies the current profile's mods into a deploy game's folder. */
+  deploy(): Promise<void>
+  /** Restores a deploy game's folder to how it was before deploying. */
+  removeDeployment(): Promise<void>
   setOnlineSource(game: string, source: OnlineSource): void
-  /** Runs every Thunderstore and GitHub update for the current profile. */
+  /** Runs every Thunderstore, GitHub and Nexus update for the current profile. */
   updateAll(): Promise<void>
   checkUpdates(): Promise<void>
   handleEvent(e: HmlEvent): void
@@ -201,7 +217,7 @@ export const useStore = create<State>()((set, get) => {
     if (!game) return
     const match = (await api.searchGames(game.label)).find((g) => g.label === game.label)
     if (match && get().currentGame?.label === game.label) set({ currentGame: match })
-    await refreshWarnings()
+    await Promise.all([refreshWarnings(), refreshDeployment()])
   }
 
   async function install(run: () => Promise<InstalledMod[]>): Promise<void> {
@@ -260,6 +276,58 @@ export const useStore = create<State>()((set, get) => {
     await get().checkUpdates()
   }
 
+  /** Re-reads what is deployed for the current game; only deploy games have deployments. */
+  async function refreshDeployment(): Promise<void> {
+    const game = get().currentGame
+    // Without a game folder there is nothing deployed, and getDeployment asks for the folder.
+    if (game?.loader !== 'deploy' || !game.installDir) return set({ deployment: null })
+    try {
+      const deployment = await api.getDeployment(game.label)
+      if (get().currentGame?.label === game.label) set({ deployment })
+    } catch (e) {
+      fail(e)
+    }
+  }
+
+  async function onNexusInstalled(
+    e: Extract<HmlEvent, { type: 'nexus-installed' }>
+  ): Promise<void> {
+    const { currentGame, currentProfile } = get()
+    if (currentGame?.label === e.game && currentProfile === e.profileId) {
+      await reloadProfiles().catch(fail)
+      await refreshWarnings()
+      await get().checkUpdates()
+    }
+    get().toast('success', `Installed ${e.mod.name} ${e.mod.version} from Nexus Mods`)
+  }
+
+  /** Toasts a Nexus error, with a Settings action when the API key is missing. */
+  function nexusFail(e: unknown): 'needs-key' | 'done' {
+    const message = errorMessage(e)
+    const noKey = message === NX_NO_KEY
+    get().toast(
+      'error',
+      message,
+      noKey ? { label: 'Settings', run: () => get().setSettingsOpen(true) } : undefined
+    )
+    return noKey ? 'needs-key' : 'done'
+  }
+
+  /** Opens a free account's file pages; the nxm:// links bring the downloads back. */
+  async function openNexusPages(urls: string[]): Promise<void> {
+    try {
+      for (const url of urls.slice(0, NX_MAX_UPDATE_TABS)) await api.openExternal(url)
+    } catch (e) {
+      return fail(e)
+    }
+    const handler = await api.nxStatus().then(
+      (s) => s.handler,
+      () => 'not-registered' as const
+    )
+    get().toast('info', openWebsiteToast(handler))
+    if (urls.length > NX_MAX_UPDATE_TABS) get().toast('info', NX_MORE_UPDATES)
+  }
+
   return {
     ready: false,
     settings: null,
@@ -276,6 +344,9 @@ export const useStore = create<State>()((set, get) => {
     ghInstalling: 0,
     ghLogin: null,
     nxInstalling: [],
+    nxUpdates: [],
+    nxDomainVersion: 0,
+    deployment: null,
     onlineSource: {},
     progress: null,
     toasts: [],
@@ -292,7 +363,9 @@ export const useStore = create<State>()((set, get) => {
         currentProfile: null,
         warnings: [],
         updates: [],
-        ghUpdates: []
+        ghUpdates: [],
+        nxUpdates: [],
+        deployment: null
       })
       try {
         const profiles = await loadProfilesEnsuringOne(game.label)
@@ -316,20 +389,22 @@ export const useStore = create<State>()((set, get) => {
         currentProfile: null,
         warnings: [],
         updates: [],
-        ghUpdates: []
+        ghUpdates: [],
+        nxUpdates: [],
+        deployment: null
       })
     },
 
     async selectProfile(id) {
       const game = get().currentGame
       if (!game) return
-      set({ currentProfile: id, warnings: [], updates: [], ghUpdates: [] })
+      set({ currentProfile: id, warnings: [], updates: [], ghUpdates: [], nxUpdates: [] })
       try {
         await persist((s) => ({ ...s, lastProfile: { ...s.lastProfile, [game.label]: id } }))
       } catch (e) {
         fail(e)
       }
-      await Promise.all([refreshWarnings(), get().checkUpdates()])
+      await Promise.all([refreshWarnings(), get().checkUpdates(), refreshDeployment()])
     },
 
     async createProfile(name) {
@@ -546,15 +621,7 @@ export const useStore = create<State>()((set, get) => {
           }
         })
       } catch (e) {
-        const message = errorMessage(e)
-        get().toast(
-          'error',
-          message,
-          message === NX_NO_KEY
-            ? { label: 'Settings', run: () => get().setSettingsOpen(true) }
-            : undefined
-        )
-        return message === NX_NO_KEY ? 'needs-key' : 'done'
+        return nexusFail(e)
       } finally {
         set((s) => ({ nxInstalling: s.nxInstalling.filter((id) => id !== mod.modId) }))
       }
@@ -565,17 +632,7 @@ export const useStore = create<State>()((set, get) => {
         return 'done'
       }
       // Free accounts finish on the file page; the nxm:// link brings the download back.
-      try {
-        await api.openExternal(result.url)
-      } catch (e) {
-        fail(e)
-        return 'done'
-      }
-      const handler = await api.nxStatus().then(
-        (s) => s.handler,
-        () => 'not-registered' as const
-      )
-      get().toast('info', openWebsiteToast(handler))
+      await openNexusPages([result.url])
       return 'done'
     },
 
@@ -593,19 +650,92 @@ export const useStore = create<State>()((set, get) => {
       return true
     },
 
+    async nxUpdate(updates) {
+      const { currentGame, currentProfile, nxInstalling } = get()
+      const todo = updates.filter((u) => !nxInstalling.includes(u.nexusModId))
+      if (!currentGame || !currentProfile || todo.length === 0) return
+      const ids = todo.map((u) => u.nexusModId)
+      set((s) => ({ nxInstalling: [...s.nxInstalling, ...ids] }))
+      let results: NxInstallResult[]
+      try {
+        results = await tracked(async () => {
+          try {
+            return await api.nxUpdate(
+              currentGame.label,
+              currentProfile,
+              todo.map((u) => u.modId)
+            )
+          } finally {
+            // Mods updated before a failure are recorded, so always reload.
+            await reloadProfiles()
+          }
+        })
+      } catch (e) {
+        nexusFail(e)
+        return
+      } finally {
+        set((s) => ({ nxInstalling: s.nxInstalling.filter((id) => !ids.includes(id)) }))
+        await refreshWarnings()
+        await get().checkUpdates()
+      }
+      const installed = results.flatMap((r) => (r.kind === 'installed' ? [r.mod] : []))
+      if (installed.length === 1) {
+        get().toast('success', `Updated ${installed[0].name} to ${installed[0].version}`)
+      } else if (installed.length > 1) {
+        get().toast('success', `Updated ${installed.length} Nexus mods`)
+      }
+      const urls = results.flatMap((r) => (r.kind === 'open-website' ? [r.url] : []))
+      if (urls.length > 0) await openNexusPages(urls)
+      if (results.length === 0) get().toast('info', 'Nexus mods are already up to date')
+    },
+
+    async nxSetDomain(domain) {
+      const game = get().currentGame
+      if (!game) return
+      await tracked(() => api.nxSetDomain(game.label, domain))
+      set((s) => ({ nxDomainVersion: s.nxDomainVersion + 1 }))
+      get().toast('success', domain ? `Saved Nexus domain ${domain}` : 'Cleared Nexus domain')
+      await get().checkUpdates()
+    },
+
+    async deploy() {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) return
+      const result = await busy(() => api.deployProfile(currentGame.label, currentProfile))
+      if (result !== failed) {
+        if (get().currentGame?.label === currentGame.label) set({ deployment: result })
+        get().toast('success', `Deployed mods to ${currentGame.displayName}`)
+      }
+      await refreshDeployment()
+    },
+
+    async removeDeployment() {
+      const game = get().currentGame
+      if (!game) return
+      const ok = await busy(() => api.removeDeployment(game.label))
+      if (ok !== failed) get().toast('success', `Removed mods from ${game.displayName}`)
+      // A remove copies changed files back into their mods, so the profile may have changed.
+      await reloadProfiles().catch(fail)
+      await refreshDeployment()
+    },
+
     setOnlineSource(game, source) {
       set((s) => ({ onlineSource: { ...s.onlineSource, [game]: source } }))
     },
 
     async updateAll() {
-      const { updates, ghUpdates } = get()
-      await Promise.all([get().tsUpdate(updates), get().ghUpdate(ghUpdates)])
+      const { updates, ghUpdates, nxUpdates } = get()
+      await Promise.all([
+        get().tsUpdate(updates),
+        get().ghUpdate(ghUpdates),
+        get().nxUpdate(nxUpdates)
+      ])
     },
 
     async checkUpdates() {
       const { currentGame, currentProfile } = get()
       const seq = ++updatesSeq
-      if (!currentGame || !currentProfile) return set({ updates: [], ghUpdates: [] })
+      if (!currentGame || !currentProfile) return set({ updates: [], ghUpdates: [], nxUpdates: [] })
       // Only the newest check for the still-selected profile may write.
       const current = (): boolean => {
         const { currentGame: g, currentProfile: p } = get()
@@ -620,22 +750,37 @@ export const useStore = create<State>()((set, get) => {
       const gh = api.ghCheckUpdates(currentGame.label, currentProfile).then((ghUpdates) => {
         if (current()) set({ ghUpdates })
       })
+      // Nexus checks need the game's domain; a game that isn't on Nexus Mods has no updates there.
+      const hasNexusMods = get()
+        .profiles.find((p) => p.id === currentProfile)
+        ?.mods.some((m) => m.source.kind === 'nexus')
+      const nx = hasNexusMods
+        ? api.nxGetDomain(currentGame.label).then(async (domain) => {
+            const nxUpdates = domain
+              ? await api.nxCheckUpdates(currentGame.label, currentProfile)
+              : []
+            if (current()) set({ nxUpdates })
+          })
+        : null
+      if (!nx) set({ nxUpdates: [] })
       // Update checks are background work. With Thunderstore unreachable and no cached list there
       // is nothing to compare against, and the Online tab already reports the error; a failing
       // GitHub lookup only skips that mod, and a manual update surfaces the error.
-      await Promise.all([ts?.catch(() => {}), gh.catch(() => {})])
+      await Promise.all([ts?.catch(() => {}), gh.catch(() => {}), nx?.catch(() => {})])
     },
 
     handleEvent(e) {
       if (e.type === 'github-updated') return void onGithubUpdated(e)
-      if (e.type !== 'progress') return // nexus events are handled in a later task
+      if (e.type === 'nexus-installed') return void onNexusInstalled(e)
+      if (e.type === 'nexus-failed') return get().toast('error', e.message)
       if (progressIdle(get())) return
       set({ progress: progressLabel(e) })
     },
 
     async launch(mode) {
       const { currentGame, currentProfile } = get()
-      if (!currentGame) return
+      // HML doesn't start deploy games; the launch bar deploys instead.
+      if (!currentGame || currentGame.loader === 'deploy') return
       const ok = await busy(() =>
         api.launch(currentGame.label, mode === 'modded' ? currentProfile : null, mode)
       )

@@ -37,6 +37,8 @@ export function NexusBrowse({
 }): React.JSX.Element {
   const [domainState, setDomainState] = useState<DomainState>(undefined)
   const [domainNonce, setDomainNonce] = useState(0)
+  // The game menu's Nexus domain dialog changes the domain from outside this view.
+  const domainVersion = useStore((s) => s.nxDomainVersion)
 
   useEffect(() => {
     let live = true
@@ -47,7 +49,7 @@ export function NexusBrowse({
     return () => {
       live = false
     }
-  }, [game, domainNonce])
+  }, [game, domainNonce, domainVersion])
 
   const reloadDomain = (): void => {
     setDomainState(undefined)

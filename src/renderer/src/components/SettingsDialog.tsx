@@ -72,11 +72,13 @@ function SettingsForm({
             hint={
               game.installDir
                 ? `Using ${game.installDir}`
-                : 'Not found in your Steam libraries. Set the folder that contains the game.'
+                : game.loader === 'deploy'
+                  ? 'Set the folder that contains the game. Deploy mods copies them into it.'
+                  : 'Not found in your Steam libraries. Set the folder that contains the game.'
             }
             value={gameDir}
             onChange={setGameDir}
-            placeholder="Detected from Steam"
+            placeholder={game.loader === 'deploy' ? 'Game folder' : 'Detected from Steam'}
           >
             <Button
               disabled={busy}
@@ -241,6 +243,7 @@ function NexusSection(): React.JSX.Element {
 
   return (
     <div className="flex flex-col gap-4 border-t border-line pt-5">
+      <h3 className="text-sm font-semibold text-fg">Nexus Mods</h3>
       <Field
         label="Personal API key"
         hint={

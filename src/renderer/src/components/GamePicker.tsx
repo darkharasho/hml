@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { GameSummary } from '../../../shared/ipc'
 import { api, errorMessage } from '../api'
+import { formatCount } from '../nxView'
 import { useStore } from '../store'
 import { GameCover } from './GameCover'
 import { Button, Icon } from './ui'
 
 const SEARCH_DEBOUNCE_MS = 150
+const NEXUS_LABEL_PREFIX = 'nexus-'
+
+/** Nexus-only games deploy into their folder; they come from a Nexus Mods search, not the catalog. */
+const isNexusOnly = (g: GameSummary): boolean => g.loader === 'deploy'
 
 export function GamePicker(): React.JSX.Element {
   const [query, setQuery] = useState('')
@@ -15,6 +20,8 @@ export function GamePicker(): React.JSX.Element {
   const selectGame = useStore((s) => s.selectGame)
   const pickGamePath = useStore((s) => s.pickGamePath)
   const openSettings = useStore((s) => s.setSettingsOpen)
+  const toast = useStore((s) => s.toast)
+  const [adding, setAdding] = useState<string | null>(null)
   // Re-run the search when the Steam folder changes, since install dirs depend on it.
   const steamRoot = useStore((s) => s.settings?.steamRootOverride)
 
@@ -38,11 +45,43 @@ export function GamePicker(): React.JSX.Element {
     }
   }, [query, reload, steamRoot])
 
+  /** A Nexus-only game is saved to HML's game list before it can be opened or given a folder. */
+  async function resolve(game: GameSummary): Promise<GameSummary | null> {
+    if (!isNexusOnly(game)) return game
+    setAdding(game.label)
+    try {
+      return await api.addNexusGame(game.label.slice(NEXUS_LABEL_PREFIX.length))
+    } catch (e) {
+      toast('error', errorMessage(e))
+      return null
+    } finally {
+      setAdding(null)
+    }
+  }
+
+  async function choose(game: GameSummary): Promise<void> {
+    const resolved = await resolve(game)
+    if (resolved) await selectGame(resolved)
+  }
+
   async function setFolder(game: GameSummary): Promise<void> {
-    if (await pickGamePath(game.label)) setReload((n) => n + 1)
+    const resolved = await resolve(game)
+    if (resolved && (await pickGamePath(resolved.label))) setReload((n) => n + 1)
   }
 
   const installedCount = games?.filter((g) => g.installDir).length ?? 0
+  const catalogGames = games?.filter((g) => !isNexusOnly(g)) ?? []
+  const nexusGames = games?.filter(isNexusOnly) ?? []
+  const card = (g: GameSummary): React.JSX.Element => (
+    <GameCard
+      key={g.label}
+      game={g}
+      disabled={adding !== null}
+      onSelect={() => void choose(g)}
+      onSetFolder={() => void setFolder(g)}
+    />
+  )
+  const grid = 'grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-x-4 gap-y-6'
 
   return (
     <div className="flex h-full flex-col">
@@ -90,16 +129,18 @@ export function GamePicker(): React.JSX.Element {
               {games.length} {games.length === 1 ? 'game' : 'games'}
               {installedCount > 0 && `, ${installedCount} installed on this PC`}
             </p>
-            <ul className="grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-x-4 gap-y-6">
-              {games.map((g) => (
-                <GameCard
-                  key={g.label}
-                  game={g}
-                  onSelect={() => void selectGame(g)}
-                  onSetFolder={() => void setFolder(g)}
-                />
-              ))}
-            </ul>
+            {catalogGames.length > 0 && <ul className={grid}>{catalogGames.map(card)}</ul>}
+            {nexusGames.length > 0 && (
+              <section aria-labelledby="from-nexus" className={catalogGames.length ? 'mt-8' : ''}>
+                <div className="mb-4 flex items-center gap-3">
+                  <h2 id="from-nexus" className="shrink-0 text-sm font-semibold text-muted">
+                    From Nexus Mods
+                  </h2>
+                  <span className="h-px flex-1 bg-line" aria-hidden="true" />
+                </div>
+                <ul className={grid}>{nexusGames.map(card)}</ul>
+              </section>
+            )}
           </>
         )}
       </main>
@@ -109,23 +150,32 @@ export function GamePicker(): React.JSX.Element {
 
 function GameCard({
   game,
+  disabled,
   onSelect,
   onSetFolder
 }: {
   game: GameSummary
+  disabled: boolean
   onSelect(): void
   onSetFolder(): void
 }): React.JSX.Element {
   const installed = game.installDir !== null
+  const nexus = isNexusOnly(game)
   return (
     <li className="group flex flex-col">
       <button
         type="button"
+        disabled={disabled}
         onClick={onSelect}
         className="relative block aspect-[3/4] overflow-hidden rounded-lg bg-raised ring-1 ring-line transition-[transform,box-shadow] duration-150 group-hover:-translate-y-0.5 group-hover:ring-ember/60 group-hover:shadow-[0_14px_30px_-12px_rgba(255,154,60,0.35)]"
       >
         <GameCover game={game} />
         <span className="absolute inset-x-2 bottom-2 flex flex-wrap gap-1">
+          {nexus && (
+            <span className="rounded bg-ink/85 px-1.5 py-0.5 text-[11px] font-medium text-warn backdrop-blur-sm">
+              Nexus
+            </span>
+          )}
           {installed && (
             <span className="rounded bg-ink/85 px-1.5 py-0.5 text-[11px] font-medium text-teal backdrop-blur-sm">
               Installed
@@ -141,9 +191,15 @@ function GameCard({
       <span className="mt-2 line-clamp-2 text-sm leading-snug font-medium" title={game.displayName}>
         {game.displayName}
       </span>
+      {nexus && game.nexusModCount !== undefined && (
+        <span className="text-xs text-muted tabular-nums">
+          {formatCount(game.nexusModCount)} {game.nexusModCount === 1 ? 'mod' : 'mods'}
+        </span>
+      )}
       {!installed && (
         <button
           type="button"
+          disabled={disabled}
           onClick={onSetFolder}
           className="mt-0.5 self-start text-xs text-muted underline-offset-2 hover:text-ember hover:underline"
         >

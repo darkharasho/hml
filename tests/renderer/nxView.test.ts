@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { InstalledMod, ModSource } from '../../src/shared/types'
+import type { DeploymentStatus, InstalledMod, ModSource } from '../../src/shared/types'
 import {
+  deploymentLabel,
   fileCategoryLabel,
   formatCount,
   installedNexusMod,
@@ -90,5 +91,30 @@ describe('openWebsiteToast', () => {
     expect(openWebsiteToast('unavailable')).toBe(
       `${base} Turn on "Use HML for Nexus downloads" in Settings first.`
     )
+  })
+})
+
+describe('deploymentLabel', () => {
+  const status = (over: Partial<DeploymentStatus> = {}): DeploymentStatus => ({
+    profileId: 'p1',
+    profileName: 'Default',
+    files: 12,
+    deployedAt: '2026-10-16T00:00:00Z',
+    ...over
+  })
+  it('reports nothing deployed', () => {
+    expect(deploymentLabel(null, 'p1')).toBe("Mods aren't deployed.")
+    expect(deploymentLabel(null, null)).toBe("Mods aren't deployed.")
+  })
+  it('reports the current profile with its file count', () => {
+    expect(deploymentLabel(status(), 'p1')).toBe('This profile is deployed (12 files).')
+    expect(deploymentLabel(status({ files: 1 }), 'p1')).toBe('This profile is deployed (1 file).')
+  })
+  it('names another deployed profile, or says another profile when it is gone', () => {
+    expect(deploymentLabel(status({ profileName: 'Hardcore' }), 'p2')).toBe('Hardcore is deployed.')
+    expect(deploymentLabel(status({ profileName: null }), 'p2')).toBe(
+      'Another profile is deployed.'
+    )
+    expect(deploymentLabel(status(), null)).toBe('Default is deployed.')
   })
 })
