@@ -138,6 +138,35 @@ describe('planInstall', () => {
     ])
   })
 
+  test('an empty root folder skips root-level package metadata files only', () => {
+    const out = planInstall(
+      [
+        'manifest.json',
+        'ICON.png',
+        'README.md',
+        'CHANGELOG.md',
+        'changelog',
+        'winhttp.dll',
+        'BepInEx/core/README.md',
+        'BepInEx/core/manifest.json'
+      ],
+      {
+        packageId,
+        rules,
+        loaderPackage: {
+          packageId: 'bbepis-BepInEx_Rogue_Tower',
+          rootFolder: '',
+          loader: 'bepinex'
+        }
+      }
+    ).files
+    expect(out.map((f) => f.to)).toEqual([
+      'winhttp.dll',
+      'BepInEx/core/README.md',
+      'BepInEx/core/manifest.json'
+    ])
+  })
+
   test('rejects path traversal', () => {
     for (const e of ['../evil.dll', '/abs.dll', 'C:/x.dll', 'a/../../b.dll', 'a\\..\\b.dll']) {
       expect(() => plan([e])).toThrow(UnsafeEntryError)

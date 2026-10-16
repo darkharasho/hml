@@ -35,6 +35,15 @@ function normalize(entry: string): string[] {
   return segs
 }
 
+/** Thunderstore package metadata at a zip's root; not part of the mod's files. */
+const PACKAGE_METADATA = new Set([
+  'manifest.json',
+  'icon.png',
+  'readme.md',
+  'changelog.md',
+  'changelog'
+])
+
 function stripWrappers(items: Item[], rules: InstallRule[], stopName?: string): Item[] {
   const routeNames = rules.map((r) => lastSegment(r.route))
   let cur = items
@@ -67,6 +76,7 @@ export function planInstall(
     const files: PlannedFile[] = []
     for (const i of stripped) {
       if (root === '') {
+        if (i.segs.length === 1 && PACKAGE_METADATA.has(i.segs[0].toLowerCase())) continue
         files.push({ from: i.from, to: i.segs.join('/'), disableable: false })
       } else if (i.segs.length >= 2 && eq(i.segs[0], root)) {
         files.push({ from: i.from, to: i.segs.slice(1).join('/'), disableable: false })
