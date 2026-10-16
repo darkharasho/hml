@@ -67,6 +67,31 @@ const nxmHandler: HandlerPort = {
 const hasLock = app.requestSingleInstanceLock()
 if (!hasLock) app.quit()
 
+let services: ReturnType<typeof createServices> | null = null
+let rendererLoaded = false
+/** nxm:// links that arrived before services existed or the window could receive events. */
+const pendingNxm: string[] = []
+
+function drainNxm(): void {
+  if (!services || !rendererLoaded) return
+  for (const link of pendingNxm.splice(0)) void services.handleNxm(link)
+}
+
+// Registered at top level so a link from a second launch during startup isn't lost.
+if (hasLock) {
+  app.on('second-instance', (_event, argv) => {
+    const win = mainWindowRef
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+    const link = findNxmArg(argv)
+    if (!link) return
+    pendingNxm.push(link)
+    drainNxm()
+  })
+}
+
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -87,8 +112,17 @@ function createWindow(): void {
   })
 
   mainWindowRef = mainWindow
+  rendererLoaded = false
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (mainWindowRef !== mainWindow) return
+    rendererLoaded = true
+    drainNxm()
+  })
   mainWindow.on('closed', () => {
-    if (mainWindowRef === mainWindow) mainWindowRef = null
+    if (mainWindowRef === mainWindow) {
+      mainWindowRef = null
+      rendererLoaded = false
+    }
   })
 
   mainWindow.on('ready-to-show', () => {
@@ -130,7 +164,7 @@ if (hasLock)
       optimizer.watchWindowShortcuts(window)
     })
 
-    const services = createServices({
+    services = createServices({
       paths: makePaths(app.getPath('userData')),
       fetch: globalThis.fetch,
       appVersion: app.getVersion(),
@@ -187,28 +221,17 @@ if (hasLock)
       nxmHandler,
       shareBaseUrl: process.env.HML_SHARE_URL ?? 'https://hml-share.project96.workers.dev'
     })
-    registerIpc(services)
-
-    createWindow()
+    const ready = services
+    registerIpc(ready)
 
     // A link that launched HML is handled once the renderer can receive the event.
     const launchLink = findNxmArg(process.argv)
-    if (launchLink && mainWindowRef) {
-      mainWindowRef.webContents.once('did-finish-load', () => void services.handleNxm(launchLink))
-    }
-    app.on('second-instance', (_event, argv) => {
-      const win = mainWindowRef
-      if (win && !win.isDestroyed()) {
-        if (win.isMinimized()) win.restore()
-        win.focus()
-      }
-      const link = findNxmArg(argv)
-      if (link) void services.handleNxm(link)
-    })
+    if (launchLink) pendingNxm.push(launchLink)
+    createWindow()
 
     // Check GitHub mods for updates shortly after startup and then periodically.
     const runGhUpdates = (): void => {
-      services.ghAutoUpdateAll().catch((e) => {
+      ready.ghAutoUpdateAll().catch((e) => {
         console.warn(`GitHub auto-update failed: ${e instanceof Error ? e.message : String(e)}`)
       })
     }
