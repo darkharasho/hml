@@ -18,6 +18,7 @@ import { loadCatalog } from './catalog/catalog'
 import { rankGame, searchGames } from './catalog/ecosystem'
 import {
   findSteamRoot,
+  flatpakGrantsAccess,
   isFlatpakSteam,
   readWinSteamPath,
   steamRootCandidates,
@@ -115,6 +116,8 @@ export interface ServiceDeps {
   nxmHandler: HandlerPort
   /** Base URL of the share-code Worker. */
   shareBaseUrl: string
+  /** Folder of Flatpak's system-wide overrides; defaults to /var/lib/flatpak/overrides. */
+  flatpakSystemOverridesDir?: string
 }
 
 interface LoadedIndex extends TsIndex {
@@ -234,6 +237,18 @@ export function createServices(
     )
     steamRootPromise = p
     return p
+  }
+
+  /** Whether the user's Flatpak overrides already give Steam access to HML's games folder. */
+  async function flatpakAccess(): Promise<boolean> {
+    const app = 'com.valvesoftware.Steam'
+    const read = (file: string): Promise<string> => fs.readFile(file, 'utf8').catch(() => '')
+    const system = await read(
+      path.join(deps.flatpakSystemOverridesDir ?? '/var/lib/flatpak/overrides', app)
+    )
+    const user = await read(path.join(deps.home, '.local', 'share', 'flatpak', 'overrides', app))
+    // The user's file comes last so its `!` entries and grants are read after the system's.
+    return flatpakGrantsAccess(`${system}\n${user}`, paths.gamesDir, deps.home)
   }
 
   // Serializes mutating operations on one profile.
@@ -878,7 +893,9 @@ export function createServices(
         game: def,
         gameDir,
         profileDir: paths.profileDir(game, profileId),
-        steamRoot
+        steamRoot,
+        flatpakAccessGranted:
+          platform === 'linux' && isFlatpakSteam(steamRoot) ? await flatpakAccess() : false
       })
     },
 

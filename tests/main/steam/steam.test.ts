@@ -8,6 +8,7 @@ import {
   isFlatpakSteam,
   listLibraries,
   findAppInstall,
+  flatpakGrantsAccess,
   readLaunchOptions,
   readWinSteamPath
 } from '../../../src/main/steam/steam'
@@ -156,5 +157,51 @@ describe('readWinSteamPath', () => {
     expect(
       await readWinSteamPath(async () => ({ stdout: '    SteamPath    REG_SZ    \r\n' }))
     ).toBeNull()
+  })
+})
+
+describe('flatpakGrantsAccess', () => {
+  const home = '/home/u'
+  const games = '/home/u/.local/share/hml/games'
+  const ctx = (fs: string): string => `[Context]\nfilesystems=${fs}\n`
+  const grants = (text: string, dir = games): boolean => flatpakGrantsAccess(text, dir, home)
+
+  test('no override or no filesystems grants nothing', () => {
+    expect(grants('')).toBe(false)
+    expect(grants('[Context]\nshared=network;\n')).toBe(false)
+    expect(grants('[Environment]\nfilesystems=host\n')).toBe(false)
+  })
+
+  test('host grants access, home only when the games folder is under it', () => {
+    expect(grants(ctx('host;'))).toBe(true)
+    expect(grants(ctx('xdg-download;home'))).toBe(true)
+    expect(grants(ctx('home'), '/mnt/games/hml')).toBe(false)
+  })
+
+  test('a path grants access when it equals or contains the games folder', () => {
+    expect(grants(ctx(games))).toBe(true)
+    expect(grants(ctx(games + '/'))).toBe(true)
+    expect(grants(ctx('/home/u/.local/share/hml'))).toBe(true)
+    expect(grants(ctx('/home/u/.local/share/hml/games/repo'))).toBe(false)
+    expect(grants(ctx('/home/u/.local/share/hml-other'))).toBe(false)
+    expect(grants(ctx('/'))).toBe(true)
+  })
+
+  test('expands ~/ and strips :ro / :rw', () => {
+    expect(grants(ctx('~/.local/share/hml:ro'))).toBe(true)
+    expect(grants(ctx('~/.local/share/hml/games:rw;/mnt/x'))).toBe(true)
+    expect(grants(ctx('~/elsewhere'))).toBe(false)
+    expect(grants(ctx('/mnt/games:ro'), '/mnt/games/hml')).toBe(true)
+  })
+
+  test('a negated entry overrides a grant', () => {
+    expect(grants(ctx('host;!host'))).toBe(false)
+    expect(grants(ctx('home;!~/.local/share/hml'))).toBe(false)
+    expect(grants(ctx('host;!/mnt/other'))).toBe(true)
+  })
+
+  test('reads grants from concatenated system and user files', () => {
+    expect(grants(`${ctx('/mnt/a')}\n${ctx('~/.local/share/hml')}`)).toBe(true)
+    expect(grants(`${ctx('host')}\n${ctx('!host')}`)).toBe(false)
   })
 })

@@ -57,6 +57,8 @@ export async function launchWarnings(input: {
   gameDir: string | null
   profileDir: string
   steamRoot: string
+  /** True when a Flatpak override already lets Steam read HML's folder (see flatpakGrantsAccess). */
+  flatpakAccessGranted?: boolean
 }): Promise<LaunchWarning[]> {
   // HML doesn't launch deploy games, so none of the launch checks apply.
   if (input.game.loader === 'deploy') return input.gameDir === null ? ['game-not-found'] : []
@@ -72,7 +74,11 @@ export async function launchWarnings(input: {
       if (!opts || !opts.includes('winhttp=n,b')) warnings.push('proton-launch-options')
     }
   }
-  if (input.platform === 'linux' && isFlatpakSteam(input.steamRoot)) {
+  if (
+    input.platform === 'linux' &&
+    isFlatpakSteam(input.steamRoot) &&
+    !input.flatpakAccessGranted
+  ) {
     warnings.push('flatpak-filesystem')
   }
   return warnings

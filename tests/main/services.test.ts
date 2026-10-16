@@ -592,6 +592,46 @@ describe('services', () => {
     expect(spawned[0].cmd).toBe('flatpak')
   })
 
+  test('a Flatpak override that grants the games folder drops the flatpak-filesystem warning', async () => {
+    const flatpakRoot = path.join(
+      tmp,
+      '.var',
+      'app',
+      'com.valvesoftware.Steam',
+      '.local',
+      'share',
+      'Steam'
+    )
+    const flatpakGame = path.join(flatpakRoot, 'steamapps', 'common', 'REPO')
+    mkdirSync(flatpakGame, { recursive: true })
+    writeFileSync(
+      path.join(flatpakRoot, 'steamapps', 'libraryfolders.vdf'),
+      '"libraryfolders"\n{\n}\n'
+    )
+    writeFileSync(
+      path.join(flatpakRoot, 'steamapps', 'appmanifest_3241660.acf'),
+      '"AppState"\n{\n"installdir" "REPO"\n}\n'
+    )
+    writeFileSync(path.join(flatpakGame, 'REPO.exe'), '')
+    writeFileSync(deps.paths.settings, JSON.stringify({ steamRootOverride: null }))
+    const systemDir = path.join(tmp, 'flatpak-system')
+    const userDir = path.join(tmp, '.local', 'share', 'flatpak', 'overrides')
+    mkdirSync(systemDir, { recursive: true })
+    mkdirSync(userDir, { recursive: true })
+    const api = createServices({ ...deps, flatpakSystemOverridesDir: systemDir })
+    const profile = await api.createProfile('repo', 'Test')
+    const warnings = (): Promise<string[]> => api.getLaunchWarnings('repo', profile.id)
+    expect(await warnings()).toContain('flatpak-filesystem')
+    const app = 'com.valvesoftware.Steam'
+    writeFileSync(path.join(userDir, app), `[Context]\nfilesystems=${deps.paths.gamesDir}\n`)
+    expect(await warnings()).not.toContain('flatpak-filesystem')
+    writeFileSync(path.join(userDir, app), '')
+    writeFileSync(path.join(systemDir, app), '[Context]\nfilesystems=host\n')
+    expect(await warnings()).not.toContain('flatpak-filesystem')
+    writeFileSync(path.join(userDir, app), '[Context]\nfilesystems=!host\n')
+    expect(await warnings()).toContain('flatpak-filesystem')
+  })
+
   test('native Steam has no flatpak-filesystem warning', async () => {
     writeFileSync(path.join(gameDir, 'REPO.exe'), '')
     const api = createServices(deps)

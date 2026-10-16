@@ -78,6 +78,52 @@ export function isFlatpakSteam(root: string): boolean {
   return (normalized.endsWith('/') ? normalized : normalized + '/').includes(FLATPAK_MARKER)
 }
 
+/**
+ * True when Flatpak Steam's `[Context] filesystems=` override (the text of the system and user
+ * override files, system first) grants access to `gamesDir`: through `host`, `home` (when
+ * `gamesDir` is under it), or a path (`~/` expanded, `:ro`/`:rw` stripped) equal to or
+ * containing it. A `!`-negated entry that would cover `gamesDir` overrides any grant.
+ */
+export function flatpakGrantsAccess(overrideText: string, gamesDir: string, home: string): boolean {
+  const norm = (p: string): string => {
+    const n = p.replace(/\\/g, '/').replace(/\/+$/, '')
+    return n === '' ? '/' : n
+  }
+  const within = (dir: string, parent: string): boolean => {
+    const d = norm(dir)
+    const base = norm(parent)
+    return d === base || d.startsWith(base === '/' ? '/' : base + '/')
+  }
+  const covers = (entry: string): boolean => {
+    const token = entry.replace(/:(ro|rw|create)$/i, '')
+    if (token === 'host') return true
+    if (token === 'home') return within(gamesDir, home)
+    if (token === '~') return within(gamesDir, home)
+    if (token.startsWith('~/')) return within(gamesDir, norm(home) + token.slice(1))
+    if (token.startsWith('/')) return within(gamesDir, token)
+    return false
+  }
+  let inContext = false
+  let granted = false
+  let denied = false
+  for (const raw of overrideText.split(/\r?\n/)) {
+    const line = raw.trim()
+    const section = /^\[(.+)\]$/.exec(line)
+    if (section) {
+      inContext = section[1] === 'Context'
+      continue
+    }
+    const kv = inContext && /^filesystems\s*=(.*)$/.exec(line)
+    if (!kv) continue
+    for (const part of kv[1].split(';')) {
+      const entry = part.trim()
+      if (entry.startsWith('!')) denied ||= covers(entry.slice(1).trim())
+      else if (entry) granted ||= covers(entry)
+    }
+  }
+  return granted && !denied
+}
+
 export async function listLibraries(root: string): Promise<string[]> {
   const rootReal = (await safeRealpath(root)) ?? path.normalize(root)
   const libraries = [rootReal]

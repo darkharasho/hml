@@ -140,6 +140,10 @@ describe('launchWarnings', () => {
     steamRoot = flatpakRoot
     await writeLaunchOptions('WINEDLLOVERRIDES=winhttp=n,b %command%')
     expect(await launchWarnings(input())).toEqual(['flatpak-filesystem'])
+    expect(await launchWarnings({ ...input(), flatpakAccessGranted: false })).toEqual([
+      'flatpak-filesystem'
+    ])
+    expect(await launchWarnings({ ...input(), flatpakAccessGranted: true })).toEqual([])
   })
 })
 
