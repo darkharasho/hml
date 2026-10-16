@@ -12,8 +12,10 @@ let tmp: string
 
 beforeEach(async () => {
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'hml-cat-'))
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 afterEach(async () => {
+  vi.restoreAllMocks()
   await fs.rm(tmp, { recursive: true, force: true })
 })
 
