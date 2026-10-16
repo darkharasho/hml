@@ -120,6 +120,39 @@ describe('uploadShare', () => {
   })
 })
 
+describe('unread bodies', () => {
+  const withBody = (status: number, headers: Record<string, string> = {}): {
+    f: typeof fetch
+    cancelled: () => boolean
+  } => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        c.enqueue(new Uint8Array([1]))
+      },
+      cancel() {
+        cancelled = true
+      }
+    })
+    const f = vi.fn(async () => new Response(body, { status, headers })) as unknown as typeof fetch
+    return { f, cancelled: () => cancelled }
+  }
+
+  it('cancels the body of an error response', async () => {
+    const { f, cancelled } = withBody(502)
+    await expect(downloadShare({ fetch: f, base }, 'ABCDEFGHJK')).rejects.toThrow(UNAVAILABLE)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(cancelled()).toBe(true)
+  })
+
+  it('cancels the body when the declared length is too big', async () => {
+    const { f, cancelled } = withBody(200, { 'content-length': String(MAX_HML_BYTES + 1) })
+    await expect(downloadShare({ fetch: f, base }, 'ABCDEFGHJK')).rejects.toThrow(UNAVAILABLE)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(cancelled()).toBe(true)
+  })
+})
+
 describe('downloadShare', () => {
   it('rejects an invalid code without a request', async () => {
     const f = reply('x')

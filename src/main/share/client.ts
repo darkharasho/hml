@@ -39,7 +39,10 @@ async function request<T>(
   const timer = setTimeout(() => ctl.abort(), o.timeoutMs ?? TIMEOUT_MS)
   try {
     const res = await o.fetch(url, { ...init, signal: ctl.signal })
-    if (!res.ok) throw new Error(messages[res.status] ?? UNAVAILABLE)
+    if (!res.ok) {
+      void res.body?.cancel().catch(() => undefined)
+      throw new Error(messages[res.status] ?? UNAVAILABLE)
+    }
     return await handle(res)
   } catch (e) {
     if (e instanceof Error && Object.values(messages).includes(e.message)) throw e
@@ -81,7 +84,10 @@ export async function downloadShare(o: ShareClientOptions, input: string): Promi
     { headers: { 'user-agent': 'HML' } },
     async (res) => {
       const declared = Number(res.headers.get('content-length') ?? 0)
-      if (declared > MAX_HML_BYTES) throw new Error(UNAVAILABLE)
+      if (declared > MAX_HML_BYTES) {
+        void res.body?.cancel().catch(() => undefined)
+        throw new Error(UNAVAILABLE)
+      }
       if (!res.body) throw new Error(UNAVAILABLE)
       const reader = res.body.getReader()
       const chunks: Uint8Array[] = []
