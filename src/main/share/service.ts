@@ -5,6 +5,7 @@ import type { HmlApi } from '../../shared/ipc'
 import type {
   Catalog,
   GameDef,
+  HmlCustomGame,
   HmlExport,
   HmlExportMod,
   ImportResult,
@@ -30,6 +31,7 @@ export type ShareInstallers = Pick<
   | 'setModEnabled'
   | 'createProfile'
   | 'addNexusGame'
+  | 'addCustomGame'
 > & {
   ghInstall(
     game: string,
@@ -45,6 +47,12 @@ export interface ShareContext {
   requireGame(label: string): Promise<{ label: string }>
   serialize<T>(game: string, profileId: string, fn: () => Promise<T>): Promise<T>
   installers: ShareInstallers
+  /** A stored folder game with this display name (case-insensitive). */
+  findCustomGameByName(displayName: string): Promise<GameDef | undefined>
+  /** Whether Steam has this app installed on this PC. */
+  isSteamAppInstalled(appId: string): Promise<boolean>
+  /** The stored custom-game entry for a label, if it is one. */
+  getCustomGame(label: string): Promise<HmlCustomGame | null>
 }
 
 type ShareApi = Pick<HmlApi, 'exportProfileFile' | 'shareProfile' | 'previewShare' | 'importShare'>
@@ -119,9 +127,50 @@ export function createShareServices(ctx: ShareContext): ShareApi {
   const findGame = async (label: string): Promise<GameDef | undefined> =>
     (await ctx.getCatalog()).games.find((g) => g.label === label)
 
-  /** The catalog game the export is for, adding a `nexus-<domain>` game when it's missing. */
-  async function resolveGame(game: string): Promise<string> {
+  /** What importing an export for a game this PC doesn't have would do, or why it can't. */
+  async function customPlan(cg: HmlCustomGame): Promise<{ def?: GameDef; needsFolder: boolean }> {
+    if (cg.source === 'steam') {
+      if (!cg.steamAppId || !(await ctx.isSteamAppInstalled(cg.steamAppId))) {
+        throw new Error(
+          `This profile is for ${cg.displayName}, which isn't installed through Steam on this PC.`
+        )
+      }
+      return { needsFolder: false }
+    }
+    const def = await ctx.findCustomGameByName(cg.displayName)
+    return def ? { def, needsFolder: false } : { needsFolder: true }
+  }
+
+  /**
+   * The game the export is for: a known label, a custom game added from the export's own
+   * description, or a `nexus-<domain>` game added when it's missing.
+   */
+  async function resolveGame(exp: HmlExport, folder?: string): Promise<string> {
+    const game = exp.game
     if (await findGame(game)) return game
+    const cg = exp.customGame
+    if (cg) {
+      const plan = await customPlan(cg)
+      if (plan.def) return plan.def.label
+      if (cg.source === 'steam') {
+        return (
+          await api.addCustomGame({
+            source: 'steam',
+            steamAppId: cg.steamAppId!,
+            loaderChoice: cg.loaderChoice
+          })
+        ).label
+      }
+      if (!folder) throw new Error('Choose the game folder to import this profile.')
+      return (
+        await api.addCustomGame({
+          source: 'folder',
+          folder,
+          displayName: cg.displayName,
+          loaderChoice: cg.loaderChoice
+        })
+      ).label
+    }
     const domain = nexusDomainOf(game)
     if (!domain) throw unknownGame(game)
     return (await api.addNexusGame(domain)).label
@@ -290,7 +339,10 @@ export function createShareServices(ctx: ShareContext): ShareApi {
     const def = await requireGame(game)
     return serialize(def.label, profileId, async () => {
       const profile = await getProfile(deps.paths, def.label, profileId)
-      const data = await buildHmlFile(profile, deps.paths.profileDir(def.label, profileId))
+      const customGame = (await ctx.getCustomGame(def.label)) ?? undefined
+      const data = await buildHmlFile(profile, deps.paths.profileDir(def.label, profileId), {
+        customGame
+      })
       return { profile, data }
     })
   }
@@ -348,8 +400,9 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       const read = await readHmlFile(data, { forImport: true })
       const exp = read.export
       const def = await findGame(exp.game)
-      const domain = def ? null : nexusDomainOf(exp.game)
-      if (!def && !domain) throw unknownGame(exp.game)
+      const domain = def || exp.customGame ? null : nexusDomainOf(exp.game)
+      if (!def && !domain && !exp.customGame) throw unknownGame(exp.game)
+      const plan = !def && exp.customGame ? await customPlan(exp.customGame) : null
       dropExpired()
       const token = randomUUID()
       pending.set(token, { ...read, expiresAt: now() + PENDING_MS })
@@ -357,14 +410,16 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         token,
         game: exp.game,
         // A Nexus game that isn't added yet is named by its domain until the import adds it.
-        gameName: def?.displayName ?? domain!,
+        gameName:
+          def?.displayName ?? plan?.def?.displayName ?? exp.customGame?.displayName ?? domain!,
         profileName: exp.profileName,
         mods: exp.mods.map((m) => ({ name: modName(m), version: m.version, kind: m.source.kind })),
-        configFiles: read.configs.size
+        configFiles: read.configs.size,
+        ...(plan?.needsFolder ? { needsFolder: true } : {})
       }
     },
 
-    async importShare(token, name) {
+    async importShare(token, name, folder) {
       // Looked up, checked and claimed synchronously, so two imports of one token can't both run.
       const held = typeof token === 'string' ? pending.get(token) : undefined
       if (!held || inFlight.has(token)) throw new Error(EXPIRED)
@@ -377,7 +432,7 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       let game: string
       let created: ProfileManifest
       try {
-        game = await resolveGame(exp.game)
+        game = await resolveGame(exp, typeof folder === 'string' ? folder : undefined)
         const wanted = typeof name === 'string' ? name.trim() : ''
         created = await api.createProfile(game, wanted || exp.profileName)
       } finally {

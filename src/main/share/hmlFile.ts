@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
 import { z } from 'zod'
-import type { HmlExport, ProfileManifest } from '../../shared/types'
+import type { HmlCustomGame, HmlExport, ProfileManifest } from '../../shared/types'
 import { readZipEntries, TOO_LARGE } from '../install/zipEntries'
 
 export const MAX_HML_BYTES = 10485760
@@ -39,7 +39,15 @@ const exportSchema = z.object({
       name: z.string().optional(),
       provides: z.array(z.string()).optional()
     })
-  )
+  ),
+  customGame: z
+    .object({
+      source: z.enum(['steam', 'folder']),
+      displayName: z.string(),
+      steamAppId: z.string().nullable(),
+      loaderChoice: z.enum(['bepinex5', 'bepinex6-mono', 'bepinex6-il2cpp', 'none'])
+    })
+    .optional()
 })
 
 async function collectConfigs(
@@ -72,7 +80,7 @@ async function collectConfigs(
 export async function buildHmlFile(
   profile: ProfileManifest,
   profileDir: string,
-  opts: { maxBytes?: number } = {}
+  opts: { maxBytes?: number; customGame?: HmlCustomGame } = {}
 ): Promise<Uint8Array> {
   const maxBytes = opts.maxBytes ?? MAX_HML_BYTES
   const exp: HmlExport = {
@@ -85,7 +93,8 @@ export async function buildHmlFile(
       version: m.version,
       enabled: m.enabled,
       ...(m.provides && m.provides.length > 0 ? { provides: m.provides } : {})
-    }))
+    })),
+    ...(opts.customGame ? { customGame: opts.customGame } : {})
   }
   const json = strToU8(JSON.stringify(exp, null, 2))
   const files: Record<string, Uint8Array> = { 'export.json': json }

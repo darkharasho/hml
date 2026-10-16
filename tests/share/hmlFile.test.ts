@@ -58,6 +58,23 @@ const zipOf = (files: Record<string, string>): Uint8Array =>
 const validExport = JSON.stringify({ formatVersion: 1, game: 'repo', profileName: 'x', mods: [] })
 
 describe('hml files', () => {
+  it('customGame round-trips through an .hml file', async () => {
+    const customGame = {
+      source: 'folder' as const,
+      displayName: 'My Game',
+      steamAppId: null,
+      loaderChoice: 'bepinex6-mono' as const
+    }
+    const out = await readHmlFile(await buildHmlFile(profile, dir, { customGame }))
+    expect(out.export.customGame).toEqual(customGame)
+  })
+
+  it('an .hml file without customGame still reads', async () => {
+    const out = await readHmlFile(await buildHmlFile(profile, dir))
+    expect(out.export.customGame).toBeUndefined()
+    expect(out.export.game).toBe('repo')
+  })
+
   it('round trips mods and configs', async () => {
     await writeCfg('a.cfg', 'AAA')
     await writeCfg('sub/b.cfg', 'BBB')

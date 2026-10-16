@@ -620,4 +620,103 @@ describe('custom game loaders, launches and manual installs', () => {
     expect((await api.getSettings()).manualLoaderKept).toEqual([])
     expect(await api.getManualLoader(label)).toBeNull()
   })
+
+  describe('share codes', () => {
+    /** A fresh install: its own data dir, the same fake Steam, and the saved file to import. */
+    function freshInstall(file: string, withSteamApp = true): ReturnType<typeof createServices> {
+      const data = path.join(tmp, `data-${Math.random().toString(36).slice(2)}`)
+      const paths = makePaths(data)
+      mkdirSync(paths.root, { recursive: true })
+      const root = withSteamApp ? steamRoot : path.join(tmp, 'empty-steam')
+      mkdirSync(path.join(root, 'steamapps'), { recursive: true })
+      writeFileSync(path.join(root, 'steamapps', 'libraryfolders.vdf'), '"libraryfolders"\n{\n}\n')
+      writeFileSync(paths.settings, JSON.stringify({ steamRootOverride: root }))
+      return createServices({
+        ...deps,
+        paths,
+        dialog: { ...deps.dialog, pickFiles: async () => [file] }
+      })
+    }
+
+    async function exportFrom(
+      api: ReturnType<typeof createServices>,
+      label: string
+    ): Promise<string> {
+      const profile = await api.createProfile(label, 'Shared')
+      const file = path.join(tmp, `${label}.hml`)
+      deps.dialog.saveFile = async () => file
+      await api.exportProfileFile(label, profile.id)
+      return file
+    }
+
+    test('sharing a custom Steam game records it, and importing on a fresh install adds it', async () => {
+      const api = createServices(deps)
+      await api.addCustomGame({ source: 'steam', steamAppId: '3314580', loaderChoice: 'none' })
+      const label = 'steam-3314580'
+      // The profile is made while the game has no loader (no download); the export then
+      // records the loader the game is set to now.
+      const file = await exportFrom(api, label)
+      await api.updateCustomGame(label, { loaderChoice: 'bepinex5' })
+      const profile = (await api.listProfiles(label))[0]
+      const file2 = path.join(tmp, 'again.hml')
+      deps.dialog.saveFile = async () => file2
+      await api.exportProfileFile(label, profile.id)
+
+      const fresh = freshInstall(file2)
+      expect(await fresh.getGame(label)).toBeNull()
+      const preview = await fresh.previewShare({ file: true })
+      expect(preview).toMatchObject({ game: label, gameName: 'Trash Day' })
+      expect(preview!.needsFolder).toBeUndefined()
+      const result = await fresh.importShare(preview!.token, '')
+      expect(result.game).toBe(label)
+      expect(await fresh.getGame(label)).toMatchObject({
+        custom: { loaderChoice: 'bepinex5' }
+      })
+      expect(readFileSync(file)).not.toEqual(readFileSync(file2))
+    })
+
+    test("importing a Steam custom game that isn't installed is refused", async () => {
+      const api = createServices(deps)
+      await api.addCustomGame({ source: 'steam', steamAppId: '3314580', loaderChoice: 'none' })
+      const file = await exportFrom(api, 'steam-3314580')
+      const fresh = freshInstall(file, false)
+      await expect(fresh.previewShare({ file: true })).rejects.toThrow(
+        "This profile is for Trash Day, which isn't installed through Steam on this PC."
+      )
+    })
+
+    test('importing a folder game asks for its folder unless a game with that name exists', async () => {
+      const api = createServices(deps)
+      const folder = gameFolder('My Game')
+      const added = await api.addCustomGame({
+        source: 'folder',
+        folder,
+        displayName: 'My Game',
+        loaderChoice: 'none'
+      })
+      const file = await exportFrom(api, added.label)
+
+      const fresh = freshInstall(file)
+      const preview = await fresh.previewShare({ file: true })
+      expect(preview).toMatchObject({ needsFolder: true, gameName: 'My Game' })
+      await expect(fresh.importShare(preview!.token, '')).rejects.toThrow(
+        'Choose the game folder to import this profile.'
+      )
+      const result = await fresh.importShare(preview!.token, '', folder)
+      expect(result.game).toMatch(/^custom-/)
+      expect((await fresh.listProfiles(result.game)).map((p) => p.name)).toEqual(['Shared'])
+
+      // A second install that already has a game of that name uses it.
+      const other = freshInstall(file)
+      const mine = await other.addCustomGame({
+        source: 'folder',
+        folder: gameFolder('Elsewhere'),
+        displayName: 'my GAME',
+        loaderChoice: 'none'
+      })
+      const p2 = await other.previewShare({ file: true })
+      expect(p2!.needsFolder).toBeUndefined()
+      expect((await other.importShare(p2!.token, '')).game).toBe(mine.label)
+    })
+  })
 })

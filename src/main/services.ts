@@ -70,6 +70,7 @@ import {
 } from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
 import { createCustomGames, customGameDef } from './custom/customGames'
+import { listInstalledApps } from './steam/installedApps'
 import { createCustomGameServices, customLoaderSpec, loaderMismatch } from './custom/service'
 import { createNexusServices } from './nexus/service'
 import { createShareServices } from './share/service'
@@ -848,6 +849,29 @@ export function createServices(
     getCatalog,
     requireGame,
     serialize,
+    findCustomGameByName: async (displayName) => {
+      const wanted = displayName.trim().toLowerCase()
+      const found = (await customGames.list()).find(
+        (g) => g.source === 'folder' && g.displayName.trim().toLowerCase() === wanted
+      )
+      return found ? customGameDef(found) : undefined
+    },
+    isSteamAppInstalled: async (appId) => {
+      const root = await getSteamRoot().catch(() => null)
+      if (!root) return false
+      return (await listInstalledApps(root)).some((a) => a.appId === appId)
+    },
+    getCustomGame: async (label) => {
+      const g = await customGames.get(label)
+      return g
+        ? {
+            source: g.source,
+            displayName: g.displayName,
+            steamAppId: g.steamAppId,
+            loaderChoice: g.loaderChoice
+          }
+        : null
+    },
     installers: {
       tsGetPackage: tsServices.tsGetPackage,
       tsRefresh: tsServices.tsRefresh,
@@ -860,7 +884,8 @@ export function createServices(
       nxGetDomain,
       setModEnabled: setModEnabledService,
       createProfile: (game, name) => createProfile(paths, game, name),
-      addNexusGame
+      addNexusGame,
+      addCustomGame: customApi.addCustomGame
     }
   })
 
