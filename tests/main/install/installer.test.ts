@@ -385,4 +385,77 @@ describe('installer', () => {
     const mod = await installZip(paths, game, catalog, pid, entries, src, { packageId: 'A-Mod' })
     expect(mod.files).toContain('BepInEx/plugins/A-Mod/Mod.dll')
   })
+
+  describe('a raw BepInEx release (GitHub)', () => {
+    const ghSrc: ModSource = {
+      kind: 'github',
+      owner: 'BepInEx',
+      repo: 'BepInEx',
+      tag: 'v5.4.23.2',
+      asset: 'BepInEx_win_x64_5.4.23.2.zip',
+      sha256: ''
+    }
+    const official = (prefix = ''): Uint8Array =>
+      zipSync({
+        [`${prefix}BepInEx/core/BepInEx.Preloader.dll`]: strToU8('pre'),
+        [`${prefix}BepInEx/core/BepInEx.dll`]: strToU8('core'),
+        [`${prefix}winhttp.dll`]: strToU8('w'),
+        [`${prefix}doorstop_config.ini`]: strToU8('[General]'),
+        [`${prefix}changelog.txt`]: strToU8('c')
+      })
+    const opts = { packageId: 'BepInEx-BepInEx', version: '5.4.23.2' }
+
+    test('installs as the loader at the profile root, nothing disableable', async () => {
+      const mod = await installZip(paths, game, catalog, pid, official(), ghSrc, opts)
+      expect(readFileSync(path.join(profDir, 'BepInEx/core/BepInEx.Preloader.dll'), 'utf8')).toBe(
+        'pre'
+      )
+      expect(existsSync(path.join(profDir, 'winhttp.dll'))).toBe(true)
+      expect(existsSync(path.join(profDir, 'doorstop_config.ini'))).toBe(true)
+      expect(mod.disableable).toEqual([])
+      expect(mod.files.sort()).toEqual([
+        'BepInEx/core/BepInEx.Preloader.dll',
+        'BepInEx/core/BepInEx.dll',
+        'changelog.txt',
+        'doorstop_config.ini',
+        'winhttp.dll'
+      ])
+      expect(mod.provides).toEqual([catalog.modloaderPackages[0].packageId])
+    })
+
+    test('one sole wrapper folder is stripped', async () => {
+      const mod = await installZip(paths, game, catalog, pid, official('BepInEx_x64/'), ghSrc, opts)
+      expect(existsSync(path.join(profDir, 'BepInEx/core/BepInEx.Preloader.dll'))).toBe(true)
+      expect(existsSync(path.join(profDir, 'winhttp.dll'))).toBe(true)
+      expect(mod.provides).toHaveLength(1)
+    })
+
+    test('without doorstop or winhttp at the root it is a normal mod', async () => {
+      const zip = zipSync({ 'BepInEx/core/Thing.dll': strToU8('t') })
+      const mod = await installZip(paths, game, catalog, pid, zip, ghSrc, opts)
+      expect(mod.files).toEqual(['BepInEx/core/BepInEx-BepInEx/Thing.dll'])
+      expect(mod.provides).toBeUndefined()
+    })
+
+    test('replaces an installed Thunderstore loader instead of skipping its files', async () => {
+      await installZip(
+        paths,
+        game,
+        catalog,
+        pid,
+        zipSync({
+          'manifest.json': manifest('BepInExPack', '5.4.2100'),
+          'BepInExPack/winhttp.dll': strToU8('old'),
+          'BepInExPack/BepInEx/core/BepInEx.Preloader.dll': strToU8('old')
+        }),
+        { kind: 'thunderstore', fullName: 'BepInEx-BepInExPack' },
+        { packageId: 'BepInEx-BepInExPack', name: 'BepInExPack', version: '5.4.2100' }
+      )
+      const mod = await installZip(paths, game, catalog, pid, official(), ghSrc, opts)
+      const mods = (await getProfile(paths, 'repo', pid)).mods
+      expect(mods.map((m) => m.id)).toEqual(['BepInEx-BepInEx'])
+      expect(readFileSync(path.join(profDir, 'winhttp.dll'), 'utf8')).toBe('w')
+      expect(mod.files).toContain('winhttp.dll')
+    })
+  })
 })

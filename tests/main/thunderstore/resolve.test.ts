@@ -292,6 +292,13 @@ describe('provided packages', () => {
     expect(providedPackages([gh()]).size).toBe(0)
   })
 
+  it('providing one loader package provides and installs them all', () => {
+    const loaders = ['bbepis-BepInExPack', 'BepInEx-BepInExPack']
+    const mods = [gh(['bbepis-BepInExPack'])]
+    expect([...providedPackages(mods, loaders)].sort()).toEqual(loaders.slice().sort())
+    expect(installedVersions(mods, loaders).get('BepInEx-BepInExPack')).toBe('2.0.0')
+  })
+
   it('a provided dependency is satisfied at any version and not planned', () => {
     const i = idx(pkg('O-A', { '1.0.0': ['O-Lib-9.0.0'] }), pkg('O-Lib', { '9.0.0': [] }))
     const have = installedVersions([gh(['O-Lib'])], [])

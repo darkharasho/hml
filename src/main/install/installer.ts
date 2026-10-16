@@ -90,6 +90,33 @@ function findLoaderPackage(
   })
 }
 
+const eqi = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
+
+/**
+ * True for a raw BepInEx release (as published on GitHub): after stripping one sole wrapper
+ * folder, entries under `BepInEx/core/` and a root `doorstop_config.ini` or `winhttp.dll`.
+ */
+function isRawBepInEx(names: string[]): boolean {
+  let entries = names
+    .map((n) =>
+      n
+        .replace(/\\/g, '/')
+        .split('/')
+        .filter((s) => s !== '' && s !== '.')
+    )
+    .filter((segs) => segs.length > 0)
+  if (entries.length === 0) return false
+  const top = entries[0][0]
+  if (!eqi(top, 'BepInEx') && entries.every((s) => s.length >= 2 && eqi(s[0], top))) {
+    entries = entries.map((s) => s.slice(1))
+  }
+  const core = entries.some((s) => s.length >= 3 && eqi(s[0], 'BepInEx') && eqi(s[1], 'core'))
+  const doorstop = entries.some(
+    (s) => s.length === 1 && (eqi(s[0], 'doorstop_config.ini') || eqi(s[0], 'winhttp.dll'))
+  )
+  return core && doorstop
+}
+
 const exists = (p: string): Promise<boolean> =>
   fs.lstat(p).then(
     () => true,
@@ -162,9 +189,24 @@ export async function installZip(
   const name = opts.name ?? meta?.name ?? rawId
 
   if (deploy) assertDeployPackageId(packageId)
-  const loaderPackage = deploy
+  const catalogLoader = deploy
     ? undefined
     : findLoaderPackage(game, catalog, zip, packageId, meta?.name)
+  // A raw BepInEx release isn't a catalog package; it installs like one with its paths kept,
+  // and stands in for the game's loader packages so Thunderstore doesn't add BepInExPack on top.
+  const loaderIds = catalog.modloaderPackages
+    .filter((p) => p.loader === game.loader)
+    .map((p) => p.packageId)
+  const rawLoader =
+    !deploy && !catalogLoader && game.loader === 'bepinex' && isRawBepInEx(zip.names)
+  const loaderPackage: ModloaderPackage | undefined =
+    catalogLoader ??
+    (rawLoader
+      ? { packageId: loaderIds[0] ?? packageId, rootFolder: '', loader: game.loader }
+      : undefined)
+  const provides = [
+    ...new Set([...(opts.provides ?? []), ...(rawLoader && loaderIds[0] ? [loaderIds[0]] : [])])
+  ]
   const plan = deploy
     ? planDeploy(zip.names, { root: game.deployRoot })
     : planInstall(zip.names, { packageId, rules: game.installRules, loaderPackage })
@@ -186,6 +228,14 @@ export async function installZip(
   // loader package a local install recorded under the loader's alias (its manifest name).
   const replaced = new Set([packageId, ...(opts.replaces ?? [])])
   if (loaderPackage) replaced.add(loaderAlias(loaderPackage.packageId))
+  // A raw loader also replaces any installed mod that stands for a loader package; otherwise
+  // the shared paths would be kept as that mod's files and this install would record none.
+  if (rawLoader) {
+    for (const m of profile.mods) {
+      const standsFor = m.source.kind === 'thunderstore' ? [m.source.fullName] : (m.provides ?? [])
+      if (standsFor.some((id) => loaderIds.includes(id))) replaced.add(m.id)
+    }
+  }
   const previous = profile.mods.filter((m) => replaced.has(m.id))
   let keptOwned: string[] = []
   if (previous.length > 0) {
@@ -238,7 +288,7 @@ export async function installZip(
       disableable,
       installedAt: new Date().toISOString(),
       ...(opts.github ? { github: opts.github } : {}),
-      ...(opts.provides && opts.provides.length > 0 ? { provides: opts.provides } : {})
+      ...(provides.length > 0 ? { provides } : {})
     }
     const current = await getProfile(paths, game.label, profileId)
     await saveProfile(paths, {

@@ -68,7 +68,7 @@ import { createNexusServices } from './nexus/service'
 import { createShareServices } from './share/service'
 import { gameByDomain } from './nexus/api'
 import { parseNxm, type HandlerPort } from './nexus/nxm'
-import { findInstalledMod } from '../shared/modIdentity'
+import { findInstalledMod, providesPackage } from '../shared/modIdentity'
 
 export interface DialogPort {
   pickFiles(opts: {
@@ -434,6 +434,7 @@ export function createServices(
     plan: PlannedPackage[]
   ): Promise<{ installed: InstalledMod[]; replaced: string[] }> {
     const catalog = await getCatalog()
+    const loaders = await loaderIds(def)
     const installed: InstalledMod[] = []
     const replaced: string[] = []
     const total = plan.length
@@ -457,7 +458,7 @@ export function createServices(
           .filter(
             (m) =>
               (m.source.kind === 'local' && m.id === pkg.name) ||
-              (m.id !== pkg.fullName && m.provides?.includes(pkg.fullName))
+              (m.id !== pkg.fullName && providesPackage(m, pkg.fullName, loaders))
           )
           .map((m) => m.id)
         installed.push(
@@ -542,7 +543,7 @@ export function createServices(
       return serialize(game, profileId, async () => {
         const profile = await getProfile(paths, game, profileId)
         const installedNow = installedVersions(profile.mods, loaders)
-        const provided = providedPackages(profile.mods)
+        const provided = providedPackages(profile.mods, loaders)
         // Installing a provided package itself replaces the mod that stands in for it.
         const tsCopy = profile.mods.some(
           (m) => m.source.kind === 'thunderstore' && m.source.fullName === fullName
@@ -581,7 +582,7 @@ export function createServices(
         const wanted = new Set(modIds)
         const targets = findUpdates(profile.mods, idx.byName).filter((u) => wanted.has(u.modId))
         const installedNow = installedVersions(profile.mods, loaders)
-        const provided = providedPackages(profile.mods)
+        const provided = providedPackages(profile.mods, loaders)
         const plans: PlannedPackage[][] = []
         const skipped = new Set<string>()
         const missing = new Set<string>()

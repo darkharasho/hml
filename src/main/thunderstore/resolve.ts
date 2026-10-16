@@ -1,6 +1,6 @@
 import type { InstalledMod, ModUpdate, TsPackage, TsVersion } from '../../shared/types'
 import { compareVersions } from '../../shared/version'
-import { loaderAlias } from '../../shared/modIdentity'
+import { loaderAlias, providesPackage } from '../../shared/modIdentity'
 
 export { compareVersions }
 
@@ -193,9 +193,17 @@ export function findUpdates(mods: InstalledMod[], index: Map<string, TsPackage>)
   return updates
 }
 
-/** Thunderstore packages that installed mods stand in for (their `provides`). */
-export function providedPackages(mods: InstalledMod[]): Set<string> {
-  return new Set(mods.flatMap((m) => m.provides ?? []))
+/**
+ * Thunderstore packages that installed mods stand in for (their `provides`). A mod providing one
+ * loader package provides every one of `loaderPackageIds`.
+ */
+export function providedPackages(
+  mods: InstalledMod[],
+  loaderPackageIds: readonly string[] = []
+): Set<string> {
+  const out = new Set(mods.flatMap((m) => m.provides ?? []))
+  if (loaderPackageIds.some((id) => out.has(id))) for (const id of loaderPackageIds) out.add(id)
+  return out
 }
 
 export function installedVersions(
@@ -211,7 +219,9 @@ export function installedVersions(
   }
   for (const loaderId of loaderPackageIds) {
     const short = loaderAlias(loaderId)
-    const mod = mods.find((m) => m.id === loaderId || m.id === short)
+    const mod =
+      mods.find((m) => m.id === loaderId || m.id === short) ??
+      mods.find((m) => providesPackage(m, loaderId, loaderPackageIds))
     if (mod) out.set(loaderId, mod.version)
   }
   return out

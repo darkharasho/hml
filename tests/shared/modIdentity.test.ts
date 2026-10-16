@@ -38,4 +38,12 @@ describe('findInstalledMod', () => {
       ])?.id
     ).toBe('o-r')
   })
+
+  test('providing one loader package provides every loader package', () => {
+    const loaders = ['bbepis-BepInExPack', 'BepInEx-BepInExPack']
+    expect(findInstalledMod([gh(['bbepis-BepInExPack'])], 'BepInEx-BepInExPack', loaders)?.id).toBe(
+      'o-r'
+    )
+    expect(findInstalledMod([gh(['O-Lib'])], 'BepInEx-BepInExPack', loaders)).toBeUndefined()
+  })
 })

@@ -122,6 +122,22 @@ describe('planInstall', () => {
     ])
   })
 
+  test('a loader package with an empty root folder keeps paths as they are', () => {
+    const out = planInstall(['winhttp.dll', 'BepInEx/core/BepInEx.Preloader.dll'], {
+      packageId,
+      rules,
+      loaderPackage: { packageId: 'BepInEx-BepInExPack', rootFolder: '', loader: 'bepinex' }
+    }).files
+    expect(out).toEqual([
+      { from: 'winhttp.dll', to: 'winhttp.dll', disableable: false },
+      {
+        from: 'BepInEx/core/BepInEx.Preloader.dll',
+        to: 'BepInEx/core/BepInEx.Preloader.dll',
+        disableable: false
+      }
+    ])
+  })
+
   test('rejects path traversal', () => {
     for (const e of ['../evil.dll', '/abs.dll', 'C:/x.dll', 'a/../../b.dll', 'a\\..\\b.dll']) {
       expect(() => plan([e])).toThrow(UnsafeEntryError)

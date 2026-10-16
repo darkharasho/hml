@@ -1090,6 +1090,55 @@ describe('services', () => {
         expect(existsSync(path.join(dir, 'BepInEx/plugins/gh-lib'))).toBe(false)
       })
 
+      test('a raw BepInEx release installs as the loader and satisfies BepInExPack', async () => {
+        const official = zipSync({
+          'BepInEx/core/BepInEx.Preloader.dll': strToU8('pre'),
+          'winhttp.dll': strToU8('w'),
+          'doorstop_config.ini': strToU8('[General]')
+        })
+        packages = [
+          rawPkg('Own', 'Mod', ['1.0.0'], ['BepInEx-BepInExPack-5.4.2100']),
+          rawPkg('BepInEx', 'BepInExPack', ['5.4.2100'])
+        ]
+        blobs.set(
+          dl('BepInEx-BepInExPack', '5.4.2100'),
+          zipSync({
+            'manifest.json': strToU8(
+              JSON.stringify({ name: 'BepInExPack', version_number: '5.4.2100' })
+            ),
+            'BepInExPack/winhttp.dll': strToU8('ts'),
+            'BepInExPack/BepInEx/core/BepInEx.Preloader.dll': strToU8('ts')
+          })
+        )
+        const api = makeBoth()
+        const profile = await api.createProfile('repo', 'T')
+        expect(await api.getLaunchWarnings('repo', profile.id)).toContain('no-bepinex')
+        ghPublish('bepinex', 'v5.4.23.2', official)
+        const r = await api.ghInstall('repo', profile.id, 'gh/bepinex')
+        if (r.kind !== 'installed') throw new Error('expected install')
+        const dir = deps.paths.profileDir('repo', profile.id)
+        expect(readFileSync(path.join(dir, 'BepInEx/core/BepInEx.Preloader.dll'), 'utf8')).toBe(
+          'pre'
+        )
+        expect(existsSync(path.join(dir, 'winhttp.dll'))).toBe(true)
+        expect(r.mod.disableable).toEqual([])
+        expect(await api.getLaunchWarnings('repo', profile.id)).not.toContain('no-bepinex')
+
+        // A dependency on BepInExPack (versioned differently from upstream) is satisfied.
+        const t = await api.tsInstall('repo', profile.id, 'Own-Mod')
+        expect(t.installed.map((m) => m.id)).toEqual(['Own-Mod'])
+        expect(t.skipped).toEqual(['BepInEx-BepInExPack'])
+
+        // Installing BepInExPack itself replaces the GitHub loader.
+        const b = await api.tsInstall('repo', profile.id, 'BepInEx-BepInExPack')
+        expect(b.replaced).toEqual(['gh-bepinex'])
+        expect((await modsIn(api)).map((m) => m.id).sort()).toEqual([
+          'BepInEx-BepInExPack',
+          'Own-Mod'
+        ])
+        expect(readFileSync(path.join(dir, 'winhttp.dll'), 'utf8')).toBe('ts')
+      })
+
       test('two Thunderstore mods with the manifest name are ambiguous: none is replaced', async () => {
         packages = [rawPkg('Dep', 'Lib', ['1.0.0']), rawPkg('Alt', 'Lib', ['1.0.0'])]
         blobs.set(dl('Alt-Lib', '1.0.0'), zipOf('Lib', '1.0.0'))

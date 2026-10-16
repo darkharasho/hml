@@ -62,9 +62,13 @@ export function planInstall(
   const stripped = stripWrappers(items, rules, loaderPackage?.rootFolder)
 
   if (loaderPackage) {
+    // An empty root folder means the zip already has the game-folder layout: keep paths as they are.
+    const root = loaderPackage.rootFolder
     const files: PlannedFile[] = []
     for (const i of stripped) {
-      if (i.segs.length >= 2 && eq(i.segs[0], loaderPackage.rootFolder)) {
+      if (root === '') {
+        files.push({ from: i.from, to: i.segs.join('/'), disableable: false })
+      } else if (i.segs.length >= 2 && eq(i.segs[0], root)) {
         files.push({ from: i.from, to: i.segs.slice(1).join('/'), disableable: false })
       }
     }
