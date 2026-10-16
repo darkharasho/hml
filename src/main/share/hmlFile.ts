@@ -10,6 +10,7 @@ export const MAX_HML_BYTES = 10485760
 const NOT_HML = "This isn't an HML profile file."
 const DAMAGED = 'This HML profile file is damaged or from a newer HML.'
 const TOO_BIG = "This profile's config files are too large to share (over 10 MB)."
+export const IMPORT_TOO_BIG = 'This HML profile file is too large to import (over 10 MB).'
 const CONFIG_PREFIX = 'BepInEx/config/'
 
 const sourceSchema = z.discriminatedUnion('kind', [
@@ -98,15 +99,19 @@ function isSafeConfigPath(name: string): boolean {
   return !name.split('/').some((seg) => seg === '..' || seg === '.' || seg === '')
 }
 
+/** Reads a .hml file. `forImport` words a too-large file for an import instead of a share. */
 export async function readHmlFile(
   data: Uint8Array,
-  opts: { maxBytes?: number } = {}
+  opts: { maxBytes?: number; forImport?: boolean } = {}
 ): Promise<{ export: HmlExport; configs: Map<string, Uint8Array> }> {
+  const maxBytes = opts.maxBytes ?? MAX_HML_BYTES
+  const tooBig = opts.forImport ? IMPORT_TOO_BIG : TOO_BIG
+  if (opts.forImport && data.length > maxBytes) throw new Error(tooBig)
   let zip
   try {
-    zip = readZipEntries(data, { maxBytes: opts.maxBytes ?? MAX_HML_BYTES })
+    zip = readZipEntries(data, { maxBytes })
   } catch (e) {
-    if (e instanceof Error && e.message === TOO_LARGE) throw new Error(TOO_BIG, { cause: e })
+    if (e instanceof Error && e.message === TOO_LARGE) throw new Error(tooBig, { cause: e })
     throw new Error(NOT_HML, { cause: e })
   }
   if (!zip.names.includes('export.json')) throw new Error(DAMAGED)

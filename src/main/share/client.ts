@@ -11,14 +11,26 @@ export interface ShareClientOptions {
 const UNAVAILABLE = 'Share codes are unavailable right now. Export a file instead.'
 const TIMEOUT_MS = 30_000
 
-const STATUS_MESSAGES: Record<number, string> = {
-  404: 'No profile has that share code. It may have expired.',
+type StatusMessages = Record<number, string>
+
+const UPLOAD_MESSAGES: StatusMessages = {
+  400: "This profile file couldn't be shared.",
+  404: UNAVAILABLE,
   413: 'This profile is too large to share (over 10 MB).',
   429: 'Too many share codes created. Try again in a minute.'
 }
 
+const DOWNLOAD_MESSAGES: StatusMessages = {
+  404: 'No profile has that share code. It may have expired.',
+  413: UNAVAILABLE,
+  429: 'Too many downloads. Try again in a minute.'
+}
+
+const baseOf = (o: ShareClientOptions): string => o.base.replace(/\/+$/, '')
+
 async function request<T>(
   o: ShareClientOptions,
+  messages: StatusMessages,
   url: string,
   init: RequestInit,
   handle: (res: Response) => Promise<T>
@@ -27,10 +39,10 @@ async function request<T>(
   const timer = setTimeout(() => ctl.abort(), o.timeoutMs ?? TIMEOUT_MS)
   try {
     const res = await o.fetch(url, { ...init, signal: ctl.signal })
-    if (!res.ok) throw new Error(STATUS_MESSAGES[res.status] ?? UNAVAILABLE)
+    if (!res.ok) throw new Error(messages[res.status] ?? UNAVAILABLE)
     return await handle(res)
   } catch (e) {
-    if (e instanceof Error && Object.values(STATUS_MESSAGES).includes(e.message)) throw e
+    if (e instanceof Error && Object.values(messages).includes(e.message)) throw e
     throw new Error(UNAVAILABLE, { cause: e })
   } finally {
     clearTimeout(timer)
@@ -41,7 +53,8 @@ async function request<T>(
 export async function uploadShare(o: ShareClientOptions, data: Uint8Array): Promise<string> {
   return request(
     o,
-    `${o.base}/v1/profiles`,
+    UPLOAD_MESSAGES,
+    `${baseOf(o)}/v1/profiles`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/zip', 'user-agent': 'HML' },
@@ -61,7 +74,8 @@ export async function downloadShare(o: ShareClientOptions, input: string): Promi
   if (!code) throw new Error("That isn't a valid share code.")
   return request(
     o,
-    `${o.base}/v1/profiles/${code}`,
+    DOWNLOAD_MESSAGES,
+    `${baseOf(o)}/v1/profiles/${code}`,
     { headers: { 'user-agent': 'HML' } },
     async (res) => {
       const declared = Number(res.headers.get('content-length') ?? 0)

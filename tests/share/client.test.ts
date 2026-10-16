@@ -32,6 +32,8 @@ describe('uploadShare', () => {
   })
 
   it.each([
+    [400, "This profile file couldn't be shared."],
+    [404, UNAVAILABLE],
     [413, 'This profile is too large to share (over 10 MB).'],
     [429, 'Too many share codes created. Try again in a minute.'],
     [500, UNAVAILABLE],
@@ -107,13 +109,26 @@ describe('downloadShare', () => {
     )
   })
 
-  it('maps 404 and 5xx', async () => {
-    await expect(downloadShare({ fetch: reply('', 404), base }, 'ABCDEFGHJK')).rejects.toThrow(
-      'No profile has that share code. It may have expired.'
+  it.each([
+    [404, 'No profile has that share code. It may have expired.'],
+    [413, UNAVAILABLE],
+    [429, 'Too many downloads. Try again in a minute.'],
+    [502, UNAVAILABLE]
+  ])('maps status %i', async (status, msg) => {
+    await expect(downloadShare({ fetch: reply('', status), base }, 'ABCDEFGHJK')).rejects.toThrow(
+      msg
     )
-    await expect(downloadShare({ fetch: reply('', 502), base }, 'ABCDEFGHJK')).rejects.toThrow(
-      UNAVAILABLE
+  })
+
+  it('strips trailing slashes from the base', async () => {
+    const f = reply(new Uint8Array([1]))
+    await downloadShare({ fetch: f, base: `${base}//` }, 'ABCDEFGHJK')
+    expect((f as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      `${base}/v1/profiles/ABCDEFGHJK`
     )
+    const u = vi.fn(async () => Response.json({ code: 'ABCDEFGHJK' })) as unknown as typeof fetch
+    await uploadShare({ fetch: u, base: `${base}/` }, new Uint8Array())
+    expect((u as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(`${base}/v1/profiles`)
   })
 
   it('caps the streamed body at MAX_HML_BYTES', async () => {

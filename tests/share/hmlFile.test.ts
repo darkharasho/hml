@@ -81,8 +81,14 @@ describe('hml files', () => {
   })
 
   it('puts export.json first and holds only it when there is no config folder', async () => {
-    const out = await readHmlFile(await buildHmlFile(profile, dir))
-    expect(out.configs.size).toBe(0)
+    // The first local file header's name: length at offset 26 (uint16 LE), bytes from 30.
+    const firstName = (zip: Uint8Array): string =>
+      new TextDecoder().decode(zip.subarray(30, 30 + (zip[26] | (zip[27] << 8))))
+    const bare = await buildHmlFile(profile, dir)
+    expect(firstName(bare)).toBe('export.json')
+    expect((await readHmlFile(bare)).configs.size).toBe(0)
+    await writeCfg('a.cfg', 'AAA')
+    expect(firstName(await buildHmlFile(profile, dir))).toBe('export.json')
   })
 
   it.skipIf(process.platform === 'win32')('skips symlinks in the config folder', async () => {
@@ -99,6 +105,19 @@ describe('hml files', () => {
     const data = await buildHmlFile(profile, dir)
     await expect(readHmlFile(data, { maxBytes: 1000 })).rejects.toThrow(TOO_BIG)
     expect(MAX_HML_BYTES).toBe(10485760)
+  })
+
+  it('words a too-large file for an import when reading for one', async () => {
+    const IMPORT_TOO_BIG = 'This HML profile file is too large to import (over 10 MB).'
+    await writeCfg('big.cfg', 'x'.repeat(5000))
+    const data = await buildHmlFile(profile, dir)
+    await expect(readHmlFile(data, { maxBytes: 1000, forImport: true })).rejects.toThrow(
+      IMPORT_TOO_BIG
+    )
+    // A file over the cap is refused before it is unzipped (these bytes aren't a zip at all).
+    await expect(
+      readHmlFile(new Uint8Array(MAX_HML_BYTES + 1), { forImport: true })
+    ).rejects.toThrow(IMPORT_TOO_BIG)
   })
 
   it('ignores unsafe and unrelated entries', async () => {
