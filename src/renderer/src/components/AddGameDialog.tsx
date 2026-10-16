@@ -44,6 +44,8 @@ export function AddGameDialog({
   )
   const [runners, setRunners] = useState<Runner[] | null>(null)
   const [runnerIndex, setRunnerIndex] = useState(0)
+  // Edit mode keeps the stored runner unless the user picks another one.
+  const [runnerChanged, setRunnerChanged] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const mounted = useRef(true)
@@ -76,6 +78,7 @@ export function AddGameDialog({
     return () => {
       stale = true
     }
+    // mode and game only seed the initial selection; re-running would reset the user's choice.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showRunner])
 
@@ -108,7 +111,9 @@ export function AddGameDialog({
         const updated = await api.updateCustomGame(game.label, {
           displayName: trimmed,
           loaderChoice: loader,
-          ...(showRunner ? { runner: runners?.[runnerIndex] ?? null } : {})
+          ...(showRunner && runnerChanged && runners?.[runnerIndex]
+            ? { runner: runners[runnerIndex] }
+            : {})
         })
         if (useStore.getState().currentGame?.label === game.label)
           useStore.setState({ currentGame: updated })
@@ -174,7 +179,10 @@ export function AddGameDialog({
                 <span className="text-xs font-medium text-fg">Run with</span>
                 <select
                   value={runnerIndex}
-                  onChange={(e) => setRunnerIndex(Number(e.target.value))}
+                  onChange={(e) => {
+                    setRunnerIndex(Number(e.target.value))
+                    setRunnerChanged(true)
+                  }}
                   className="h-9 rounded-lg border border-line bg-ink px-2 text-sm text-fg focus:border-ember/70 focus:outline-none"
                 >
                   {runners.map((r, i) => (
