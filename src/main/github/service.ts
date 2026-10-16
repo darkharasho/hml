@@ -13,7 +13,7 @@ import type { ServiceDeps } from '../services'
 import {
   detectPackageMeta,
   installedModsReplaced,
-  installZip,
+  installZipReporting,
   readZipEntries
 } from '../install/installer'
 import { getProfile, listProfiles, saveProfile } from '../profiles/profiles'
@@ -251,7 +251,7 @@ export function createGithubServices(ctx: GhContext): Pick<
 
     const { mods } = await getProfile(paths, def.label, profileId)
     const superseded = supersededBy(mods, name, owner, repo, packageId)
-    const { local, sameRepoMods, tsCopy } = superseded
+    const { sameRepoMods, tsCopy } = superseded
     const previous = mods.find((m) => m.id === packageId) ?? sameRepoMods[0]
     const provides = [
       ...new Set([
@@ -260,7 +260,7 @@ export function createGithubServices(ctx: GhContext): Pick<
         ...(tsCopy?.source.kind === 'thunderstore' ? [tsCopy.source.fullName] : [])
       ])
     ]
-    const mod = await installZip(
+    const { mod, replaced } = await installZipReporting(
       paths,
       def,
       catalog,
@@ -282,7 +282,10 @@ export function createGithubServices(ctx: GhContext): Pick<
         provides
       }
     )
-    return { mod, replaced: [...local, ...(tsCopy ? [tsCopy] : [])].map((m) => m.id) }
+    // What the install actually replaced (a raw loader also replaces the loader package), less
+    // this repo's own mod under another id.
+    const own = new Set(sameRepoMods.map((m) => m.id))
+    return { mod, replaced: replaced.filter((id) => !own.has(id)) }
   }
 
   /**

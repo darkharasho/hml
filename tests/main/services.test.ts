@@ -1307,6 +1307,34 @@ describe('services', () => {
         expect(mods.every((m) => m.provides === undefined)).toBe(true)
       })
 
+      test('a raw BepInEx release reports the Thunderstore BepInExPack it replaced', async () => {
+        packages = [rawPkg('BepInEx', 'BepInExPack', ['5.4.2100'])]
+        blobs.set(
+          dl('BepInEx-BepInExPack', '5.4.2100'),
+          zipSync({
+            'manifest.json': strToU8(
+              JSON.stringify({ name: 'BepInExPack', version_number: '5.4.2100' })
+            ),
+            'BepInExPack/winhttp.dll': strToU8('ts')
+          })
+        )
+        const api = makeBoth()
+        const profile = await api.createProfile('repo', 'T')
+        await api.tsInstall('repo', profile.id, 'BepInEx-BepInExPack')
+        ghPublish(
+          'bepinex',
+          'v5.4.23.2',
+          zipSync({
+            'BepInEx/core/BepInEx.Preloader.dll': strToU8('pre'),
+            'winhttp.dll': strToU8('w')
+          })
+        )
+        const r = await api.ghInstall('repo', profile.id, 'gh/bepinex')
+        if (r.kind !== 'installed') throw new Error('expected install')
+        expect(r.replaced).toEqual(['BepInEx-BepInExPack'])
+        expect((await modsIn(api)).map((m) => m.id)).toEqual(['gh-bepinex'])
+      })
+
       test('two Thunderstore mods with the manifest name are ambiguous: none is replaced', async () => {
         packages = [rawPkg('Dep', 'Lib', ['1.0.0']), rawPkg('Alt', 'Lib', ['1.0.0'])]
         blobs.set(dl('Alt-Lib', '1.0.0'), zipOf('Lib', '1.0.0'))

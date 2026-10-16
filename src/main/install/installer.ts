@@ -245,6 +245,13 @@ export function installedModsReplaced(
 }
 
 export async function installZip(
+  ...args: Parameters<typeof installZipReporting>
+): Promise<InstalledMod> {
+  return (await installZipReporting(...args)).mod
+}
+
+/** installZip, also returning the ids of the installed mods it replaced (not the mod's own id). */
+export async function installZipReporting(
   paths: AppPaths,
   game: GameDef,
   catalog: Catalog,
@@ -265,7 +272,7 @@ export async function installZip(
     /** Thunderstore packages the new mod stands in for, recorded on it. */
     provides?: string[]
   } = {}
-): Promise<InstalledMod> {
+): Promise<{ mod: InstalledMod; replaced: string[] }> {
   const profile = await getProfile(paths, game.label, profileId)
   const root = path.resolve(paths.profileDir(game.label, profileId))
   const zip = data instanceof Uint8Array ? await readArchive(data) : data
@@ -377,7 +384,7 @@ export async function installZip(
       ...current,
       mods: [...current.mods.filter((m) => !replaced.has(m.id)), mod]
     })
-    return mod
+    return { mod, replaced: previous.map((m) => m.id).filter((id) => id !== packageId) }
   } catch (e) {
     for (const w of written) await fs.rm(w, { force: true }).catch(() => undefined)
     await pruneEmptyDirs(
