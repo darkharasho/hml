@@ -13,7 +13,11 @@ const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
   getGame: vi.fn(),
-  getLaunchWarnings: vi.fn()
+  getLaunchWarnings: vi.fn(),
+  getManualLoader: vi.fn(),
+  keepManualLoader: vi.fn(),
+  removeManualLoader: vi.fn(),
+  addCustomGame: vi.fn()
 }))
 vi.mock('../../src/renderer/src/api', () => ({
   api,
@@ -273,5 +277,73 @@ describe('store openImportedProfile', () => {
     expect(s.toasts.some((t) => t.message.includes("HML couldn't find the game nexus-z."))).toBe(
       true
     )
+  })
+})
+
+describe('store manual BepInEx prompt', () => {
+  const gameOf = (label: string, loader: string): GameSummary =>
+    ({ label, displayName: label, loader, installDir: null }) as unknown as GameSummary
+  const prof = { id: 'a', name: 'a', mods: [] } as unknown as ProfileManifest
+
+  beforeEach(() => {
+    api.getDeployment.mockReset().mockResolvedValue(null)
+    api.listProfiles.mockReset().mockResolvedValue([prof])
+    api.ghCheckUpdates.mockReset().mockResolvedValue([])
+    api.getSettings.mockReset().mockResolvedValue({ lastProfile: {}, lastGame: null })
+    api.saveSettings.mockReset().mockResolvedValue(undefined)
+    api.getLaunchWarnings.mockReset().mockResolvedValue([])
+    api.getManualLoader.mockReset()
+    api.keepManualLoader.mockReset().mockResolvedValue(undefined)
+    api.removeManualLoader.mockReset().mockResolvedValue('/backup/bepinex')
+    useStore.setState({ currentGame: null, settings: null, manualLoader: null, toasts: [] })
+  })
+
+  test('selecting a BepInEx game with a hand install opens the prompt', async () => {
+    api.getManualLoader.mockResolvedValue({ entries: ['BepInEx', 'winhttp.dll'], kept: false })
+    await useStore.getState().selectGame(gameOf('repo', 'bepinex'))
+    expect(api.getManualLoader).toHaveBeenCalledWith('repo')
+    expect(useStore.getState().manualLoader).toEqual({
+      game: 'repo',
+      entries: ['BepInEx', 'winhttp.dll']
+    })
+  })
+
+  test('a kept install, no install, or a non-BepInEx game leaves the prompt closed', async () => {
+    api.getManualLoader.mockResolvedValue({ entries: ['BepInEx'], kept: true })
+    await useStore.getState().selectGame(gameOf('repo', 'bepinex'))
+    expect(useStore.getState().manualLoader).toBeNull()
+    api.getManualLoader.mockResolvedValue(null)
+    await useStore.getState().selectGame(gameOf('repo', 'bepinex'))
+    expect(useStore.getState().manualLoader).toBeNull()
+    api.getManualLoader.mockClear()
+    await useStore.getState().selectGame(gameOf('other', 'none'))
+    expect(api.getManualLoader).not.toHaveBeenCalled()
+  })
+
+  test("resolveManualLoader('keep') calls keepManualLoader and clears the prompt", async () => {
+    useStore.setState({ manualLoader: { game: 'repo', entries: ['BepInEx'] } })
+    await useStore.getState().resolveManualLoader('keep')
+    expect(api.keepManualLoader).toHaveBeenCalledWith('repo')
+    expect(useStore.getState().manualLoader).toBeNull()
+  })
+
+  test("resolveManualLoader('remove') moves it aside and says where", async () => {
+    useStore.setState({ manualLoader: { game: 'repo', entries: ['BepInEx'] } })
+    await useStore.getState().resolveManualLoader('remove')
+    expect(api.removeManualLoader).toHaveBeenCalledWith('repo')
+    expect(useStore.getState().manualLoader).toBeNull()
+    expect(useStore.getState().toasts.map((t) => t.message)).toContain(
+      'Moved the manual BepInEx install to /backup/bepinex'
+    )
+  })
+
+  test('addCustomGame adds then selects the game', async () => {
+    const added = gameOf('steam-1', 'none')
+    api.addCustomGame.mockResolvedValue(added)
+    api.getManualLoader.mockResolvedValue(null)
+    await useStore
+      .getState()
+      .addCustomGame({ source: 'steam', steamAppId: '1', loaderChoice: 'none' })
+    expect(useStore.getState().currentGame?.label).toBe('steam-1')
   })
 })

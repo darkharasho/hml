@@ -6,6 +6,7 @@ import type {
   GhUpdate,
   GhUpdateMode,
   HmlEvent,
+  AddCustomGameInput,
   InstalledMod,
   LaunchMode,
   LaunchWarning,
@@ -71,10 +72,14 @@ interface State {
   progress: string | null
   toasts: Toast[]
   settingsOpen: boolean
+  /** A hand-installed BepInEx found in the selected game's folder, awaiting Remove or Keep. */
+  manualLoader: { game: string; entries: string[] } | null
 
   init(): Promise<void>
   selectGame(game: GameSummary): Promise<void>
   leaveGame(): void
+  addCustomGame(input: AddCustomGameInput): Promise<void>
+  resolveManualLoader(action: 'remove' | 'keep'): Promise<void>
   selectProfile(id: string): Promise<void>
   createProfile(name: string): Promise<void>
   renameProfile(id: string, name: string): Promise<void>
@@ -299,6 +304,14 @@ export const useStore = create<State>()((set, get) => {
   }
 
   /** Re-reads what is deployed for the current game; only deploy games have deployments. */
+  /** Offers to remove a hand-installed BepInEx from the game folder, unless the user already kept it. */
+  async function checkManualLoader(game: GameSummary): Promise<void> {
+    if (game.loader !== 'bepinex') return
+    const found = await api.getManualLoader(game.label).catch(() => null)
+    if (found && !found.kept && get().currentGame?.label === game.label)
+      set({ manualLoader: { game: game.label, entries: found.entries } })
+  }
+
   async function refreshDeployment(): Promise<void> {
     const game = get().currentGame
     if (game?.loader !== 'deploy') return set({ deployment: null })
@@ -371,6 +384,7 @@ export const useStore = create<State>()((set, get) => {
     progress: null,
     toasts: [],
     settingsOpen: false,
+    manualLoader: null,
 
     init() {
       initPromise ??= runInit()
@@ -385,7 +399,8 @@ export const useStore = create<State>()((set, get) => {
         updates: [],
         ghUpdates: [],
         nxUpdates: [],
-        deployment: null
+        deployment: null,
+        manualLoader: null
       })
       try {
         const profiles = await loadProfilesEnsuringOne(game.label)
@@ -397,6 +412,27 @@ export const useStore = create<State>()((set, get) => {
         // The user may have picked another game while settings were saving.
         if (get().currentGame?.label !== game.label) return
         await get().selectProfile(profile.id)
+        await checkManualLoader(game)
+      } catch (e) {
+        fail(e)
+      }
+    },
+
+    async addCustomGame(input) {
+      const added = await api.addCustomGame(input)
+      await get().selectGame(added)
+    },
+
+    async resolveManualLoader(action) {
+      const prompt = get().manualLoader
+      if (!prompt) return
+      try {
+        if (action === 'keep') await api.keepManualLoader(prompt.game)
+        else {
+          const backup = await api.removeManualLoader(prompt.game)
+          get().toast('success', `Moved the manual BepInEx install to ${backup}`)
+        }
+        set({ manualLoader: null })
       } catch (e) {
         fail(e)
       }
@@ -411,7 +447,8 @@ export const useStore = create<State>()((set, get) => {
         updates: [],
         ghUpdates: [],
         nxUpdates: [],
-        deployment: null
+        deployment: null,
+        manualLoader: null
       })
     },
 
