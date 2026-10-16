@@ -756,7 +756,10 @@ export function createServices(
     nxGetDomain,
 
     async nxSetDomain(game: string, domain: string | null): Promise<void> {
-      await requireGame(game)
+      const def = await requireGame(game)
+      if (def.loader === 'deploy') {
+        throw new Error('Nexus-only games always use their own Nexus domain.')
+      }
       const wanted = domain?.trim().toLowerCase() ?? ''
       let found: Awaited<ReturnType<typeof gameByDomain>> = null
       if (wanted) {

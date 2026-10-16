@@ -163,6 +163,9 @@ describe('services', () => {
     await expect(api.nxSetDomain('repo', 'nope')).rejects.toThrow('Nexus Mods has no game "nope".')
     await api.nxSetDomain('repo', null)
     expect((await api.getSettings()).nexusDomainOverrides).toEqual({})
+    await expect(api.nxSetDomain('nexus-skyrimspecialedition', 'skyrim')).rejects.toThrow(
+      'Nexus-only games always use their own Nexus domain.'
+    )
   })
 
   test('a saveSettings during a slow nxSetDomain keeps both changes', async () => {
