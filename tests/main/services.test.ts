@@ -354,7 +354,8 @@ describe('services', () => {
       gamePathOverrides: { repo: '/a' },
       steamRootOverride: null,
       lastGame: null,
-      lastProfile: {}
+      lastProfile: {},
+      nexusDomainOverrides: {}
     })
   })
 

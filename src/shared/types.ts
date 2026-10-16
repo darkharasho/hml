@@ -38,6 +38,7 @@ export interface Settings {
   steamRootOverride: string | null
   lastGame: string | null
   lastProfile: Record<string, string>
+  nexusDomainOverrides: Record<string, string>
 }
 
 export type ModSource =
@@ -158,6 +159,73 @@ export interface GhUpdate {
   latest: string // latest tag
   mode: GhUpdateMode
 }
+export type NxSort = 'relevance' | 'downloads' | 'endorsements' | 'updated' | 'name'
+export interface NxQuery {
+  text: string
+  sort: NxSort
+  includeAdult: boolean
+  offset: number
+  limit: number // clamped 1..50
+}
+export interface NxMod {
+  modId: number
+  name: string
+  summary: string
+  author: string
+  version: string
+  pictureUrl: string | null
+  thumbnailUrl: string | null
+  downloads: number
+  endorsements: number
+  updatedAt: string
+  adultContent: boolean
+}
+export interface NxSearchResult {
+  items: NxMod[]
+  total: number
+}
+export type NxFileCategory =
+  'MAIN' | 'UPDATE' | 'OPTIONAL' | 'OLD_VERSION' | 'MISCELLANEOUS' | 'REMOVED' | 'ARCHIVED'
+export interface NxFile {
+  fileId: number
+  name: string
+  version: string
+  category: NxFileCategory
+  sizeBytes: number // falls back to size*1024
+  date: number
+}
+export interface NxModDetail {
+  domain: string
+  mod: NxMod
+  files: NxFile[] // MAIN/UPDATE/OPTIONAL/MISCELLANEOUS, newest first
+}
+export interface NxUser {
+  name: string
+  isPremium: boolean
+}
+export interface NxStatus {
+  set: boolean
+  encryptionAvailable: boolean
+  user: NxUser | null
+  handler: 'registered' | 'not-registered' | 'unavailable'
+}
+export type NxInstallResult =
+  | { kind: 'installed'; mod: InstalledMod; replaced: string[] }
+  | { kind: 'open-website'; url: string }
+export interface NxUpdate {
+  modId: string
+  domain: string
+  nexusModId: number
+  current: string
+  latest: string
+  latestFileId: number
+}
+export interface DeploymentStatus {
+  profileId: string
+  profileName: string | null
+  files: number
+  deployedAt: string
+}
 export type HmlEvent =
   | { type: 'progress'; message: string; done: number; total: number }
   | {
@@ -166,3 +234,10 @@ export type HmlEvent =
       profileId: string
       mods: { name: string; tag: string }[]
     }
+  | {
+      type: 'nexus-installed'
+      game: string
+      profileId: string
+      mod: { name: string; version: string }
+    }
+  | { type: 'nexus-failed'; message: string }

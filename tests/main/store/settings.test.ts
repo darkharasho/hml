@@ -52,7 +52,8 @@ describe('settings store', () => {
       gamePathOverrides: {},
       steamRootOverride: null,
       lastGame: null,
-      lastProfile: {}
+      lastProfile: {},
+      nexusDomainOverrides: {}
     })
   })
 
@@ -62,7 +63,8 @@ describe('settings store', () => {
       gamePathOverrides: { repo: '/games/repo' },
       steamRootOverride: '/opt/steam',
       lastGame: 'repo',
-      lastProfile: { repo: 'default' }
+      lastProfile: { repo: 'default' },
+      nexusDomainOverrides: {}
     }
     await saveSettings(paths, s)
     expect(await loadSettings(paths)).toEqual(s)
@@ -83,7 +85,8 @@ describe('settings store', () => {
       gamePathOverrides: {},
       steamRootOverride: null,
       lastGame: 'repo',
-      lastProfile: {}
+      lastProfile: {},
+      nexusDomainOverrides: {}
     })
   })
 
@@ -94,7 +97,8 @@ describe('settings store', () => {
       gamePathOverrides: {},
       steamRootOverride: null,
       lastGame: null,
-      lastProfile: {}
+      lastProfile: {},
+      nexusDomainOverrides: {}
     })
   })
 })
@@ -104,7 +108,8 @@ describe('resolveGameDir', () => {
     gamePathOverrides: {},
     steamRootOverride: null,
     lastGame: null,
-    lastProfile: {}
+    lastProfile: {},
+    nexusDomainOverrides: {}
   }
 
   test('override beats steam detection', async () => {

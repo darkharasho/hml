@@ -540,6 +540,7 @@ export const useStore = create<State>()((set, get) => {
 
     handleEvent(e) {
       if (e.type === 'github-updated') return void onGithubUpdated(e)
+      if (e.type !== 'progress') return // nexus events are handled in a later task
       if (progressIdle(get())) return
       set({ progress: progressLabel(e) })
     },

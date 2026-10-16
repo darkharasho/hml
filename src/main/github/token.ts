@@ -1,45 +1,19 @@
-import { promises as fs } from 'node:fs'
-import { randomUUID } from 'node:crypto'
-import path from 'node:path'
 import type { AppPaths } from '../store/paths'
+import { loadSecret, saveSecret, type SecretPort } from '../secrets'
 
-export interface SecretPort {
-  isAvailable(): boolean
-  encrypt(plain: string): Buffer
-  decrypt(data: Buffer): string
-}
+export type { SecretPort }
 
-export async function loadToken(paths: AppPaths, secrets: SecretPort): Promise<string | null> {
-  if (!secrets.isAvailable()) return null
-  try {
-    return secrets.decrypt(await fs.readFile(paths.ghToken))
-  } catch {
-    return null
-  }
+export function loadToken(paths: AppPaths, secrets: SecretPort): Promise<string | null> {
+  return loadSecret(paths.ghToken, secrets)
 }
 
 export const NO_SECURE_STORAGE =
   "Secure storage isn't available on this system, so HML can't save a GitHub token."
 
-export async function saveToken(
+export function saveToken(
   paths: AppPaths,
   secrets: SecretPort,
   token: string | null
 ): Promise<void> {
-  if (token === null) {
-    await fs.rm(paths.ghToken, { force: true })
-    return
-  }
-  if (!secrets.isAvailable()) {
-    throw new Error(NO_SECURE_STORAGE)
-  }
-  await fs.mkdir(path.dirname(paths.ghToken), { recursive: true })
-  const tmp = `${paths.ghToken}.${randomUUID()}.tmp`
-  try {
-    await fs.writeFile(tmp, secrets.encrypt(token), { mode: 0o600 })
-    await fs.rename(tmp, paths.ghToken)
-  } catch (e) {
-    await fs.rm(tmp, { force: true }).catch(() => undefined)
-    throw e
-  }
+  return saveSecret(paths.ghToken, secrets, token, 'a GitHub token')
 }
