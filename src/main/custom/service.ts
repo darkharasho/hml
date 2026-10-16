@@ -15,7 +15,6 @@ import type { ServiceDeps } from '../services'
 import type { NexusGames } from '../nexus/games'
 import type { GhInstallOptions } from '../github/service'
 import { deployedProfileId } from '../deploy/deploy'
-import { uninstallMod } from '../install/installer'
 import { getProfile } from '../profiles/profiles'
 import { defaultRunner, findProtonVersions, wineAvailable } from '../launch/runners'
 import { findAppInstall, listLibraries } from '../steam/steam'
@@ -311,14 +310,7 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
       undefined,
       {
         track: spec.track,
-        assetPattern: spec.assetPattern,
-        // The old loader goes only once the new one is downloaded, under the profile's lock, which
-        // is released before the install takes it again.
-        beforeInstall: () =>
-          ctx.serialize(game, profileId, async () => {
-            const old = findLoaderMod((await getProfile(paths, game, profileId)).mods)
-            if (old && !loaderMatches(old, spec)) await uninstallMod(paths, def, profileId, old.id)
-          })
+        assetPattern: spec.assetPattern
       }
     )
     if (result.kind !== 'installed') throw new Error(`Couldn't pick a ${spec.label} file.`)

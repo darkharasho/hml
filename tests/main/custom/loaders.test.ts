@@ -8,11 +8,16 @@ import {
 import { matchesAssetPattern } from '../../../src/main/github/assets'
 import type { InstalledMod } from '../../../src/shared/types'
 
-const ghMod = (owner: string, repo: string, github?: InstalledMod['github']): InstalledMod => ({
+const ghMod = (
+  owner: string,
+  repo: string,
+  github?: InstalledMod['github'],
+  asset = 'a.zip'
+): InstalledMod => ({
   id: `${owner}-${repo}`,
   name: repo,
   version: '1.0.0',
-  source: { kind: 'github', owner, repo, tag: 'v1', asset: 'a.zip', sha256: '' },
+  source: { kind: 'github', owner, repo, tag: 'v1', asset, sha256: '' },
   enabled: true,
   files: [],
   disableable: [],
@@ -43,15 +48,20 @@ describe('loader specs', () => {
     expect(findLoaderMod([ghMod('a', 'b')])).toBeUndefined()
   })
 
-  it('loaderMatches compares track and asset pattern', () => {
+  it('loaderMatches goes by the installed asset name, so a pinned install with no track matches', () => {
     const s5 = LOADER_SPECS.bepinex5
-    const mod = ghMod('BepInEx', 'BepInEx', {
-      updateMode: 'auto',
-      assetPattern: s5.assetPattern,
-      track: s5.track
-    })
-    expect(loaderMatches(mod, s5)).toBe(true)
-    expect(loaderMatches(mod, LOADER_SPECS['bepinex6-mono'])).toBe(false)
+    const pinned5 = ghMod('BepInEx', 'BepInEx', undefined, 'BepInEx_win_x64_5.4.23.5.zip')
+    expect(loaderMatches(pinned5, s5)).toBe(true)
+    expect(loaderMatches(pinned5, LOADER_SPECS['bepinex6-mono'])).toBe(false)
+    const mono6 = ghMod(
+      'BepInEx',
+      'BepInEx',
+      { updateMode: 'pinned', assetPattern: null },
+      'BepInEx-Unity.Mono-win-x64-6.0.0-pre.2.zip'
+    )
+    expect(loaderMatches(mono6, s5)).toBe(false)
+    expect(loaderMatches(mono6, LOADER_SPECS['bepinex6-mono'])).toBe(true)
+    expect(loaderMatches(mono6, LOADER_SPECS['bepinex6-il2cpp'])).toBe(false)
     expect(loaderMatches(ghMod('BepInEx', 'BepInEx'), s5)).toBe(false)
   })
 })

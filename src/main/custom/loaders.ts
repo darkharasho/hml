@@ -1,3 +1,4 @@
+import { matchesAssetPattern } from '../github/assets'
 import type { GhTrack, InstalledMod, LoaderChoice } from '../../shared/types'
 
 export interface LoaderSpec {
@@ -51,9 +52,11 @@ export function findLoaderMod(mods: InstalledMod[]): InstalledMod | undefined {
   )
 }
 
-/** True when the installed loader mod is the build `spec` describes. */
+/**
+ * True when the installed loader mod is the build `spec` describes. Judged by the installed asset's
+ * name, which tells 5, 6-Mono and 6-IL2CPP apart and survives pinned or hand-pasted installs that
+ * save no track or pattern.
+ */
 export function loaderMatches(mod: InstalledMod, spec: LoaderSpec): boolean {
-  return (
-    mod.github?.track?.major === spec.track.major && mod.github?.assetPattern === spec.assetPattern
-  )
+  return mod.source.kind === 'github' && matchesAssetPattern(spec.assetPattern, mod.source.asset)
 }

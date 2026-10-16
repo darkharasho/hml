@@ -36,10 +36,9 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const gameLabel = game?.label
   const manualPrompt = useStore((s) => s.manualLoader)
   const hasManual = !!gameLabel && game?.loader === 'bepinex' && manualFor === gameLabel
-  const isCustom = !!game?.custom
   const isBepinex = game?.loader === 'bepinex'
   useEffect(() => {
-    if (!gameLabel || !isCustom || !isBepinex) return
+    if (!gameLabel || !isBepinex) return
     let live = true
     api.getManualLoader(gameLabel).then(
       (found) => live && setManualFor(found ? gameLabel : null),
@@ -48,12 +47,16 @@ export function ProfileSidebar(): React.JSX.Element | null {
     return () => {
       live = false
     }
-  }, [gameLabel, isCustom, isBepinex, manualPrompt])
+  }, [gameLabel, isBepinex, manualPrompt])
 
   if (!game) return null
 
   // Nexus-only games always use their own domain; catalog and custom games can set one.
   const menuItems: MenuItem[] = []
+  const manualItem: MenuItem = {
+    label: 'Remove manual BepInEx install…',
+    onSelect: () => setRemovingManual(true)
+  }
   if (!isNexusOnly(game))
     menuItems.push({ label: 'Nexus domain…', onSelect: () => setDomainOpen(true) })
   if (game.custom) {
@@ -61,17 +64,15 @@ export function ProfileSidebar(): React.JSX.Element | null {
     menuItems.push({ label: 'Change loader…', onSelect: () => setEditOpen(true) })
     if (isLinux() && game.custom.source === 'folder')
       menuItems.push({ label: 'Change runner…', onSelect: () => setEditOpen(true) })
-    if (hasManual)
-      menuItems.push({
-        label: 'Remove manual BepInEx install…',
-        onSelect: () => setRemovingManual(true)
-      })
+    if (hasManual) menuItems.push(manualItem)
     menuItems.push({
       label: 'Remove from HML…',
       danger: true,
       onSelect: () => setRemovingGame(true)
     })
   }
+  // Catalog BepInEx games have no custom block above, so the item goes last.
+  if (hasManual && !game.custom) menuItems.push(manualItem)
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-panel">

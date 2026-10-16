@@ -112,6 +112,7 @@ export function GamePicker(): React.JSX.Element {
     if (resolved && (await pickGamePath(resolved.label))) setReload((n) => n + 1)
   }
 
+  // Every game appears once, so this is the cards badged Installed or On Steam.
   const installedCount = games?.filter((g) => g.installDir).length ?? 0
   const catalogGames = games?.filter((g) => !isNexusOnly(g) && !isSteamCandidate(g)) ?? []
   const steamGames = games?.filter(isSteamCandidate) ?? []

@@ -62,6 +62,14 @@ function serveBepInEx(opts: { releases?: unknown[]; zipFails?: boolean } = {}): 
     if (u.host === 'api.github.com' && u.pathname === '/repos/BepInEx/BepInEx/releases') {
       return new Response(JSON.stringify(opts.releases ?? RELEASES), { status: 200 })
     }
+    // A pinned install (share import) asks for the one release by its tag.
+    const byTag = /^\/repos\/BepInEx\/BepInEx\/releases\/tags\/(.+)$/.exec(u.pathname)
+    if (u.host === 'api.github.com' && byTag) {
+      const hit = (opts.releases ?? RELEASES).find(
+        (r) => (r as { tag_name: string }).tag_name === decodeURIComponent(byTag[1])
+      )
+      return new Response(JSON.stringify(hit ?? {}), { status: hit ? 200 : 404 })
+    }
     if (u.host === 'github.com' && u.pathname.startsWith('/BepInEx/BepInEx/releases/download/')) {
       if (opts.zipFails) throw new Error('offline')
       return new Response(LOADER_ZIP, { status: 200 })
@@ -483,6 +491,8 @@ describe('custom game loaders, launches and manual installs', () => {
     const mod = await api.installLoader(label, profile.id)
     expect(mod.source).toMatchObject({ asset: 'BepInEx-Unity.Mono-win-x64-6.0.0-pre.2.zip' })
     const { mods } = (await api.listProfiles(label))[0]
+    // Exactly one loader remains: the old one was replaced, not kept beside the new one.
+    expect(mods).toHaveLength(1)
     expect(mods.filter((m) => m.source.kind === 'github')).toHaveLength(1)
     expect(mods[0].source).toMatchObject({ asset: 'BepInEx-Unity.Mono-win-x64-6.0.0-pre.2.zip' })
     expect(await api.getLaunchWarnings(label, profile.id)).not.toContain('loader-mismatch')
@@ -606,6 +616,23 @@ describe('custom game loaders, launches and manual installs', () => {
     expect((await api.getSettings()).manualLoaderKept).toEqual([label])
   })
 
+  test('catalog BepInEx games find and remove a hand install in their folder', async () => {
+    const api = createServices(deps)
+    const dir = path.join(tmp, 'repo-game')
+    mkdirSync(path.join(dir, 'BepInEx', 'plugins'), { recursive: true })
+    writeFileSync(path.join(dir, 'winhttp.dll'), '')
+    // A path override, as a user sets it; no Steam copy of the game exists.
+    await api.setGamePath('repo', dir)
+    expect(await api.getManualLoader('repo')).toEqual({
+      entries: ['BepInEx', 'winhttp.dll'],
+      kept: false
+    })
+    const backup = await api.removeManualLoader('repo')
+    expect(existsSync(path.join(backup, 'winhttp.dll'))).toBe(true)
+    expect(existsSync(path.join(dir, 'BepInEx'))).toBe(false)
+    expect(await api.getManualLoader('repo')).toBeNull()
+  })
+
   test('removeManualLoader backs up the hand install and clears Keep', async () => {
     const api = createServices(deps)
     await addTrash(api, 'bepinex5')
@@ -675,6 +702,24 @@ describe('custom game loaders, launches and manual installs', () => {
         custom: { loaderChoice: 'bepinex5' }
       })
       expect(readFileSync(file)).not.toEqual(readFileSync(file2))
+    })
+
+    test('importing a profile with its loader gives no loader-mismatch', async () => {
+      serveBepInEx()
+      const api = createServices(deps)
+      await api.addCustomGame({ source: 'steam', steamAppId: '3314580', loaderChoice: 'bepinex5' })
+      const label = 'steam-3314580'
+      const file = await exportFrom(api, label)
+      const fresh = freshInstall(file)
+      const preview = await fresh.previewShare({ file: true })
+      const result = await fresh.importShare(preview!.token, '')
+      expect(result.unresolved).toEqual([])
+      const loader = result.profile.mods.find((m) => m.source.kind === 'github')!
+      // Reinstalled from a pinned release URL, so no track was saved.
+      expect(loader.github?.track).toBeUndefined()
+      expect(await fresh.getLaunchWarnings(result.game, result.profile.id)).not.toContain(
+        'loader-mismatch'
+      )
     })
 
     test("importing a Steam custom game that isn't installed is refused", async () => {
