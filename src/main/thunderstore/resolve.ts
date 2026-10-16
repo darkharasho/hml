@@ -95,8 +95,17 @@ export function resolveInstall(
           continue
         }
         const depPkg = index.get(fullName)
-        const pick = depPkg && pickVersion(depPkg, min)
-        if (!depPkg || !pick) {
+        if (!depPkg) {
+          missing.add(dep)
+          continue
+        }
+        // No version meets the minimum: install the newest anyway, and still warn.
+        let pick = pickVersion(depPkg, min)
+        if (!pick) {
+          pick = newest(depPkg)
+          missing.add(`${fullName}-${min}`)
+        }
+        if (!pick) {
           missing.add(dep)
           continue
         }

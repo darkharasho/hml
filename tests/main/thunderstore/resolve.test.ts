@@ -127,7 +127,19 @@ describe('resolveInstall', () => {
     )
     const r = resolveInstall(i, { fullName: 'O-A' }, new Map())
     expect(r.missing.sort()).toEqual(['O-B2-9.0.0', 'O-Gone-1.0.0'])
-    expect(names(r)).toEqual(['O-B@1.0.0', 'O-A@1.0.0'])
+    expect(names(r)).toEqual(['O-B@1.0.0', 'O-B2@1.0.0', 'O-A@1.0.0'])
+  })
+
+  it('installs the newest when no version meets the highest minimum, and warns', () => {
+    const i = idx(
+      pkg('O-T', { '1.0.0': ['O-A-1.0.0', 'O-B-1.0.0'] }),
+      pkg('O-A', { '1.0.0': ['O-X-1.0.0'] }),
+      pkg('O-B', { '1.0.0': ['O-X-9.0.0'] }),
+      pkg('O-X', { '5.0.0': [], '2.0.0': [] })
+    )
+    const r = resolveInstall(i, { fullName: 'O-T' }, new Map())
+    expect(r.plan.filter((p) => p.fullName === 'O-X').map((p) => p.version)).toEqual(['5.0.0'])
+    expect(r.missing).toEqual(['O-X-9.0.0'])
   })
 
   it('uses the newest version when the required one is gone', () => {
