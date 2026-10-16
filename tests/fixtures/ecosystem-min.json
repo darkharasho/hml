@@ -1,0 +1,978 @@
+{
+  "schemaVersion": "0.3.0",
+  "games": {
+    "repo": {
+      "uuid": "3a1ccbdc-11ac-4426-a7af-892b5677c0ca",
+      "label": "repo",
+      "meta": {
+        "displayName": "R.E.P.O.",
+        "iconUrl": "repo/repo-cover-360x480.webp"
+      },
+      "distributions": [
+        {
+          "platform": "steam",
+          "identifier": "3241660"
+        }
+      ],
+      "r2modman": [
+        {
+          "meta": {
+            "displayName": "R.E.P.O.",
+            "iconUrl": "repo/repo-cover-360x480.webp"
+          },
+          "internalFolderName": "REPO",
+          "dataFolderName": "REPO_Data",
+          "distributions": [
+            {
+              "platform": "steam",
+              "identifier": "3241660"
+            }
+          ],
+          "settingsIdentifier": "REPO",
+          "packageIndex": "https://thunderstore.io/c/repo/api/v1/package-listing-index/",
+          "steamFolderName": "REPO",
+          "exeNames": [
+            "REPO.exe"
+          ],
+          "gameInstanceType": "game",
+          "gameSelectionDisplayMode": "visible",
+          "additionalSearchStrings": [
+            "repo",
+            "回收行动"
+          ],
+          "packageLoader": "bepinex",
+          "installRules": [
+            {
+              "route": "BepInEx/plugins",
+              "defaultFileExtensions": [
+                ".dll"
+              ],
+              "trackingMethod": "subdir",
+              "subRoutes": [],
+              "isDefaultLocation": true
+            },
+            {
+              "route": "BepInEx/core",
+              "defaultFileExtensions": [],
+              "trackingMethod": "subdir",
+              "subRoutes": [],
+              "isDefaultLocation": false
+            },
+            {
+              "route": "BepInEx/patchers",
+              "defaultFileExtensions": [],
+              "trackingMethod": "subdir",
+              "subRoutes": [],
+              "isDefaultLocation": false
+            },
+            {
+              "route": "BepInEx/monomod",
+              "defaultFileExtensions": [
+                ".mm.dll"
+              ],
+              "trackingMethod": "subdir",
+              "subRoutes": [],
+              "isDefaultLocation": false
+            },
+            {
+              "route": "BepInEx/config",
+              "defaultFileExtensions": [],
+              "trackingMethod": "none",
+              "subRoutes": [],
+              "isDefaultLocation": false
+            }
+          ],
+          "relativeFileExclusions": null
+        }
+      ],
+      "thunderstore": {
+        "displayName": "R.E.P.O.",
+        "listed": true,
+        "meta": {
+          "icon": "repo/repo-icon-192x192.webp",
+          "cover": "repo/repo-cover-360x480.webp",
+          "background": "repo/repo-bg-1920x1080.webp",
+          "hero": "repo/repo-bg-1920x620.webp"
+        },
+        "categories": {
+          "mods": {
+            "label": "Mods"
+          },
+          "modpacks": {
+            "label": "Modpacks"
+          },
+          "tools": {
+            "label": "Tools"
+          },
+          "libraries": {
+            "label": "Libraries"
+          },
+          "misc": {
+            "label": "Misc"
+          },
+          "audio": {
+            "label": "Audio"
+          },
+          "valuables": {
+            "label": "Valuables"
+          },
+          "items": {
+            "label": "Items"
+          },
+          "upgrades": {
+            "label": "Upgrades"
+          },
+          "weapons": {
+            "label": "Weapons"
+          },
+          "drones": {
+            "label": "Drones"
+          },
+          "monsters": {
+            "label": "Monsters"
+          },
+          "levels": {
+            "label": "Levels"
+          },
+          "clientside": {
+            "label": "Client-side"
+          },
+          "serverside": {
+            "label": "Server-side"
+          },
+          "cosmetics": {
+            "label": "Cosmetics"
+          },
+          "quality-of-life": {
+            "label": "Quality Of Life"
+          },
+          "ai-generated": {
+            "label": "AI Generated"
+          }
+        },
+        "sections": {
+          "mods": {
+            "name": "Mods",
+            "excludeCategories": [
+              "modpacks"
+            ]
+          },
+          "modpacks": {
+            "name": "Modpacks",
+            "requireCategories": [
+              "modpacks"
+            ]
+          }
+        },
+        "autolistPackageIds": [
+          "BepInEx-BepInExPack"
+        ],
+        "discordUrl": "https://discord.gg/vPJtKhYAFe",
+        "wikiUrl": "https://repomods.com/"
+      }
+    },
+    "bonelab": {
+      "uuid": "2d7868bd-6b43-45b6-b587-172d44a11067",
+      "label": "bonelab",
+      "meta": {
+        "displayName": "BONELAB",
+        "iconUrl": "bonelab/bonelab-cover-360x480.webp"
+      },
+      "distributions": [
+        {
+          "platform": "steam",
+          "identifier": "1592190"
+        },
+        {
+          "platform": "oculus-store",
+          "identifier": null
+        }
+      ],
+      "r2modman": [
+        {
+          "meta": {
+            "displayName": "BONELAB",
+            "iconUrl": "bonelab/bonelab-cover-360x480.webp"
+          },
+          "internalFolderName": "BONELAB",
+          "dataFolderName": "BONELAB_Steam_Windows64",
+          "distributions": [
+            {
+              "platform": "steam",
+              "identifier": "1592190"
+            },
+            {
+              "platform": "oculus-store",
+              "identifier": null
+            }
+          ],
+          "settingsIdentifier": "BONELAB",
+          "packageIndex": "https://thunderstore.io/c/bonelab/api/v1/package-listing-index/",
+          "steamFolderName": "BONELAB",
+          "exeNames": [
+            "BONELAB_Steam_Windows64.exe",
+            "BONELAB_Oculus_Windows64.exe"
+          ],
+          "gameInstanceType": "game",
+          "gameSelectionDisplayMode": "visible",
+          "additionalSearchStrings": [
+            "BL",
+            "骨骼实验室"
+          ],
+          "packageLoader": "melonloader",
+          "installRules": [
+            {
+              "route": "Mods",
+              "defaultFileExtensions": [
+                ".dll"
+              ],
+              "trackingMethod": "state",
+              "subRoutes": [],
+              "isDefaultLocation": true
+            },
+            {
+              "route": "Plugins",
+              "defaultFileExtensions": [
+                ".plugin.dll"
+              ],
+              "trackingMethod": "state",
+              "subRoutes": [],
+              "isDefaultLocation": false
+            },
+            {
+              "route": "UserLibs",
+              "defaultFileExtensions": [
+                ".lib.dll"
+              ],
+              "trackingMethod": "state",
+              "subRoutes": [],
+              "isDefaultLocation": false
+            },
+            {
+              "route": "MelonLoader",
+              "defaultFileExtensions": [],
+              "trackingMethod": "state",
+              "subRoutes": [
+                {
+                  "route": "Managed",
+                  "defaultFileExtensions": [
+                    ".managed.dll"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "Libs",
+                  "defaultFileExtensions": [],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                }
+              ],
+              "isDefaultLocation": false
+            },
+            {
+              "route": "UserData",
+              "defaultFileExtensions": [],
+              "trackingMethod": "state",
+              "subRoutes": [
+                {
+                  "route": "CustomItems",
+                  "defaultFileExtensions": [
+                    ".melon"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "CustomMaps",
+                  "defaultFileExtensions": [
+                    ".bcm",
+                    ".cma"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "PlayerModels",
+                  "defaultFileExtensions": [
+                    ".body"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "CustomLoadScreens",
+                  "defaultFileExtensions": [
+                    ".load"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "Music",
+                  "defaultFileExtensions": [
+                    ".wav"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "Food",
+                  "defaultFileExtensions": [
+                    ".food"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "Scoreworks",
+                  "defaultFileExtensions": [
+                    ".sw"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "CustomSkins",
+                  "defaultFileExtensions": [
+                    ".png"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "Grenades",
+                  "defaultFileExtensions": [
+                    ".grenade"
+                  ],
+                  "trackingMethod": "state",
+                  "subRoutes": [],
+                  "isDefaultLocation": false
+                },
+                {
+                  "route": "Not Enough Photons",
+                  "defaultFileExtensions": [],
+                  "trackingMethod": "state",
+                  "subRoutes": [
+                    {
+                      "route": "Hitmarkers",
+                      "defaultFileExtensions": [],
+                      "trackingMethod": "state",
+                      "subRoutes": [
+                        {
+                          "route": "Skins",
+                          "defaultFileExtensions": [],
+                          "trackingMethod": "state",
+                          "subRoutes": [],
+                          "isDefaultLocation": false
+                        }
+                      ],
+                      "isDefaultLocation": false
+                    },
+                    {
+                      "route": "ScoreLab",
+                      "defaultFileExtensions": [],
+                      "trackingMethod": "state",
+                      "subRoutes": [],
+                      "isDefaultLocation": false
+                    }
+                  ],
+                  "isDefaultLocation": false
+                }
+              ],
+              "isDefaultLocation": false
+            }
+          ],
+          "relativeFileExclusions": [
+            "manifest.json",
+            "icon.png",
+            "README.md",
+            "LICENCE"
+          ]
+        }
+      ],
+      "thunderstore": {
+        "displayName": "BONELAB",
+        "listed": true,
+        "meta": {
+          "icon": "bonelab/bonelab-icon-192x192.webp",
+          "cover": "bonelab/bonelab-cover-360x480.webp",
+          "background": "bonelab/bonelab-bg-1920x1080.webp",
+          "hero": "bonelab/bonelab-bg-1920x620.webp"
+        },
+        "categories": {
+          "code-mods": {
+            "label": "Code Mods"
+          },
+          "custom-audio": {
+            "label": "Custom Audio"
+          },
+          "custom-items": {
+            "label": "Custom Items"
+          },
+          "custom-maps": {
+            "label": "Custom Maps"
+          },
+          "custom-npcs": {
+            "label": "Custom NPCs"
+          },
+          "custom-player-models": {
+            "label": "Custom Player Models"
+          },
+          "custom-skins": {
+            "label": "Custom Skins"
+          },
+          "custom-weapons": {
+            "label": "Custom Weapons"
+          },
+          "ai-generated": {
+            "label": "AI Generated"
+          },
+          "mods": {
+            "label": "Mods"
+          },
+          "audio": {
+            "label": "Audio"
+          },
+          "npc": {
+            "label": "NPC"
+          },
+          "gamemodes": {
+            "label": "Gamemodes"
+          },
+          "misc": {
+            "label": "Misc"
+          },
+          "utility": {
+            "label": "Utility"
+          }
+        },
+        "sections": {},
+        "discordUrl": "https://discord.gg/BONELAB",
+        "shortDescription": "BONELAB is an experimental physics action game. Explore a mysterious lab filled with weapons, enemies, challenges and secrets. Escape your reality, or wreak havoc. No wrong answers."
+      }
+    }
+  },
+  "modloaderPackages": [
+    {
+      "packageId": "bbepis-BepInExPack",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "xiaoxiao921-BepInExPack",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "xiaoye97-BepInEx",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "denikson-BepInExPack_Valheim",
+      "rootFolder": "BepInExPack_Valheim",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "1F31A-BepInEx_Valheim_Full",
+      "rootFolder": "BepInEx_Valheim_Full",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_GTFO",
+      "rootFolder": "BepInExPack_GTFO",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Outward",
+      "rootFolder": "BepInExPack_Outward",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "bbepisTaleSpire-BepInExPack",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_H3VR",
+      "rootFolder": "BepInExPack_H3VR",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_ROUNDS",
+      "rootFolder": "BepInExPack_ROUNDS",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "Zinal001-BepInExPack_MECHANICA",
+      "rootFolder": "BepInExPack_MECHANICA",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Muck",
+      "rootFolder": "BepInExPack_Muck",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Mycopunk",
+      "rootFolder": "BepInExPack_Mycopunk",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_LLBlaze",
+      "rootFolder": "BepInExPack_LLBlaze",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Timberborn",
+      "rootFolder": "BepInExPack_Timberborn",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_TABS",
+      "rootFolder": "BepInExPack_TABS",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_NASB",
+      "rootFolder": "BepInExPack_NASB",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Inscryption",
+      "rootFolder": "BepInExPack_Inscryption",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Starsand",
+      "rootFolder": "BepInExPack_Starsand",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_CaLABP",
+      "rootFolder": "BepInExPack_CaLABP",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_PotionCraft",
+      "rootFolder": "BepInExPack_PotionCraft",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_NearlyDead",
+      "rootFolder": "BepInExPack_NearlyDead",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_AGAINST",
+      "rootFolder": "BepInExPack_AGAINST",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "bbepis-BepInEx_Rogue_Tower",
+      "rootFolder": "",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_HOTDS",
+      "rootFolder": "BepInExPack_HOTDS",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_ForTheKing",
+      "rootFolder": "BepInExPack_ForTheKing",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "Subnautica_Modding-BepInExPack_Subnautica",
+      "rootFolder": "BepInExPack_Subnautica",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "Subnautica_Modding-BepInExPack_Subnautica_Experimental",
+      "rootFolder": "BepInExPack_Subnautica_Experimental",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "Subnautica_Modding-BepInExPack_BelowZero",
+      "rootFolder": "BepInExPack_BelowZero",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "Subnautica_Modding-BepInExPack",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Core_Keeper",
+      "rootFolder": "BepInExPack_Core-Keeper",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "northstar-Northstar",
+      "rootFolder": "Northstar",
+      "loader": "northstar"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Peglin",
+      "rootFolder": "BepInExPack_Peglin",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_V_Rising",
+      "rootFolder": "BepInExPack_V_Rising",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "PCVR_Modders-BepInExPack_GHVR",
+      "rootFolder": "BepInExPack_GHVR",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInExPackMTD-BepInExPack_20MTD",
+      "rootFolder": "BepInExPack_20MTD",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_VTOL_VR",
+      "rootFolder": "BepInExPack_VTOL_VR",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Stacklands",
+      "rootFolder": "BepInExPack_Stacklands",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_EtG",
+      "rootFolder": "BepInExPack_EtG",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Ravenfield",
+      "rootFolder": "BepInExPack_Ravenfield",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Aloft",
+      "rootFolder": "BepInExPack_Aloft",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_CultOfTheLamb",
+      "rootFolder": "BepInExPack_CultOfTheLamb",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Chrono_Ark",
+      "rootFolder": "BepInExPack_Chrono_Ark",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_TromboneChamp",
+      "rootFolder": "BepInExPack_TromboneChamp",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_RogueGenesia",
+      "rootFolder": "BepInExPack_RogueGenesia",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_AcrossTheObelisk",
+      "rootFolder": "BepInExPack_AcrossTheObelisk",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "GodotModding-GodotModLoader",
+      "rootFolder": "",
+      "loader": "godotml"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Skul",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_IL2CPP",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_x86",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "Modding_Council-BepInExPack_of_Legend",
+      "rootFolder": "BepInExPack_of_Legend",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Thronefall",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_WizardWithAGun",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "SunkenlandModding-BepInExPack_Sunkenland",
+      "rootFolder": "BepInExPack_Sunkenland",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx_Wormtown-BepInExPack",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "0xFFF7-votv_shimloader",
+      "rootFolder": "",
+      "loader": "shimloader"
+    },
+    {
+      "packageId": "Thunderstore-unreal_shimloader",
+      "rootFolder": "",
+      "loader": "shimloader"
+    },
+    {
+      "packageId": "Thunderstore-lovely",
+      "rootFolder": "",
+      "loader": "lovely"
+    },
+    {
+      "packageId": "ReturnOfModding-ReturnOfModding",
+      "rootFolder": "ReturnOfModdingPack",
+      "loader": "return-of-modding"
+    },
+    {
+      "packageId": "Hell2Modding-Hell2Modding",
+      "rootFolder": "ReturnOfModdingPack",
+      "loader": "return-of-modding"
+    },
+    {
+      "packageId": "NotNet-GDWeave",
+      "rootFolder": "",
+      "loader": "gdweave"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_AmongUs",
+      "rootFolder": "BepInExPack_AmongUs",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Magicite",
+      "rootFolder": "BepInExPack_Magicite",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_HumanFallFlat",
+      "rootFolder": "BepInExPack_HumanFallFlat",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "LavaGang-MelonLoader",
+      "rootFolder": "",
+      "loader": "melonloader"
+    },
+    {
+      "packageId": "LavaGang-MelonLoader",
+      "rootFolder": "",
+      "loader": "recursive-melonloader"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_PEAK",
+      "rootFolder": "BepInExPack_PEAK",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_LensIsland",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Ostranauts",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Patapon",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Silksong",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "silksong_modding-BepInExPack_Silksong",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "ResoniteModding-BepisLoader",
+      "rootFolder": "BepInExPack",
+      "loader": "bepisloader"
+    },
+    {
+      "packageId": "ResoniteModding-BepInExRenderer",
+      "rootFolder": "BepInExPack",
+      "loader": "bepisloader"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_SlashersKeep",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_BadNorth",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_LostSkies",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_FootballManager26",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Aeruta",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Necropolis",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "UMM-UMM",
+      "rootFolder": "UMM",
+      "loader": "umm"
+    },
+    {
+      "packageId": "ReDoIngMods-Rivet",
+      "rootFolder": "Rivet",
+      "loader": "rivet"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_CrabGame",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_InSilence",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "grime_modding-BepInExPack_Grime",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "GoblinCleanupModding-BepInExPack_GoblinCleanup",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "Romestead_Modding-BepInExPack_Romestead",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "ADOFAI_Modding-UMM_ADOFAI",
+      "rootFolder": "UMM",
+      "loader": "umm"
+    },
+    {
+      "packageId": "HomeSafetyHotline_Modding-MelonLoader_HomeSafetyHotline",
+      "rootFolder": "",
+      "loader": "recursive-melonloader"
+    },
+    {
+      "packageId": "SlipSkid_Modding-BepInExPack_SlipSkid",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "SHMCD_Modding-MelonLoader_SHMCD",
+      "rootFolder": "",
+      "loader": "recursive-melonloader"
+    },
+    {
+      "packageId": "SFTG_Modding-BepInExPack_SFTG",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "Nucleares_Modding-BepInExPack_Nucleares",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BOMBANANA_Modding-BepInExPack_BOMBANANA",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "CultOfPiN_Modding-BepInExPack_CultOfPiN",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "TheSexyBrutale_Modding-BepInExPack_TheSexyBrutale",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "HoldfastModding-BepInExPack_Holdfast",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "BepInEx-BepInExPack_Sineus",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "ApproximatelyUp_Modding-BepInExPack_ApproximatelyUp",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "WhisperOfTheHouse_Modding-BepInExPack_WhisperOfTheHouse",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    },
+    {
+      "packageId": "Crawl_Modding-BepInExPack_Crawl",
+      "rootFolder": "BepInExPack",
+      "loader": "bepinex"
+    }
+  ]
+}
