@@ -24,6 +24,20 @@ export interface GameDetection {
   nativeLinux: boolean
   suggested: LoaderChoice
 }
+export type AddCustomGameInput =
+  | { source: 'steam'; steamAppId: string; loaderChoice: LoaderChoice; displayName?: string }
+  | {
+      source: 'folder'
+      folder: string
+      displayName: string
+      loaderChoice: LoaderChoice
+      runner?: Runner | null
+    }
+export interface CustomGameUpdate {
+  displayName?: string
+  loaderChoice?: LoaderChoice
+  runner?: Runner | null
+}
 export interface GhTrack {
   major: number
   prerelease: boolean

@@ -17,6 +17,7 @@ import type { AppPaths } from './store/paths'
 import { loadCatalog } from './catalog/catalog'
 import { rankGame, searchGames } from './catalog/ecosystem'
 import {
+  findAppInstall,
   findSteamRoot,
   flatpakGrantsAccess,
   isFlatpakSteam,
@@ -68,6 +69,8 @@ import {
   removeDeployment
 } from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
+import { createCustomGames, customGameDef } from './custom/customGames'
+import { createCustomGameServices } from './custom/service'
 import { createNexusServices } from './nexus/service'
 import { createShareServices } from './share/service'
 import { gameByDomain } from './nexus/api'
@@ -168,6 +171,8 @@ export function createServices(
   const nexusClient = { fetch: deps.fetch, appVersion: deps.appVersion, os: deps.os }
   const nexus = createNexusGames({ paths, client: nexusClient, now })
 
+  const customGames = createCustomGames(paths)
+
   let catalogPromise: Promise<Catalog> | null = null
   const getBaseCatalog = (): Promise<Catalog> => {
     catalogPromise ??= loadCatalog(paths, deps.fetch, deps.snapshotPath).catch((e) => {
@@ -181,13 +186,22 @@ export function createServices(
     const base = await getBaseCatalog()
     const have = new Set(base.games.map((g) => g.label))
     const added = (await nexus.addedGames()).filter((g) => !have.has(g.label))
-    return added.length ? { ...base, games: [...base.games, ...added] } : base
+    const games = [...base.games, ...added]
+    for (const g of await customGames.list()) {
+      if (!games.some((x) => x.label === g.label)) games.push(customGameDef(g))
+    }
+    return games.length > base.games.length ? { ...base, games } : base
   }
 
   /** A deploy game's folder: the override, when it is an existing folder. */
   const deployFolder = async (g: GameDef, settings: Settings): Promise<string | null> => {
     const dir = settings.gamePathOverrides[g.label]
-    return dir && (await isDirectory(dir)) ? dir : null
+    if (dir && (await isDirectory(dir))) return dir
+    if (dir || !g.steamAppId) return null
+    // A Steam game without a loader (custom) is found through Steam.
+    const root = await getSteamRoot().catch(() => null)
+    const found = root ? await findAppInstall(root, g.steamAppId).catch(() => null) : null
+    return found && (await isDirectory(found)) ? found : null
   }
 
   const summarize = (
@@ -292,7 +306,11 @@ export function createServices(
   /** A deploy game and its folder (the override), or the readable reason it has none. */
   async function requireDeploy(game: string): Promise<{ def: GameDef; gameDir: string }> {
     const def = await requireDeployGame(game)
-    const gameDir = (await loadSettings(paths)).gamePathOverrides[def.label]
+    const settings = await loadSettings(paths)
+    // Custom Steam games without a loader have no override: Steam knows their folder.
+    const gameDir =
+      settings.gamePathOverrides[def.label] ||
+      (def.steamAppId ? await deployFolder(def, settings) : null)
     if (!gameDir) throw new Error('Set the game folder first.')
     return { def, gameDir }
   }
@@ -748,6 +766,17 @@ export function createServices(
     }
   }
 
+  const { steamCandidates, ...customApi } = createCustomGameServices({
+    deps,
+    customGames,
+    getCatalog,
+    getBaseCatalog,
+    getSteamRoot,
+    summarize: async (def) =>
+      summarize(def, await getCatalog(), await loadSettings(paths), await getSteamRoot()),
+    nexus
+  })
+
   const shareApi = createShareServices({
     deps,
     getCatalog,
@@ -796,6 +825,7 @@ export function createServices(
     ...ghServices,
     ...nexusApi,
     ...shareApi,
+    ...customApi,
     handleNxm,
     // Replacing an installed mod under a running game is refused; a fresh install is allowed.
     ghInstall: (game, profileId, url, asset) =>
@@ -825,7 +855,8 @@ export function createServices(
         .map((x) => x.g)
       const extra = await nexus.searchExtra(query, catalog, settings)
       const extras = await Promise.all(extra.map((g) => summarize(g, catalog, settings, steamRoot)))
-      return [...sorted, ...extras]
+      const installed = await steamCandidates(query, catalog, steamRoot)
+      return [...sorted, ...installed, ...extras]
     },
 
     async getGame(label: string): Promise<GameSummary | null> {
@@ -840,7 +871,7 @@ export function createServices(
 
     async nxSetDomain(game: string, domain: string | null): Promise<void> {
       const def = await requireGame(game)
-      if (def.loader === 'deploy') {
+      if (def.label.startsWith('nexus-')) {
         throw new Error('Nexus-only games always use their own Nexus domain.')
       }
       const wanted = domain?.trim().toLowerCase() ?? ''

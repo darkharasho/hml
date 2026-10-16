@@ -63,3 +63,15 @@ test('HML_METHODS lists the nexus methods', () => {
 test('HML_METHODS lists the share methods', () => {
   expect(HML_METHODS).toEqual(expect.arrayContaining(['exportProfileFile', 'shareProfile']))
 })
+test('HML_METHODS lists the custom game methods', () => {
+  expect(HML_METHODS).toEqual(
+    expect.arrayContaining([
+      'detectCustomGame',
+      'pickCustomGameFolder',
+      'addCustomGame',
+      'updateCustomGame',
+      'removeCustomGame',
+      'listRunners'
+    ])
+  )
+})

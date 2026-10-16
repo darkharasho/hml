@@ -1,5 +1,8 @@
 import type {
+  AddCustomGameInput,
+  CustomGameUpdate,
   GameDef,
+  GameDetection,
   GhInstallResult,
   GhUpdate,
   GhUpdateMode,
@@ -17,6 +20,7 @@ import type {
   NxUpdate,
   NxUser,
   ProfileManifest,
+  Runner,
   Settings,
   SharePreview,
   TsInstallResult,
@@ -112,6 +116,24 @@ export interface HmlApi {
   getDeployment(game: string): Promise<DeploymentStatus | null>
   /** Opens an https Thunderstore or GitHub link in the system browser; anything else throws. */
   openExternal(url: string): Promise<void>
+  /** Detection for an installed Steam game (by `steam-<appid>` label) or an added custom game. */
+  detectCustomGame(
+    label: string
+  ): Promise<{ displayName: string; folder: string; detection: GameDetection }>
+  /** Folder dialog, then detection; null when cancelled. */
+  pickCustomGameFolder(): Promise<{
+    folder: string
+    displayName: string
+    detection: GameDetection
+  } | null>
+  /** Adds an installed Steam game or a game folder as a custom game. */
+  addCustomGame(input: AddCustomGameInput): Promise<GameSummary>
+  /** Renames a custom game, changes the loader new profiles get, or its runner. */
+  updateCustomGame(label: string, patch: CustomGameUpdate): Promise<GameSummary>
+  /** Forgets a custom game; its profiles stay on disk. Refused while mods are deployed. */
+  removeCustomGame(label: string): Promise<void>
+  /** Proton builds and Wine that can start a Windows game on Linux; empty on Windows. */
+  listRunners(): Promise<Runner[]>
 }
 
 // `satisfies` makes the compiler reject a missing or unknown method name.
@@ -165,7 +187,13 @@ const METHOD_TABLE = {
   deployProfile: true,
   removeDeployment: true,
   getDeployment: true,
-  openExternal: true
+  openExternal: true,
+  detectCustomGame: true,
+  pickCustomGameFolder: true,
+  addCustomGame: true,
+  updateCustomGame: true,
+  removeCustomGame: true,
+  listRunners: true
 } satisfies Record<keyof HmlApi, true>
 
 export const HML_METHODS = Object.keys(METHOD_TABLE) as (keyof HmlApi)[]
