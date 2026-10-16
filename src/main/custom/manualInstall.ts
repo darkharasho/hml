@@ -41,7 +41,16 @@ export async function moveToBackup(
       throw new Error(`Not a manual BepInEx entry: ${e}`)
     }
   }
-  await fs.mkdir(backupDir, { recursive: true })
+  await fs.mkdir(path.dirname(backupDir), { recursive: true })
+  try {
+    // Non-recursive: fails if the backup folder exists, so rollback only removes what we created.
+    await fs.mkdir(backupDir)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Error(`Backup folder already exists: ${backupDir}`, { cause: err })
+    }
+    throw err
+  }
   try {
     for (const e of entries) {
       await fs.cp(path.join(gameDir, e), path.join(backupDir, e), {
@@ -54,7 +63,14 @@ export async function moveToBackup(
     await fs.rm(backupDir, { recursive: true, force: true })
     throw err
   }
-  for (const e of entries) await fs.rm(path.join(gameDir, e), { recursive: true, force: true })
+  try {
+    for (const e of entries) await fs.rm(path.join(gameDir, e), { recursive: true, force: true })
+  } catch (err) {
+    throw new Error(
+      `The files were backed up to ${backupDir}, but some couldn't be removed from the game folder: ${(err as Error).message}`,
+      { cause: err }
+    )
+  }
   return backupDir
 }
 

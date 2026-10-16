@@ -70,6 +70,28 @@ describe('moveToBackup', () => {
     expect(await names()).toEqual(before)
     await expect(fs.stat(backup)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+  it('does not touch an existing backup folder', async () => {
+    await fs.mkdir(backup, { recursive: true })
+    await fs.writeFile(path.join(backup, 'keep.txt'), 'mine')
+    const before = await names()
+    await expect(moveToBackup(game, (await findManualLoader(game))!, backup)).rejects.toThrow(
+      /already exists/
+    )
+    expect(await fs.readFile(path.join(backup, 'keep.txt'), 'utf8')).toBe('mine')
+    expect(await names()).toEqual(before)
+  })
+  it('reports the backup path when removing an original fails', async () => {
+    const real = fs.rm.bind(fs)
+    vi.spyOn(fs, 'rm').mockImplementation(async (p, o) => {
+      if (String(p).endsWith('winhttp.dll')) throw new Error('EBUSY locked')
+      return real(p, o)
+    })
+    await expect(moveToBackup(game, (await findManualLoader(game))!, backup)).rejects.toThrow(
+      new RegExp(`${backup}.*EBUSY locked`)
+    )
+    expect(await fs.readFile(path.join(backup, 'BepInEx', 'plugins', 'a.dll'), 'utf8')).toBe('dll')
+    expect(await fs.readFile(path.join(backup, 'winhttp.dll'), 'utf8')).toBe('winhttp.dll')
+  })
   it('refuses entries outside the manual-loader list', async () => {
     await fs.mkdir(path.join(game, 'Trash_Data'))
     await expect(moveToBackup(game, ['BepInEx', 'Trash_Data'], backup)).rejects.toThrow()
