@@ -25,7 +25,7 @@ const API_ROOT = 'https://api.github.com'
 const CONNECTION_ERROR = "Couldn't reach GitHub. Check your connection and try again."
 const TIMEOUT_ERROR = 'GitHub took too long to respond. Try again later.'
 const API_TIMEOUT_MS = 30_000
-const DOWNLOAD_TIMEOUT_MS = 120_000
+const DOWNLOAD_TIMEOUT_MS = 600_000
 /** Largest release asset HML downloads (it is held in memory). */
 export const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
 
