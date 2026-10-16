@@ -179,6 +179,25 @@ async function readManifest(paths: AppPaths, game: GameDef): Promise<DeploymentM
   }
 }
 
+/**
+ * The manifest, or null when no deployment record exists. A record that exists but can't be read
+ * is an error: treating it as "nothing deployed" would back up deployed mod files as originals.
+ */
+async function requireManifest(paths: AppPaths, game: GameDef): Promise<DeploymentManifest | null> {
+  const m = await readManifest(paths, game)
+  if (m) return m
+  const file = paths.deployment(game.label)
+  if (!(await lstat(file))) return null
+  throw new Error(
+    `HML's record of what is deployed to ${game.displayName} is damaged (${file}), so it can't tell mod files from the game's own files. Restore the game's original files (for example with your launcher's verify option), then delete that file.`
+  )
+}
+
+/** The profile currently deployed for the game, or null (nothing deployed or a damaged record). */
+export async function deployedProfileId(paths: AppPaths, game: GameDef): Promise<string | null> {
+  return (await readManifest(paths, game))?.profileId ?? null
+}
+
 export async function deploymentStatus(
   paths: AppPaths,
   game: GameDef
@@ -329,7 +348,7 @@ export async function removeDeployment(
   opts: DeployOptions = {}
 ): Promise<void> {
   void gameDir
-  const m = await readManifest(paths, game)
+  const m = await requireManifest(paths, game)
   if (!m) return
   await removeFromManifest(paths, game, m, opts.move ?? moveFile)
 }

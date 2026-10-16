@@ -23,7 +23,12 @@ import {
   getProfile
 } from '../../../src/main/profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from '../../../src/main/install/installer'
-import { deployProfile, deploymentStatus, removeDeployment } from '../../../src/main/deploy/deploy'
+import {
+  deployProfile,
+  deployedProfileId,
+  deploymentStatus,
+  removeDeployment
+} from '../../../src/main/deploy/deploy'
 import { nexusGameDef } from '../../../src/main/nexus/games'
 import type { Catalog, GameDef, ModSource } from '../../../src/shared/types'
 
@@ -561,5 +566,33 @@ describe('deploy', () => {
     )
     await expect(removeDeployment(paths, game, gameDir)).rejects.toThrow(/outside the game folder/)
     expect(readdirSync(outside)).toEqual([])
+  })
+
+  test('a damaged deployment record blocks deploy and remove without touching the game folder', async () => {
+    await install(pid, 'nexus-1', { 'Data/a.esp': 'mod' })
+    writeFileSync(path.join(gameDir, 'game.exe'), 'orig')
+    mkdirSync(path.dirname(paths.deployment(game.label)), { recursive: true })
+    writeFileSync(paths.deployment(game.label), '{ not json')
+    const file = paths.deployment(game.label)
+    const msg = `HML's record of what is deployed to X is damaged (${file}), so it can't tell mod files from the game's own files. Restore the game's original files (for example with your launcher's verify option), then delete that file.`
+    await expect(deployProfile(paths, game, pid, gameDir)).rejects.toThrow(msg)
+    await expect(removeDeployment(paths, game, gameDir)).rejects.toThrow(msg)
+    expect(readdirSync(gameDir)).toEqual(['game.exe'])
+    expect(read('game.exe')).toBe('orig')
+    expect(readFileSync(file, 'utf8')).toBe('{ not json')
+    expect(await deploymentStatus(paths, game)).toBeNull()
+    // A valid JSON file of the wrong shape is damaged too.
+    writeFileSync(file, JSON.stringify({ formatVersion: 1, files: [] }))
+    await expect(deployProfile(paths, game, pid, gameDir)).rejects.toThrow(msg)
+    expect(readdirSync(gameDir)).toEqual(['game.exe'])
+  })
+
+  test('deployedProfileId reads the deployed profile, or null', async () => {
+    expect(await deployedProfileId(paths, game)).toBeNull()
+    await install(pid, 'nexus-1', { 'Data/a.esp': 'mod' })
+    await deployProfile(paths, game, pid, gameDir)
+    expect(await deployedProfileId(paths, game)).toBe(pid)
+    writeFileSync(paths.deployment(game.label), 'garbage')
+    expect(await deployedProfileId(paths, game)).toBeNull()
   })
 })
