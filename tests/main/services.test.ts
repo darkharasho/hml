@@ -4,10 +4,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
+import { gzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createServices, type DialogPort, type ServiceDeps } from '../../src/main/services'
 import { makePaths } from '../../src/main/store/paths'
 import { HML_METHODS } from '../../src/shared/ipc'
+import type { HmlEvent } from '../../src/shared/types'
 
 const hooks = vi.hoisted(() => ({
   rename: null as null | ((...a: unknown[]) => Promise<void>)
@@ -32,6 +34,7 @@ let picked: string[]
 let spawned: { cmd: string; args: string[] }[]
 let execCalls: { file: string; args: string[] }[]
 let deps: ServiceDeps
+let emitted: HmlEvent[]
 
 const dialog: DialogPort = {
   pickFiles: async () => picked,
@@ -54,8 +57,10 @@ beforeEach(() => {
   const paths = makePaths(path.join(tmp, 'data'))
   mkdirSync(paths.root, { recursive: true })
   writeFileSync(paths.settings, JSON.stringify({ steamRootOverride: steamRoot }))
+  emitted = []
   deps = {
     paths,
+    emit: (e) => emitted.push(e),
     fetch: (async () => ({ ok: true, json: async () => fixture })) as unknown as typeof fetch,
     snapshotPath: path.join(__dirname, '../fixtures/ecosystem-min.json'),
     platform: 'linux',
@@ -441,7 +446,177 @@ describe('services', () => {
     }
   })
 
+  describe('thunderstore', () => {
+    const IDX = 'https://thunderstore.io/c/repo/api/v1/package-listing-index/'
+    let CHUNK = 'https://ts.test/chunk-1'
+    const dl = (n: string, v: string): string => `https://ts.test/dl/${n}/${v}`
+    const gz = (v: unknown): Uint8Array => gzipSync(Buffer.from(JSON.stringify(v)))
+    const zipOf = (name: string, version: string): Uint8Array =>
+      zipSync({
+        'manifest.json': strToU8(JSON.stringify({ name, version_number: version })),
+        [`${name}.dll`]: strToU8('dll')
+      })
+    const rawPkg = (owner: string, name: string, versions: string[], deps: string[] = []) => ({
+      name,
+      full_name: `${owner}-${name}`,
+      owner,
+      package_url: `https://thunderstore.io/c/repo/p/${owner}/${name}/`,
+      date_updated: '2026-01-01T00:00:00Z',
+      rating_score: 1,
+      is_pinned: false,
+      is_deprecated: false,
+      has_nsfw_content: false,
+      categories: ['mods'],
+      versions: versions.map((v) => ({
+        name,
+        full_name: `${owner}-${name}-${v}`,
+        description: `${name} ${v}`,
+        icon: 'x',
+        version_number: v,
+        dependencies: deps,
+        download_url: dl(`${owner}-${name}`, v),
+        downloads: 1,
+        date_created: '2026-01-01T00:00:00Z',
+        website_url: '',
+        is_active: true,
+        file_size: 1
+      }))
+    })
+    let packages: unknown[]
+    let blobs: Map<string, Uint8Array | number>
+    let offline: boolean
+    let tsFetch: typeof fetch & ReturnType<typeof vi.fn>
+
+    beforeEach(() => {
+      offline = false
+      CHUNK = 'https://ts.test/chunk-1'
+      packages = [
+        rawPkg('Own', 'Mod', ['1.0.0'], ['Dep-Lib-1.0.0']),
+        rawPkg('Dep', 'Lib', ['1.0.0'])
+      ]
+      blobs = new Map([
+        [dl('Own-Mod', '1.0.0'), zipOf('Mod', '1.0.0')],
+        [dl('Dep-Lib', '1.0.0'), zipOf('Lib', '1.0.0')]
+      ])
+      tsFetch = vi.fn(async (url: string) => {
+        if (url === IDX || url === CHUNK || blobs.has(url)) {
+          if (offline) throw new Error('network down')
+          const b = url === IDX ? gz([CHUNK]) : url === CHUNK ? gz(packages) : blobs.get(url)!
+          if (typeof b === 'number') return { ok: false, status: b }
+          const buf = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
+          return { ok: true, status: 200, arrayBuffer: async () => buf }
+        }
+        return deps.fetch(url)
+      }) as never
+    })
+    const make = (): ReturnType<typeof createServices> =>
+      createServices({ ...deps, fetch: tsFetch })
+
+    test('install with a dependency installs both, dependency first, with progress', async () => {
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      const r = await api.tsInstall('repo', profile.id, 'Own-Mod')
+      expect(r.installed.map((m) => m.id)).toEqual(['Dep-Lib', 'Own-Mod'])
+      expect(r.installed.every((m) => m.source.kind === 'thunderstore')).toBe(true)
+      const mods = (await api.listProfiles('repo'))[0].mods
+      expect(mods.map((m) => m.id).sort()).toEqual(['Dep-Lib', 'Own-Mod'])
+      expect(emitted.map((e) => e.done)).toEqual([0, 1, 2])
+      expect(emitted.every((e) => e.total === 2)).toBe(true)
+      expect(emitted[0].message).toBe('Installing Lib 1.0.0')
+    })
+
+    test('a failing second download names the package and keeps the first', async () => {
+      blobs.set(dl('Own-Mod', '1.0.0'), 404)
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await expect(api.tsInstall('repo', profile.id, 'Own-Mod')).rejects.toThrow(/^Own-Mod: /)
+      expect((await api.listProfiles('repo'))[0].mods.map((m) => m.id)).toEqual(['Dep-Lib'])
+    })
+
+    test('unsupported game rejects', async () => {
+      const api = make()
+      const profile = await api.createProfile('bonelab', 'T')
+      await expect(api.tsInstall('bonelab', profile.id, 'Own-Mod')).rejects.toThrow(
+        "BONELAB uses a mod loader HML doesn't support yet."
+      )
+    })
+
+    test('no package index rejects', async () => {
+      const g = structuredClone(fixture.games.repo)
+      g.r2modman[0].packageIndex = null
+      const api = createServices({
+        ...deps,
+        fetch: (async () => ({
+          ok: true,
+          json: async () => ({ ...fixture, games: { repo: g } })
+        })) as unknown as typeof fetch
+      })
+      const profile = await api.createProfile('repo', 'T')
+      await expect(api.tsInstall('repo', profile.id, 'Own-Mod')).rejects.toThrow(
+        'R.E.P.O. has no Thunderstore listing.'
+      )
+      await expect(api.tsSearch('repo', query())).rejects.toThrow(
+        'R.E.P.O. has no Thunderstore listing.'
+      )
+    })
+
+    const query = (over = {}) => ({
+      text: '',
+      categories: [],
+      sort: 'name' as const,
+      includeDeprecated: false,
+      includeNsfw: false,
+      offset: 0,
+      limit: 1,
+      ...over
+    })
+
+    test('check updates and update', async () => {
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      expect(await api.tsCheckUpdates('repo', profile.id)).toEqual([])
+      packages = [
+        rawPkg('Own', 'Mod', ['1.1.0', '1.0.0'], ['Dep-Lib-1.0.0']),
+        rawPkg('Dep', 'Lib', ['1.0.0'])
+      ]
+      blobs.set(dl('Own-Mod', '1.1.0'), zipOf('Mod', '1.1.0'))
+      CHUNK = 'https://ts.test/chunk-2' // content-addressed: new content, new URL
+      await api.tsRefresh('repo')
+      expect(await api.tsCheckUpdates('repo', profile.id)).toEqual([
+        { modId: 'Own-Mod', fullName: 'Own-Mod', current: '1.0.0', latest: '1.1.0' }
+      ])
+      const r = await api.tsUpdate('repo', profile.id, ['Own-Mod', 'local-thing'])
+      expect(r.installed.map((m) => m.id)).toEqual(['Own-Mod'])
+      const mods = (await api.listProfiles('repo'))[0].mods
+      expect(mods.find((m) => m.id === 'Own-Mod')?.version).toBe('1.1.0')
+      expect(await api.tsCheckUpdates('repo', profile.id)).toEqual([])
+    })
+
+    test('search is paged; the index stays in memory; refresh failure serves stale cache', async () => {
+      const api = make()
+      const a = await api.tsSearch('repo', query())
+      expect(a.items).toHaveLength(1)
+      expect(a.total).toBe(2)
+      expect(a.stale).toBe(false)
+      const calls = tsFetch.mock.calls.length
+      await api.tsSearch('repo', query({ text: 'lib' }))
+      expect(await api.tsGetPackage('repo', 'Own-Mod')).not.toBeNull()
+      expect(await api.tsGetPackage('repo', 'Nope-Nope')).toBeNull()
+      expect(tsFetch.mock.calls.length).toBe(calls)
+      offline = true
+      const r = await api.tsRefresh('repo')
+      expect(r.stale).toBe(true)
+      const b = await api.tsSearch('repo', query())
+      expect(b.stale).toBe(true)
+      expect(b.items).toHaveLength(1)
+    })
+  })
+
   test('HML_METHODS covers every HmlApi key', () => {
-    expect([...HML_METHODS].sort()).toEqual(Object.keys(createServices(deps)).sort())
+    expect([...HML_METHODS].sort()).toEqual(Object.keys(createServices(deps))
+        .filter((k) => !k.startsWith('ts'))
+        .sort()
+    )
   })
 })

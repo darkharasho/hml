@@ -82,6 +82,7 @@ app.whenReady().then(() => {
         devPath: devSnapshotPath
       }),
       platform: process.platform,
+      emit: () => {}, // wired to hml:event in Task 5
       home: homedir(),
       dialog: {
         async pickFiles({ title, filters }) {

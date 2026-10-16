@@ -5,10 +5,16 @@ import path from 'node:path'
 import type {
   Catalog,
   GameDef,
+  HmlEvent,
   InstalledMod,
   LaunchMode,
   LaunchWarning,
-  Settings
+  ModUpdate,
+  Settings,
+  TsInstallResult,
+  TsPackage,
+  TsQuery,
+  TsSearchResult
 } from '../shared/types'
 import type { GameSummary, HmlApi } from '../shared/ipc'
 import type { AppPaths } from './store/paths'
@@ -39,6 +45,16 @@ import {
   launchWarnings,
   NATIVE_LINUX_UNSUPPORTED
 } from './launch/launcher'
+import { loadPackageIndex, type TsIndex } from './thunderstore/packageIndex'
+import { allCategories, searchPackages } from './thunderstore/search'
+import {
+  compareVersions,
+  findUpdates,
+  installedVersions,
+  resolveInstall,
+  type PlannedPackage
+} from './thunderstore/resolve'
+import { downloadPackage } from './thunderstore/download'
 
 export interface DialogPort {
   pickFiles(opts: {
@@ -64,7 +80,30 @@ export interface ServiceDeps {
   spawn: SpawnPort
   /** Used for the Windows registry lookup of Steam (`reg query`). */
   execFile: ExecFilePort
+  /** Progress events for long operations (wired to the renderer in Task 5). */
+  emit(e: HmlEvent): void
 }
+
+export interface TsServices {
+  tsSearch(game: string, q: TsQuery): Promise<TsSearchResult>
+  tsRefresh(game: string): Promise<{ count: number; fetchedAt: string; stale: boolean }>
+  tsGetPackage(game: string, fullName: string): Promise<TsPackage | null>
+  tsInstall(
+    game: string,
+    profileId: string,
+    fullName: string,
+    version?: string
+  ): Promise<TsInstallResult>
+  tsCheckUpdates(game: string, profileId: string): Promise<ModUpdate[]>
+  tsUpdate(game: string, profileId: string, modIds: string[]): Promise<TsInstallResult>
+}
+
+interface LoadedIndex extends TsIndex {
+  stale: boolean
+  byName: Map<string, TsPackage>
+  categories: string[]
+}
+const INDEX_LRU = 2
 
 const DEFAULT_PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll'
 
@@ -80,7 +119,7 @@ async function assertZipFile(file: string): Promise<void> {
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export function createServices(deps: ServiceDeps): HmlApi {
+export function createServices(deps: ServiceDeps): HmlApi & TsServices {
   const { paths } = deps
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
 
@@ -171,7 +210,181 @@ export function createServices(deps: ServiceDeps): HmlApi {
     })
   }
 
+  // In-memory index per game label, least recently used evicted beyond INDEX_LRU.
+  const indexes = new Map<string, Promise<LoadedIndex>>()
+  const touchIndex = (label: string, p: Promise<LoadedIndex>): void => {
+    indexes.delete(label)
+    indexes.set(label, p)
+    while (indexes.size > INDEX_LRU) indexes.delete(indexes.keys().next().value as string)
+  }
+  function requireListing(def: GameDef): string {
+    if (def.packageIndex === null) throw new Error(`${def.displayName} has no Thunderstore listing.`)
+    return def.packageIndex
+  }
+  function loadIndex(def: GameDef, force: boolean): Promise<LoadedIndex> {
+    const indexUrl = requireListing(def)
+    const hit = indexes.get(def.label)
+    if (hit && !force) {
+      touchIndex(def.label, hit)
+      return hit
+    }
+    const p = loadPackageIndex({
+      paths,
+      label: def.label,
+      indexUrl,
+      fetch: deps.fetch,
+      force
+    }).then((idx) => ({
+      ...idx,
+      byName: new Map(idx.packages.map((pkg) => [pkg.fullName, pkg])),
+      categories: allCategories(idx.packages)
+    }))
+    const guarded = p.catch((e) => {
+      if (indexes.get(def.label) === guarded) {
+        indexes.delete(def.label)
+        if (hit) touchIndex(def.label, hit)
+      }
+      throw e
+    })
+    touchIndex(def.label, guarded)
+    return guarded
+  }
+  function requireInstallable(def: GameDef): void {
+    requireListing(def)
+    if (!def.supported) {
+      throw new Error(`${def.displayName} uses a mod loader HML doesn't support yet.`)
+    }
+  }
+
+  /** Installs a resolved plan in order (dependencies first), inside the profile's queue. */
+  async function installPlan(
+    def: GameDef,
+    profileId: string,
+    plan: PlannedPackage[]
+  ): Promise<InstalledMod[]> {
+    const catalog = await getCatalog()
+    const installed: InstalledMod[] = []
+    const total = plan.length
+    for (const [i, pkg] of plan.entries()) {
+      deps.emit({
+        type: 'progress',
+        message: `Installing ${pkg.name} ${pkg.version}`,
+        done: i,
+        total
+      })
+      try {
+        const data = await downloadPackage({
+          url: pkg.downloadUrl,
+          fullName: pkg.fullName,
+          version: pkg.version,
+          downloadsDir: paths.downloads,
+          fetch: deps.fetch
+        })
+        installed.push(
+          await installZip(
+            paths,
+            def,
+            catalog,
+            profileId,
+            data,
+            { kind: 'thunderstore', fullName: pkg.fullName },
+            { packageId: pkg.fullName, name: pkg.name, version: pkg.version }
+          )
+        )
+      } catch (e) {
+        throw new Error(`${pkg.fullName}: ${errMsg(e)}`, { cause: e })
+      }
+    }
+    deps.emit({ type: 'progress', message: 'Done', done: total, total })
+    return installed
+  }
+
+  async function loaderIds(def: GameDef): Promise<string[]> {
+    return (await getCatalog()).modloaderPackages
+      .filter((m) => m.loader === def.loader)
+      .map((m) => m.packageId)
+  }
+
+  const tsServices: TsServices = {
+    async tsSearch(game, q) {
+      const idx = await loadIndex(await requireGame(game), false)
+      return {
+        ...searchPackages(idx.packages, q),
+        categories: idx.categories,
+        fetchedAt: idx.fetchedAt,
+        stale: idx.stale
+      }
+    },
+
+    async tsRefresh(game) {
+      const idx = await loadIndex(await requireGame(game), true)
+      return { count: idx.packages.length, fetchedAt: idx.fetchedAt, stale: idx.stale }
+    },
+
+    async tsGetPackage(game, fullName) {
+      const idx = await loadIndex(await requireGame(game), false)
+      return idx.byName.get(fullName) ?? null
+    },
+
+    async tsInstall(game, profileId, fullName, version) {
+      const def = await requireGame(game)
+      requireInstallable(def)
+      const idx = await loadIndex(def, false)
+      const loaders = await loaderIds(def)
+      return serialize(game, profileId, async () => {
+        const profile = await getProfile(paths, game, profileId)
+        const { plan, skipped, missing } = resolveInstall(
+          idx.byName,
+          { fullName, version },
+          installedVersions(profile.mods, loaders)
+        )
+        return { installed: await installPlan(def, profileId, plan), skipped, missing }
+      })
+    },
+
+    async tsCheckUpdates(game, profileId) {
+      const def = await requireGame(game)
+      requireListing(def)
+      const idx = await loadIndex(def, false)
+      const profile = await getProfile(paths, game, profileId)
+      return findUpdates(profile.mods, idx.byName)
+    },
+
+    async tsUpdate(game, profileId, modIds) {
+      const def = await requireGame(game)
+      requireInstallable(def)
+      const idx = await loadIndex(def, false)
+      const loaders = await loaderIds(def)
+      return serialize(game, profileId, async () => {
+        const profile = await getProfile(paths, game, profileId)
+        const wanted = new Set(modIds)
+        const targets = findUpdates(profile.mods, idx.byName).filter((u) => wanted.has(u.modId))
+        const installedNow = installedVersions(profile.mods, loaders)
+        const plan: PlannedPackage[] = []
+        const skipped = new Set<string>()
+        const missing = new Set<string>()
+        for (const t of targets) {
+          const r = resolveInstall(idx.byName, { fullName: t.fullName }, installedNow)
+          for (const p of r.plan) {
+            const at = plan.findIndex((q) => q.fullName === p.fullName)
+            if (at === -1) plan.push(p)
+            else if (compareVersions(p.version, plan[at].version) > 0) plan[at] = p
+          }
+          r.skipped.forEach((s) => skipped.add(s))
+          r.missing.forEach((m) => missing.add(m))
+        }
+        const planned = new Set(plan.map((p) => p.fullName))
+        return {
+          installed: await installPlan(def, profileId, plan),
+          skipped: [...skipped].filter((s) => !planned.has(s)),
+          missing: [...missing]
+        }
+      })
+    }
+  }
+
   return {
+    ...tsServices,
     async searchGames(query: string): Promise<GameSummary[]> {
       const catalog = await getCatalog()
       const ranked = searchGames(catalog.games, query)
