@@ -31,7 +31,7 @@ function normalize(entry: string): string[] {
   const p = entry.replace(/\\/g, '/')
   if (p.startsWith('/') || /^[A-Za-z]:/.test(p)) throw new UnsafeEntryError(entry)
   const segs = p.split('/').filter((s) => s !== '' && s !== '.')
-  if (segs.includes('..')) throw new UnsafeEntryError(entry)
+  if (segs.length === 0 || segs.includes('..')) throw new UnsafeEntryError(entry)
   return segs
 }
 
@@ -63,7 +63,7 @@ export function planInstall(
   if (loaderPackage) {
     const files: PlannedFile[] = []
     for (const i of stripped) {
-      if (i.segs.length >= 2 && i.segs[0] === loaderPackage.rootFolder) {
+      if (i.segs.length >= 2 && eq(i.segs[0], loaderPackage.rootFolder)) {
         files.push({ from: i.from, to: i.segs.slice(1).join('/'), disableable: false })
       }
     }

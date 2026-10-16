@@ -104,4 +104,38 @@ describe('planInstall', () => {
       planInstall(['a.txt'], { packageId, rules: rules.map((r) => ({ ...r, isDefaultLocation: false })) })
     ).toThrow(/default/)
   })
+
+  test('rejects entries with no path segments', () => {
+    for (const e of ['', '.', './', '//']) {
+      expect(() => plan([e])).toThrow(UnsafeEntryError)
+    }
+  })
+
+  test('rejects drive and UNC variants', () => {
+    for (const e of ['C:\\x.dll', '\\\\srv\\x.dll', 'C:x.dll']) {
+      expect(() => plan([e])).toThrow(UnsafeEntryError)
+    }
+  })
+
+  test('loader rootFolder match is case-insensitive', () => {
+    const out = planInstall(['bepinexpack/winhttp.dll'], {
+      packageId,
+      rules,
+      loaderPackage: { packageId: 'BepInEx-BepInExPack', rootFolder: 'BepInExPack', loader: 'bepinex' }
+    }).files
+    expect(out).toEqual([{ from: 'bepinexpack/winhttp.dll', to: 'winhttp.dll', disableable: false }])
+  })
+
+  test('matches folders and extensions case-insensitively', () => {
+    expect(plan(['Plugins/A.dll'])[0].to).toBe('BepInEx/plugins/Author-Mod/A.dll')
+    expect(plan(['BEPINEX/plugins/A.dll', 'icon.png'])[0].to).toBe('BepInEx/plugins/Author-Mod/A.dll')
+    expect(plan(['X.MM.DLL'])[0].to).toBe('BepInEx/monomod/Author-Mod/X.MM.DLL')
+  })
+
+  test('strips repeated wrapper folders', () => {
+    expect(plan(['A/B/manifest.json', 'A/B/Mod.dll']).map((f) => f.to)).toEqual([
+      'BepInEx/plugins/Author-Mod/manifest.json',
+      'BepInEx/plugins/Author-Mod/Mod.dll'
+    ])
+  })
 })
