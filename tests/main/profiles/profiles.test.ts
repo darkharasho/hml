@@ -194,3 +194,9 @@ describe('profiles', () => {
     expect(slugifyProfileName('a'.repeat(63) + '.bbb')).toBe('a'.repeat(63))
   })
 })
+
+test('createProfile reserves the deploy lock id', async () => {
+  await expect(createProfile(paths, 'g', '__deploy__')).rejects.toThrow(
+    'That profile name is reserved.'
+  )
+})

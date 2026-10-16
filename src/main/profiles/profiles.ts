@@ -43,6 +43,8 @@ export async function createProfile(
 ): Promise<ProfileManifest> {
   assertSafe('game', game)
   const slug = slugifyProfileName(name)
+  // `__deploy__` is the deploy lock's key (see services.ts).
+  if (slug === '__deploy__') throw new Error('That profile name is reserved.')
   await fs.mkdir(paths.profilesDir(game), { recursive: true })
   for (let n = 1; ; n++) {
     const id = n === 1 ? slug : `${slug}-${n}`

@@ -1,6 +1,17 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
+import {
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  existsSync,
+  writeFileSync,
+  mkdirSync,
+  symlinkSync,
+  utimesSync,
+  statSync
+} from 'node:fs'
 import { promises as fsp } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
@@ -252,5 +263,159 @@ describe('deploy', () => {
 
   test('remove with nothing deployed is a no-op', async () => {
     await expect(removeDeployment(paths, game, gameDir)).resolves.toBeUndefined()
+  })
+
+  test('a retried remove never deletes an original the failed attempt restored', async () => {
+    writeFileSync(path.join(gameDir, 'a.esp'), 'original-a')
+    writeFileSync(path.join(gameDir, 'b.esp'), 'original-b')
+    await install(pid, 'nexus-1', { 'a.esp': 'A', 'b.esp': 'B' })
+    await deployProfile(paths, game, pid, gameDir)
+    await deleteProfile(paths, game.label, pid)
+    let calls = 0
+    const move = async (from: string, to: string): Promise<void> => {
+      if (++calls === 2) throw new Error('ENOSPC')
+      await fsp.rename(from, to)
+    }
+    await expect(removeDeployment(paths, game, gameDir, { move })).rejects.toThrow('ENOSPC')
+    await removeDeployment(paths, game, gameDir)
+    expect(read('a.esp')).toBe('original-a')
+    expect(read('b.esp')).toBe('original-b')
+    expect(existsSync(paths.deployment(game.label))).toBe(false)
+    expect(existsSync(paths.deployBackup(game.label))).toBe(false)
+  })
+
+  test('a half-finished restore copy is replaced from the backup on retry', async () => {
+    writeFileSync(path.join(gameDir, 'a.esp'), 'original-a')
+    await install(pid, 'nexus-1', { 'a.esp': 'A' })
+    await deployProfile(paths, game, pid, gameDir)
+    const move = async (_from: string, to: string): Promise<void> => {
+      writeFileSync(to, 'orig') // truncated copy, then the crash
+      throw new Error('crash')
+    }
+    await expect(removeDeployment(paths, game, gameDir, { move })).rejects.toThrow('crash')
+    await removeDeployment(paths, game, gameDir)
+    expect(read('a.esp')).toBe('original-a')
+  })
+
+  test('deploy refuses a symlinked folder that points outside the game before moving anything', async () => {
+    const outside = path.join(tmp, 'outside')
+    mkdirSync(outside)
+    writeFileSync(path.join(outside, 'a.esp'), 'outside original')
+    symlinkSync(outside, path.join(gameDir, 'Data'))
+    await install(pid, 'nexus-1', { 'Data/a.esp': 'A', 'Other/b.esp': 'B' })
+    await expect(deployProfile(paths, game, pid, gameDir)).rejects.toThrow(
+      /outside the game folder/
+    )
+    expect(readFileSync(path.join(outside, 'a.esp'), 'utf8')).toBe('outside original')
+    expect(readdirSync(outside)).toEqual(['a.esp'])
+    expect(existsSync(paths.deployment(game.label))).toBe(false)
+    expect(existsSync(paths.deployBackup(game.label))).toBe(false)
+    expect(has('Other')).toBe(false)
+  })
+
+  test('on a case-insensitive folder names differing in case are one entry; the flag is stored', async () => {
+    await install(pid, 'nexus-1', { 'A.ESP': 'one' })
+    await install(pid, 'nexus-2', { 'a.esp': 'two' })
+    await deployProfile(paths, game, pid, gameDir, { caseInsensitive: true })
+    const m = JSON.parse(readFileSync(paths.deployment(game.label), 'utf8'))
+    expect(m.foldCase).toBe(true)
+    expect(m.files).toHaveLength(1)
+    expect(m.files[0]).toMatchObject({ path: 'a.esp', mod: 'nexus-2' })
+    await removeDeployment(paths, game, gameDir)
+    expect(has('a.esp')).toBe(false)
+  })
+
+  test('case sensitivity is detected on the real folder and the probe is cleaned up', async () => {
+    await install(pid, 'nexus-1', { 'A.ESP': 'one' })
+    await deployProfile(paths, game, pid, gameDir)
+    const m = JSON.parse(readFileSync(paths.deployment(game.label), 'utf8'))
+    expect(typeof m.foldCase).toBe('boolean')
+    expect(readdirSync(gameDir).filter((n) => n.startsWith('.HML'))).toEqual([])
+  })
+
+  test('a cross-device backup and restore keeps the original mtime', async () => {
+    const orig = path.join(gameDir, 'a.esp')
+    writeFileSync(orig, 'original')
+    const old = new Date('2001-02-03T04:05:06Z')
+    utimesSync(orig, old, old)
+    await install(pid, 'nexus-1', { 'a.esp': 'A' })
+    const realRename = fsp.rename.bind(fsp)
+    vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (String(from).includes('deploy-backup') || String(to).includes('deploy-backup')) {
+        throw Object.assign(new Error('x'), { code: 'EXDEV' })
+      }
+      return realRename(from, to)
+    })
+    await deployProfile(paths, game, pid, gameDir)
+    await removeDeployment(paths, game, gameDir)
+    expect(read('a.esp')).toBe('original')
+    expect(Math.floor(statSync(orig).mtimeMs / 1000)).toBe(old.getTime() / 1000)
+  })
+
+  test('the cross-device fallback refuses a symlink', async () => {
+    const target = path.join(tmp, 'target.txt')
+    writeFileSync(target, 't')
+    symlinkSync(target, path.join(gameDir, 'a.esp'))
+    await install(pid, 'nexus-1', { 'a.esp': 'A' })
+    const realRename = fsp.rename.bind(fsp)
+    vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (String(to).includes('deploy-backup')) {
+        throw Object.assign(new Error('x'), { code: 'EXDEV' })
+      }
+      return realRename(from, to)
+    })
+    await expect(deployProfile(paths, game, pid, gameDir)).rejects.toThrow(/symbolic link/)
+    expect(readFileSync(target, 'utf8')).toBe('t')
+  })
+
+  test('in the backup phase an original and its identical-size backup keep the original', async () => {
+    writeFileSync(path.join(gameDir, 'a.esp'), 'original')
+    mkdirSync(paths.deployBackup(game.label), { recursive: true })
+    writeFileSync(path.join(paths.deployBackup(game.label), 'a.esp'), 'original')
+    writeFileSync(
+      paths.deployment(game.label),
+      JSON.stringify({
+        formatVersion: 1,
+        profileId: pid,
+        deployedAt: 'x',
+        gameDir,
+        phase: 'backup',
+        files: [{ path: 'a.esp', mod: 'nexus-1', size: -1, mtimeMs: -1, backedUp: false }],
+        createdDirs: []
+      })
+    )
+    await removeDeployment(paths, game, gameDir)
+    expect(read('a.esp')).toBe('original')
+    expect(existsSync(paths.deployBackup(game.label))).toBe(false)
+  })
+
+  test('copy progress is saved every 50 files so edits survive an interrupted deploy', async () => {
+    const files: Record<string, string> = {}
+    for (let i = 0; i < 60; i++) files[`f${String(i).padStart(2, '0')}.txt`] = 'x'
+    await install(pid, 'nexus-1', files)
+    const real = fsp.copyFile.bind(fsp)
+    let calls = 0
+    vi.spyOn(fsp, 'copyFile').mockImplementation(async (...a) => {
+      if (++calls === 57) throw new Error('crash')
+      return real(...a)
+    })
+    await expect(deployProfile(paths, game, pid, gameDir)).rejects.toThrow('crash')
+    vi.restoreAllMocks()
+    writeFileSync(path.join(gameDir, 'f00.txt'), 'edited in game, longer')
+    await removeDeployment(paths, game, gameDir)
+    expect(readFileSync(path.join(paths.profileDir(game.label, pid), 'f00.txt'), 'utf8')).toBe(
+      'edited in game, longer'
+    )
+    expect(has('f00.txt')).toBe(false)
+  })
+
+  test('remove names the missing folder and where the backups are', async () => {
+    await install(pid, 'nexus-1', { 'a.esp': 'A' })
+    await deployProfile(paths, game, pid, gameDir)
+    rmSync(gameDir, { recursive: true })
+    await expect(removeDeployment(paths, game, gameDir)).rejects.toThrow(
+      `HML's backups of your original game files are kept in ${paths.deployBackup(game.label)}. Restore the game folder to ${gameDir}, then try again.`
+    )
+    expect(existsSync(paths.deployment(game.label))).toBe(true)
   })
 })

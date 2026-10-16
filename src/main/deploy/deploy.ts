@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { DeploymentStatus, GameDef, InstalledMod } from '../../shared/types'
 import type { AppPaths } from '../store/paths'
@@ -6,8 +7,16 @@ import { readJson, writeJsonAtomic } from '../store/json'
 import { getProfile } from '../profiles/profiles'
 
 /** 'backup': originals are being moved aside, nothing deployed yet. 'copy': files are being
- * copied in. 'done': complete, sizes and mtimes are recorded. */
-type Phase = 'backup' | 'copy' | 'done'
+ * copied in. 'done': complete, sizes and mtimes are recorded. 'restoring': remove has deleted
+ * the deployed files and is putting originals back. */
+type Phase = 'backup' | 'copy' | 'done' | 'restoring'
+
+export interface DeployOptions {
+  /** Moves a file (used for backups and restores). Injectable for tests. */
+  move?: (from: string, to: string) => Promise<void>
+  /** Overrides case-sensitivity detection of the game folder. */
+  caseInsensitive?: boolean
+}
 
 interface DeployedFile {
   /** Path relative to the game folder, posix separators. */
@@ -25,6 +34,8 @@ interface DeploymentManifest {
   deployedAt: string
   gameDir: string
   phase?: Phase
+  /** The game folder treats names that differ only in case as the same file. */
+  foldCase?: boolean
   files: DeployedFile[]
   createdDirs: string[]
 }
@@ -60,8 +71,40 @@ async function moveFile(from: string, to: string): Promise<void> {
     await fs.rename(from, to)
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e
+    const st = await fs.lstat(from)
+    if (!st.isFile()) {
+      throw new Error(
+        `Can't move ${from} across drives: it is a ${st.isSymbolicLink() ? 'symbolic link' : 'folder'}.`,
+        { cause: e }
+      )
+    }
     await fs.copyFile(from, to)
+    await fs.utimes(to, st.atime, st.mtime)
     await fs.rm(from)
+  }
+}
+
+const isInside = (realRoot: string, p: string): boolean =>
+  p === realRoot || p.startsWith(realRoot + path.sep)
+
+/** True when the real location of p's parent folder is inside the real game folder. */
+async function parentInside(realRoot: string, p: string): Promise<boolean> {
+  try {
+    return isInside(realRoot, await fs.realpath(path.dirname(p)))
+  } catch {
+    return false
+  }
+}
+
+/** Whether names differing only in case are the same file in this folder. */
+async function detectCaseInsensitive(dir: string): Promise<boolean> {
+  const name = `.HML-Case-Probe-${randomUUID()}`
+  const probe = path.join(dir, name)
+  await fs.writeFile(probe, '')
+  try {
+    return (await lstat(path.join(dir, name.toLowerCase()))) !== null
+  } finally {
+    await fs.rm(probe, { force: true })
   }
 }
 
@@ -82,7 +125,8 @@ async function readManifest(paths: AppPaths, game: GameDef): Promise<DeploymentM
     profileId: m.profileId,
     deployedAt: typeof m.deployedAt === 'string' ? m.deployedAt : '',
     gameDir: m.gameDir,
-    phase: m.phase === 'copy' || m.phase === 'done' ? m.phase : 'backup',
+    phase: m.phase === 'copy' || m.phase === 'done' || m.phase === 'restoring' ? m.phase : 'backup',
+    foldCase: m.foldCase === true,
     files: m.files.filter(
       (f): f is DeployedFile =>
         typeof f === 'object' &&
@@ -120,7 +164,7 @@ function profileFile(mod: InstalledMod, rel: string): string {
 
 /** Copies files the game changed since deploy back into their mods in the profile. */
 async function copyBack(paths: AppPaths, game: GameDef, m: DeploymentManifest): Promise<void> {
-  if (m.phase !== 'done') return
+  if (m.phase !== 'done' && m.phase !== 'copy') return
   const profile = await getProfile(paths, game.label, m.profileId).catch(() => null)
   if (!profile) return
   const profileRoot = path.resolve(paths.profileDir(game.label, m.profileId))
@@ -144,43 +188,74 @@ async function copyBack(paths: AppPaths, game: GameDef, m: DeploymentManifest): 
 async function removeFromManifest(
   paths: AppPaths,
   game: GameDef,
-  m: DeploymentManifest
+  m: DeploymentManifest,
+  move: NonNullable<DeployOptions['move']>
 ): Promise<void> {
   const gameRoot = path.resolve(m.gameDir)
   const backupRoot = path.resolve(paths.deployBackup(game.label))
   if (!(await lstat(gameRoot))) {
     throw new Error(
-      `The folder ${gameRoot} no longer exists, so HML can't remove the deployment from it.`
+      `The folder ${gameRoot} no longer exists. HML's backups of your original game files are kept in ${backupRoot}. Restore the game folder to ${gameRoot}, then try again.`
     )
   }
+  const realRoot = await fs.realpath(gameRoot)
   await copyBack(paths, game, m)
 
-  const entries = m.files
-    .map((f) => ({ f, game: within(gameRoot, f.path), backup: within(backupRoot, f.path) }))
-    .filter((e): e is { f: DeployedFile; game: string; backup: string } => !!e.game && !!e.backup)
+  const fold = (p: string): string => (m.foldCase ? p.toLowerCase() : p)
+  const seen = new Set<string>()
+  const entries: { f: DeployedFile; game: string; backup: string }[] = []
+  for (const f of m.files) {
+    const g = within(gameRoot, f.path)
+    const b = within(backupRoot, f.path)
+    if (!g || !b || seen.has(fold(f.path))) continue
+    seen.add(fold(f.path))
+    entries.push({ f, game: g, backup: b })
+  }
 
   // Before the backup phase finished nothing was copied, so a file at the path may be the
-  // user's original. Only afterwards is a file at a planned path HML's.
+  // user's original. A backed-up entry whose backup is gone was already restored, so what is
+  // there is the original. While restoring, only files that still have a backup are replaced
+  // (this also clears a half-finished restore copy).
   if (m.phase !== 'backup') {
     for (const e of entries) {
+      const hasBackup = (await lstat(e.backup)) !== null
+      if (e.f.backedUp && !hasBackup) continue
+      if (m.phase === 'restoring' && !(e.f.backedUp && hasBackup)) continue
+      if (!(await parentInside(realRoot, e.game))) continue
       const st = await lstat(e.game)
       if (st && !st.isDirectory()) await fs.rm(e.game)
     }
+    if (m.phase !== 'restoring') {
+      m.phase = 'restoring'
+      await writeJsonAtomic(paths.deployment(game.label), m)
+    }
   }
   for (const e of entries) {
-    if (!(await lstat(e.backup))) continue
-    if (await lstat(e.game)) {
+    const backup = await lstat(e.backup)
+    if (!backup) continue
+    const there = await lstat(e.game)
+    if (there) {
+      // A crash during the backup copy leaves the original and a full copy of it.
+      if (m.phase === 'backup' && there.isFile() && backup.isFile() && there.size === backup.size) {
+        await fs.rm(e.backup)
+        continue
+      }
       throw new Error(`Can't restore ${e.f.path}: something else is in its place.`)
     }
     await fs.mkdir(path.dirname(e.game), { recursive: true })
-    await moveFile(e.backup, e.game)
+    if (!(await parentInside(realRoot, e.game))) {
+      throw new Error(`Can't restore ${e.f.path}: its folder points outside the game folder.`)
+    }
+    await move(e.backup, e.game)
   }
   // Created dirs, deepest first; rmdir refuses a folder that isn't empty.
   const dirs = m.createdDirs
     .map((d) => within(gameRoot, d))
     .filter((d): d is string => d !== null)
     .sort((a, b) => b.length - a.length)
-  for (const d of dirs) await fs.rmdir(d).catch(() => undefined)
+  for (const d of dirs) {
+    if (await parentInside(realRoot, d)) await fs.rmdir(d).catch(() => undefined)
+  }
   // Empty backup folders, deepest first.
   const backupDirs = new Set<string>()
   for (const e of entries) {
@@ -203,12 +278,13 @@ async function removeFromManifest(
 export async function removeDeployment(
   paths: AppPaths,
   game: GameDef,
-  gameDir: string
+  gameDir: string,
+  opts: DeployOptions = {}
 ): Promise<void> {
   void gameDir
   const m = await readManifest(paths, game)
   if (!m) return
-  await removeFromManifest(paths, game, m)
+  await removeFromManifest(paths, game, m, opts.move ?? moveFile)
 }
 
 /**
@@ -220,8 +296,10 @@ export async function deployProfile(
   paths: AppPaths,
   game: GameDef,
   profileId: string,
-  gameDir: string
+  gameDir: string,
+  opts: DeployOptions = {}
 ): Promise<DeploymentStatus> {
+  const move = opts.move ?? moveFile
   const gameRoot = path.resolve(gameDir)
   if (!(await fs.stat(gameRoot).catch(() => null))?.isDirectory()) {
     throw new Error(`The game folder ${gameRoot} doesn't exist.`)
@@ -230,13 +308,16 @@ export async function deployProfile(
   const profileRoot = path.resolve(paths.profileDir(game.label, profileId))
   const backupRoot = path.resolve(paths.deployBackup(game.label))
 
-  await removeDeployment(paths, game, gameDir)
+  await removeDeployment(paths, game, gameDir, opts)
   if (await lstat(backupRoot)) {
     throw new Error(`${backupRoot} already exists. Remove it before deploying.`)
   }
 
-  // Later mods overwrite earlier ones. Windows paths are case-insensitive.
-  const fold = (p: string): string => (process.platform === 'win32' ? p.toLowerCase() : p)
+  // Later mods overwrite earlier ones. On a case-insensitive folder, names that differ only in
+  // case are one file.
+  const foldCase = opts.caseInsensitive ?? (await detectCaseInsensitive(gameRoot))
+  const fold = (p: string): string => (foldCase ? p.toLowerCase() : p)
+  const realRoot = await fs.realpath(gameRoot)
   const chosen = new Map<string, { rel: string; mod: string; src: string }>()
   for (const mod of profile.mods) {
     if (!mod.enabled) continue
@@ -265,6 +346,9 @@ export async function deployProfile(
       const st = await fs.stat(path.join(gameRoot, ...parts.slice(0, i))).catch(() => null)
       if (!st) createdDirs.push(rel)
       else if (!st.isDirectory()) throw new Error(`${rel} is a file in the game folder.`)
+      else if (!isInside(realRoot, await fs.realpath(path.join(gameRoot, ...parts.slice(0, i))))) {
+        throw new Error(`${rel} points outside the game folder, so HML won't deploy into it.`)
+      }
     }
     const st = await lstat(path.join(gameRoot, ...parts))
     if (st?.isDirectory()) throw new Error(`${p.rel} is a folder in the game folder.`)
@@ -277,6 +361,7 @@ export async function deployProfile(
     deployedAt: new Date().toISOString(),
     gameDir: gameRoot,
     phase: 'backup',
+    foldCase,
     files: planned.map((p) => ({
       path: p.rel,
       mod: p.mod,
@@ -295,14 +380,15 @@ export async function deployProfile(
     if (!backup) throw new Error(`Unsafe path: ${f.path}`)
     await fs.mkdir(path.dirname(backup), { recursive: true })
     if (await lstat(backup)) throw new Error(`A backup of ${f.path} already exists.`)
-    await moveFile(path.join(gameRoot, ...f.path.split('/')), backup)
+    await move(path.join(gameRoot, ...f.path.split('/')), backup)
     f.backedUp = true
   }
   manifest.phase = 'copy'
   await save()
 
-  const realRoot = await fs.realpath(gameRoot)
-  for (const rel of createdDirs) await fs.mkdir(path.join(gameRoot, ...rel.split('/')))
+  for (const rel of createdDirs) {
+    await fs.mkdir(path.join(gameRoot, ...rel.split('/')), { recursive: true })
+  }
   for (const [i, p] of planned.entries()) {
     const dst = path.join(gameRoot, ...p.rel.split('/'))
     const realParent = await fs.realpath(path.dirname(dst))
@@ -313,6 +399,7 @@ export async function deployProfile(
     const st = await fs.stat(dst)
     manifest.files[i].size = st.size
     manifest.files[i].mtimeMs = st.mtimeMs
+    if ((i + 1) % 50 === 0) await save()
   }
   manifest.phase = 'done'
   await save()
