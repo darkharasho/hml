@@ -35,12 +35,13 @@ function normalize(entry: string): string[] {
   return segs
 }
 
-function stripWrappers(items: Item[], rules: InstallRule[]): Item[] {
+function stripWrappers(items: Item[], rules: InstallRule[], stopName?: string): Item[] {
   const routeNames = rules.map((r) => lastSegment(r.route))
   let cur = items
   while (cur.length > 0 && cur.every((i) => i.segs.length >= 2)) {
     const w = cur[0].segs[0]
-    if (!cur.every((i) => i.segs[0] === w)) break
+    if (!cur.every((i) => eq(i.segs[0], w))) break
+    if (stopName && eq(w, stopName)) break
     if (eq(w, 'bepinex') || routeNames.some((n) => eq(n, w))) break
     cur = cur.map((i) => ({ ...i, segs: i.segs.slice(1) }))
   }
@@ -58,8 +59,7 @@ export function planInstall(
 ): InstallPlan {
   const { packageId, rules, loaderPackage } = opts
   const items = entries.map((from) => ({ from, segs: normalize(from) }))
-  // The loader rootFolder is itself the wrapper, so skip stripping for loader packages.
-  const stripped = loaderPackage ? items : stripWrappers(items, rules)
+  const stripped = stripWrappers(items, rules, loaderPackage?.rootFolder)
 
   if (loaderPackage) {
     const files: PlannedFile[] = []

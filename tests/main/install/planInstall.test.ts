@@ -138,4 +138,15 @@ describe('planInstall', () => {
       'BepInEx/plugins/Author-Mod/Mod.dll'
     ])
   })
+
+  test('loader package wrapped in an outer folder', () => {
+    const out = planInstall(['Pack-5.4/BepInExPack/winhttp.dll', 'Pack-5.4/icon.png'], {
+      packageId,
+      rules,
+      loaderPackage: { packageId: 'BepInEx-BepInExPack', rootFolder: 'BepInExPack', loader: 'bepinex' }
+    }).files
+    expect(out).toEqual([
+      { from: 'Pack-5.4/BepInExPack/winhttp.dll', to: 'winhttp.dll', disableable: false }
+    ])
+  })
 })
