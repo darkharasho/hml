@@ -114,7 +114,7 @@ export async function saveProfile(paths: AppPaths, m: ProfileManifest): Promise<
     await fs.stat(paths.profileDir(m.game, m.id))
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new Error(`Profile not found: ${m.game}/${m.id}`)
+      throw new Error(`Profile not found: ${m.game}/${m.id}`, { cause: e })
     }
     throw e
   }

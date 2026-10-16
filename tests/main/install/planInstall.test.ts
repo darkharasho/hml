@@ -10,7 +10,7 @@ const eco = JSON.parse(
 const rules: InstallRule[] = eco.games.repo.r2modman[0].installRules
 const packageId = 'Author-Mod'
 
-const plan = (entries: string[]) => planInstall(entries, { packageId, rules }).files
+const plan = (entries: string[]): ReturnType<typeof planInstall>['files'] => planInstall(entries, { packageId, rules }).files
 
 describe('planInstall', () => {
   test('root files go to default plugins subdir', () => {

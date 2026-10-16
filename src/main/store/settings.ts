@@ -26,9 +26,9 @@ function stringRecord(v: unknown): Record<string, string> | null {
   return out
 }
 
-export async function loadSettings(paths: AppPaths): Promise<Settings> {
+/** Coerce untrusted data to the Settings shape: unknown keys and wrongly typed values are dropped. */
+export function normalizeSettings(stored: unknown): Settings {
   const defaults = defaultSettings()
-  const stored = await readJson<unknown>(paths.settings)
   if (!isPlainObject(stored)) return defaults
   return {
     gamePathOverrides: stringRecord(stored.gamePathOverrides) ?? defaults.gamePathOverrides,
@@ -41,8 +41,12 @@ export async function loadSettings(paths: AppPaths): Promise<Settings> {
   }
 }
 
+export async function loadSettings(paths: AppPaths): Promise<Settings> {
+  return normalizeSettings(await readJson<unknown>(paths.settings))
+}
+
 export async function saveSettings(paths: AppPaths, s: Settings): Promise<void> {
-  await writeJsonAtomic(paths.settings, s)
+  await writeJsonAtomic(paths.settings, normalizeSettings(s))
 }
 
 async function isDirectory(p: string): Promise<boolean> {

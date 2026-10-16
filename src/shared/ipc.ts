@@ -54,5 +54,5 @@ export function channel(method: keyof HmlApi): string {
 
 /** Electron wraps handler errors as "Error invoking remote method 'ch': Error: msg". */
 export function stripIpcErrorPrefix(message: string): string {
-  return message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '')
+  return message.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '')
 }

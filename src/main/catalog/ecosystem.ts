@@ -93,19 +93,21 @@ export function parseEcosystem(json: unknown): Catalog {
   }
 }
 
+/** Match rank for a non-empty lowercase query: 0 exact, 1 prefix, 2 substring, -1 no match. */
+export function rankGame(g: GameDef, q: string): number {
+  const names = [g.displayName, g.label, ...g.searchStrings].map((s) => s.toLowerCase())
+  if (names.some((n) => n === q)) return 0
+  if (names.some((n) => n.startsWith(q))) return 1
+  if (names.some((n) => n.includes(q))) return 2
+  return -1
+}
+
 export function searchGames(games: GameDef[], query: string): GameDef[] {
   const q = query.trim().toLowerCase()
   const byName = (a: GameDef, b: GameDef): number => a.displayName.localeCompare(b.displayName)
   if (!q) return [...games].sort(byName)
-  const rank = (g: GameDef): number => {
-    const names = [g.displayName, g.label, ...g.searchStrings].map((s) => s.toLowerCase())
-    if (names.some((n) => n === q)) return 0
-    if (names.some((n) => n.startsWith(q))) return 1
-    if (names.some((n) => n.includes(q))) return 2
-    return -1
-  }
   return games
-    .map((g) => ({ g, r: rank(g) }))
+    .map((g) => ({ g, r: rankGame(g, q) }))
     .filter((x) => x.r >= 0)
     .sort((a, b) => a.r - b.r || byName(a.g, b.g))
     .map((x) => x.g)

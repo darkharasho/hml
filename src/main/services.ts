@@ -6,7 +6,7 @@ import type { Catalog, GameDef, InstalledMod, LaunchMode, Settings } from '../sh
 import type { GameSummary, HmlApi } from '../shared/ipc'
 import type { AppPaths } from './store/paths'
 import { loadCatalog } from './catalog/catalog'
-import { searchGames } from './catalog/ecosystem'
+import { rankGame, searchGames } from './catalog/ecosystem'
 import { findSteamRoot, isFlatpakSteam, steamRootCandidates } from './steam/steam'
 import { loadSettings, resolveGameDir, saveSettings } from './store/settings'
 import {
@@ -106,6 +106,7 @@ export function createServices(deps: ServiceDeps): HmlApi {
   }
 
   async function setGamePath(label: string, dir: string | null): Promise<void> {
+    await requireGame(label)
     const settings = await loadSettings(paths)
     const overrides = { ...settings.gamePathOverrides }
     if (dir) overrides[label] = dir
@@ -126,7 +127,12 @@ export function createServices(deps: ServiceDeps): HmlApi {
           installDir: await resolveGameDir(g, settings, steamRoot).catch(() => null)
         }))
       )
-      return [...summaries.filter((g) => g.installDir), ...summaries.filter((g) => !g.installDir)]
+      // Rank group first, then installed before not installed, then searchGames' own order.
+      const q = query.trim().toLowerCase()
+      return summaries
+        .map((g, i) => ({ g, i, rank: q ? rankGame(g, q) : 0, installed: g.installDir ? 0 : 1 }))
+        .sort((a, b) => a.rank - b.rank || a.installed - b.installed || a.i - b.i)
+        .map((x) => x.g)
     },
 
     async refreshCatalog(): Promise<void> {
@@ -212,6 +218,9 @@ export function createServices(deps: ServiceDeps): HmlApi {
     },
 
     async launch(game: string, profileId: string | null, mode: LaunchMode): Promise<void> {
+      if (mode !== 'modded' && mode !== 'vanilla') {
+        throw new Error(`Unknown launch mode: ${String(mode)}`)
+      }
       if (mode === 'modded' && !profileId) {
         throw new Error('Select a profile to launch with mods.')
       }

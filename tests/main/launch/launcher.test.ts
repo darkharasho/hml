@@ -116,7 +116,11 @@ describe('launchWarnings', () => {
 })
 
 describe('launch', () => {
-  function fakeChild(event: 'spawn' | 'error') {
+  function fakeChild(event: 'spawn' | 'error'): {
+    calls: unknown[][]
+    child: EventEmitter & { unref: ReturnType<typeof vi.fn> }
+    fake: never
+  } {
     const calls: unknown[][] = []
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() })
     const fake = ((...a: unknown[]) => {
