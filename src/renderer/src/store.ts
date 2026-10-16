@@ -263,7 +263,10 @@ export const useStore = create<State>()((set, get) => {
     } finally {
       set((s) => {
         const running = [...s[list]]
-        for (const k of keys) running.splice(running.indexOf(k), 1)
+        for (const k of keys) {
+          const at = running.indexOf(k)
+          if (at !== -1) running.splice(at, 1)
+        }
         const next = { ...s, [list]: running }
         return { [list]: running, progress: progressIdle(next) ? null : s.progress }
       })
