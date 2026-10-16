@@ -140,6 +140,18 @@ describe('GET /v1/profiles/:code', () => {
 })
 
 describe('routing', () => {
+  it('400 on malformed percent-encoding, 405 PUT with code, 404 nested path', async () => {
+    const { env } = makeEnv()
+    const bad = await worker.fetch(new Request(`${URL_}/%E0%A4%A`), env)
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toEqual({ error: 'bad-code' })
+    const put = await worker.fetch(
+      new Request(`${URL_}/ABCDEFGHJK`, { method: 'PUT', body: 'x' }),
+      env
+    )
+    expect(put.status).toBe(405)
+    expect((await worker.fetch(new Request(`${URL_}/ABC/x`), env)).status).toBe(404)
+  })
   it('405 and 404', async () => {
     const { env } = makeEnv()
     expect((await worker.fetch(new Request(URL_, { method: 'PUT', body: 'x' }), env)).status).toBe(

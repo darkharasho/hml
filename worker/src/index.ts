@@ -81,7 +81,13 @@ async function upload(req: Request, env: Env, rand?: (n: number) => Uint8Array):
 }
 
 async function download(raw: string, env: Env): Promise<Response> {
-  const code = normalizeCode(decodeURIComponent(raw))
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    return err(400, 'bad-code')
+  }
+  const code = normalizeCode(decoded)
   if (!code) return err(400, 'bad-code')
   const bytes = await env.PROFILES.get(`p:${code}`, 'arrayBuffer')
   if (!bytes) return err(404, 'not-found')
