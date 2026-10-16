@@ -31,22 +31,15 @@
           "settingsIdentifier": "REPO",
           "packageIndex": "https://thunderstore.io/c/repo/api/v1/package-listing-index/",
           "steamFolderName": "REPO",
-          "exeNames": [
-            "REPO.exe"
-          ],
+          "exeNames": ["REPO.exe"],
           "gameInstanceType": "game",
           "gameSelectionDisplayMode": "visible",
-          "additionalSearchStrings": [
-            "repo",
-            "回收行动"
-          ],
+          "additionalSearchStrings": ["repo", "回收行动"],
           "packageLoader": "bepinex",
           "installRules": [
             {
               "route": "BepInEx/plugins",
-              "defaultFileExtensions": [
-                ".dll"
-              ],
+              "defaultFileExtensions": [".dll"],
               "trackingMethod": "subdir",
               "subRoutes": [],
               "isDefaultLocation": true
@@ -67,9 +60,7 @@
             },
             {
               "route": "BepInEx/monomod",
-              "defaultFileExtensions": [
-                ".mm.dll"
-              ],
+              "defaultFileExtensions": [".mm.dll"],
               "trackingMethod": "subdir",
               "subRoutes": [],
               "isDefaultLocation": false
@@ -153,20 +144,14 @@
         "sections": {
           "mods": {
             "name": "Mods",
-            "excludeCategories": [
-              "modpacks"
-            ]
+            "excludeCategories": ["modpacks"]
           },
           "modpacks": {
             "name": "Modpacks",
-            "requireCategories": [
-              "modpacks"
-            ]
+            "requireCategories": ["modpacks"]
           }
         },
-        "autolistPackageIds": [
-          "BepInEx-BepInExPack"
-        ],
+        "autolistPackageIds": ["BepInEx-BepInExPack"],
         "discordUrl": "https://discord.gg/vPJtKhYAFe",
         "wikiUrl": "https://repomods.com/"
       }
@@ -209,41 +194,29 @@
           "settingsIdentifier": "BONELAB",
           "packageIndex": "https://thunderstore.io/c/bonelab/api/v1/package-listing-index/",
           "steamFolderName": "BONELAB",
-          "exeNames": [
-            "BONELAB_Steam_Windows64.exe",
-            "BONELAB_Oculus_Windows64.exe"
-          ],
+          "exeNames": ["BONELAB_Steam_Windows64.exe", "BONELAB_Oculus_Windows64.exe"],
           "gameInstanceType": "game",
           "gameSelectionDisplayMode": "visible",
-          "additionalSearchStrings": [
-            "BL",
-            "骨骼实验室"
-          ],
+          "additionalSearchStrings": ["BL", "骨骼实验室"],
           "packageLoader": "melonloader",
           "installRules": [
             {
               "route": "Mods",
-              "defaultFileExtensions": [
-                ".dll"
-              ],
+              "defaultFileExtensions": [".dll"],
               "trackingMethod": "state",
               "subRoutes": [],
               "isDefaultLocation": true
             },
             {
               "route": "Plugins",
-              "defaultFileExtensions": [
-                ".plugin.dll"
-              ],
+              "defaultFileExtensions": [".plugin.dll"],
               "trackingMethod": "state",
               "subRoutes": [],
               "isDefaultLocation": false
             },
             {
               "route": "UserLibs",
-              "defaultFileExtensions": [
-                ".lib.dll"
-              ],
+              "defaultFileExtensions": [".lib.dll"],
               "trackingMethod": "state",
               "subRoutes": [],
               "isDefaultLocation": false
@@ -255,9 +228,7 @@
               "subRoutes": [
                 {
                   "route": "Managed",
-                  "defaultFileExtensions": [
-                    ".managed.dll"
-                  ],
+                  "defaultFileExtensions": [".managed.dll"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
@@ -279,82 +250,63 @@
               "subRoutes": [
                 {
                   "route": "CustomItems",
-                  "defaultFileExtensions": [
-                    ".melon"
-                  ],
+                  "defaultFileExtensions": [".melon"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
                 },
                 {
                   "route": "CustomMaps",
-                  "defaultFileExtensions": [
-                    ".bcm",
-                    ".cma"
-                  ],
+                  "defaultFileExtensions": [".bcm", ".cma"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
                 },
                 {
                   "route": "PlayerModels",
-                  "defaultFileExtensions": [
-                    ".body"
-                  ],
+                  "defaultFileExtensions": [".body"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
                 },
                 {
                   "route": "CustomLoadScreens",
-                  "defaultFileExtensions": [
-                    ".load"
-                  ],
+                  "defaultFileExtensions": [".load"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
                 },
                 {
                   "route": "Music",
-                  "defaultFileExtensions": [
-                    ".wav"
-                  ],
+                  "defaultFileExtensions": [".wav"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
                 },
                 {
                   "route": "Food",
-                  "defaultFileExtensions": [
-                    ".food"
-                  ],
+                  "defaultFileExtensions": [".food"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
                 },
                 {
                   "route": "Scoreworks",
-                  "defaultFileExtensions": [
-                    ".sw"
-                  ],
+                  "defaultFileExtensions": [".sw"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
                 },
                 {
                   "route": "CustomSkins",
-                  "defaultFileExtensions": [
-                    ".png"
-                  ],
+                  "defaultFileExtensions": [".png"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
                 },
                 {
                   "route": "Grenades",
-                  "defaultFileExtensions": [
-                    ".grenade"
-                  ],
+                  "defaultFileExtensions": [".grenade"],
                   "trackingMethod": "state",
                   "subRoutes": [],
                   "isDefaultLocation": false
@@ -393,12 +345,7 @@
               "isDefaultLocation": false
             }
           ],
-          "relativeFileExclusions": [
-            "manifest.json",
-            "icon.png",
-            "README.md",
-            "LICENCE"
-          ]
+          "relativeFileExclusions": ["manifest.json", "icon.png", "README.md", "LICENCE"]
         }
       ],
       "thunderstore": {

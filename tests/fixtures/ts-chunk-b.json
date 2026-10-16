@@ -9,10 +9,7 @@
     "is_pinned": false,
     "is_deprecated": false,
     "has_nsfw_content": false,
-    "categories": [
-      "Mods",
-      "Tools"
-    ],
+    "categories": ["Mods", "Tools"],
     "versions": [
       {
         "name": "Delta",
@@ -20,9 +17,7 @@
         "description": "Delta desc 1.0.0",
         "icon": "https://ccdn.thunderstore.io/Delta.png",
         "version_number": "1.0.0",
-        "dependencies": [
-          "BepInEx-BepInExPack-5.4.2100"
-        ],
+        "dependencies": ["BepInEx-BepInExPack-5.4.2100"],
         "download_url": "https://thunderstore.io/package/download/A/Delta/1.0.0/",
         "downloads": 7,
         "date_created": "2026-01-01T00:00:00Z",
@@ -42,9 +37,7 @@
     "is_pinned": true,
     "is_deprecated": false,
     "has_nsfw_content": true,
-    "categories": [
-      "Mods"
-    ],
+    "categories": ["Mods"],
     "versions": [
       {
         "name": "Eps",
@@ -52,9 +45,7 @@
         "description": "Eps desc 3.0.0",
         "icon": "https://ccdn.thunderstore.io/Eps.png",
         "version_number": "3.0.0",
-        "dependencies": [
-          "BepInEx-BepInExPack-5.4.2100"
-        ],
+        "dependencies": ["BepInEx-BepInExPack-5.4.2100"],
         "download_url": "https://thunderstore.io/package/download/A/Eps/3.0.0/",
         "downloads": 10,
         "date_created": "2026-01-01T00:00:00Z",
@@ -74,9 +65,7 @@
     "is_pinned": false,
     "is_deprecated": false,
     "has_nsfw_content": false,
-    "categories": [
-      "Mods"
-    ],
+    "categories": ["Mods"],
     "versions": [
       {
         "name": "Zeta",
@@ -84,9 +73,7 @@
         "description": "Zeta desc 1.0.0",
         "icon": "https://ccdn.thunderstore.io/Zeta.png",
         "version_number": "1.0.0",
-        "dependencies": [
-          "BepInEx-BepInExPack-5.4.2100"
-        ],
+        "dependencies": ["BepInEx-BepInExPack-5.4.2100"],
         "download_url": "https://thunderstore.io/package/download/A/Zeta/1.0.0/",
         "downloads": 10,
         "date_created": "2026-01-01T00:00:00Z",

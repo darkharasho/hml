@@ -3,6 +3,7 @@ import type {
   GhInstallResult,
   GhUpdate,
   GhUpdateMode,
+  DeploymentStatus,
   InstalledMod,
   LaunchMode,
   LaunchWarning,
@@ -70,6 +71,11 @@ export interface HmlApi {
   nxGetDomain(game: string): Promise<string | null>
   /** Sets (after validating) or, with null, clears the Nexus domain override for a game. */
   nxSetDomain(game: string, domain: string | null): Promise<void>
+  /** Copies the profile's enabled mods into the game folder (deploy games), replacing any current deployment. */
+  deployProfile(game: string, profileId: string): Promise<DeploymentStatus>
+  /** Restores the game folder to how it was before the deployment. */
+  removeDeployment(game: string): Promise<void>
+  getDeployment(game: string): Promise<DeploymentStatus | null>
   /** Opens an https Thunderstore or GitHub link in the system browser; anything else throws. */
   openExternal(url: string): Promise<void>
 }
@@ -109,6 +115,9 @@ const METHOD_TABLE = {
   addNexusGame: true,
   nxGetDomain: true,
   nxSetDomain: true,
+  deployProfile: true,
+  removeDeployment: true,
+  getDeployment: true,
   openExternal: true
 } satisfies Record<keyof HmlApi, true>
 

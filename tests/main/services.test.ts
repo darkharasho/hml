@@ -147,6 +147,51 @@ describe('services', () => {
     expect((await api.getSettings()).nexusDomainOverrides).toEqual({})
   })
 
+  test('deployment api: exact errors, warnings, deploy and remove', async () => {
+    deps.fetch = (async (url: string) => {
+      const json = url.includes('graphql')
+        ? { data: { game: { id: '1', name: 'Skyrim SE', domainName: 'skyrimspecialedition' } } }
+        : fixture
+      return { ok: true, status: 200, headers: new Headers(), json: async () => json }
+    }) as unknown as typeof fetch
+    const api = createServices(deps)
+    const label = 'nexus-skyrimspecialedition'
+    await api.addNexusGame('skyrimspecialedition')
+    const profile = await api.createProfile(label, 'p')
+    await expect(api.deployProfile(label, profile.id)).rejects.toThrow('Set the game folder first.')
+    await expect(api.removeDeployment(label)).rejects.toThrow('Set the game folder first.')
+    await expect(api.getDeployment(label)).rejects.toThrow('Set the game folder first.')
+    expect(await api.getLaunchWarnings(label, profile.id)).toEqual(['game-not-found'])
+    for (const call of [
+      () => api.deployProfile('repo', 'x'),
+      () => api.removeDeployment('repo'),
+      () => api.getDeployment('repo')
+    ]) {
+      await expect(call()).rejects.toThrow("R.E.P.O. doesn't use deployment.")
+    }
+    await expect(api.launch(label, profile.id, 'modded')).rejects.toThrow(
+      "HML doesn't launch Skyrim SE. Deploy mods, then start the game as usual."
+    )
+
+    const dir = path.join(tmp, 'skyrim')
+    mkdirSync(dir)
+    await api.setGamePath(label, dir)
+    expect(await api.getLaunchWarnings(label, profile.id)).toEqual([])
+    expect(await api.getDeployment(label)).toBeNull()
+    const zip = zipSync({ 'Data/a.esp': strToU8('esp') })
+    const file = path.join(tmp, 'm.zip')
+    writeFileSync(file, zip)
+    picked = [file]
+    await api.installFromFile(label, profile.id)
+    const status = await api.deployProfile(label, profile.id)
+    expect(status).toMatchObject({ profileId: profile.id, profileName: 'p', files: 1 })
+    expect(readFileSync(path.join(dir, 'Data/a.esp'), 'utf8')).toBe('esp')
+    expect(await api.getDeployment(label)).toMatchObject({ files: 1 })
+    await api.removeDeployment(label)
+    expect(existsSync(path.join(dir, 'Data'))).toBe(false)
+    expect(await api.getDeployment(label)).toBeNull()
+  })
+
   test('installFromFile installs selected zip as local source with sha256', async () => {
     const api = createServices(deps)
     const profile = await api.createProfile('repo', 'Test')

@@ -58,6 +58,8 @@ export async function launchWarnings(input: {
   profileDir: string
   steamRoot: string
 }): Promise<LaunchWarning[]> {
+  // HML doesn't launch deploy games, so none of the launch checks apply.
+  if (input.game.loader === 'deploy') return input.gameDir === null ? ['game-not-found'] : []
   const warnings: LaunchWarning[] = []
   if (input.gameDir === null) warnings.push('game-not-found')
   if (input.game.loader !== 'bepinex') warnings.push('loader-unsupported')

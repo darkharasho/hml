@@ -40,3 +40,8 @@ test('HML_METHODS lists the nexus game methods', () => {
     expect.arrayContaining(['addNexusGame', 'nxGetDomain', 'nxSetDomain'])
   )
 })
+test('HML_METHODS lists the deployment methods', () => {
+  expect(HML_METHODS).toEqual(
+    expect.arrayContaining(['deployProfile', 'removeDeployment', 'getDeployment'])
+  )
+})

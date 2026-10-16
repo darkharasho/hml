@@ -54,6 +54,7 @@ import { downloadPackage } from './thunderstore/download'
 import { parseAllowedExternalUrl } from './security'
 import type { SecretPort } from './github/token'
 import { createGithubServices, unsupportedLoaderMessage } from './github/service'
+import { deployProfile, deploymentStatus, removeDeployment } from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
 import { gameByDomain } from './nexus/api'
 import { findInstalledMod } from '../shared/modIdentity'
@@ -215,6 +216,16 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
       if (tails.get(key) === tail) tails.delete(key)
     })
     return run
+  }
+
+  const DEPLOY_KEY = '__deploy__'
+  /** A deploy game and its folder (the override), or the readable reason it has none. */
+  async function requireDeploy(game: string): Promise<{ def: GameDef; gameDir: string }> {
+    const def = await requireGame(game)
+    if (def.loader !== 'deploy') throw new Error(`${def.displayName} doesn't use deployment.`)
+    const gameDir = (await loadSettings(paths)).gamePathOverrides[def.label]
+    if (!gameDir) throw new Error('Set the game folder first.')
+    return { def, gameDir }
   }
 
   async function setGamePath(label: string, dir: string | null): Promise<void> {
@@ -626,9 +637,38 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
       return serialize(game, profileId, () => uninstallMod(paths, def, profileId, modId))
     },
 
+    async deployProfile(game, profileId) {
+      const { def, gameDir } = await requireDeploy(game)
+      if (profileId === DEPLOY_KEY) throw new Error(`Profile not found: ${game}/${profileId}`)
+      // The profile key is the outer lock and the deploy key the inner one.
+      return serialize(game, profileId, () =>
+        serialize(game, DEPLOY_KEY, () => deployProfile(paths, def, profileId, gameDir))
+      )
+    },
+
+    async removeDeployment(game) {
+      const { def, gameDir } = await requireDeploy(game)
+      return serialize(game, DEPLOY_KEY, () => removeDeployment(paths, def, gameDir))
+    },
+
+    async getDeployment(game) {
+      const { def } = await requireDeploy(game)
+      return deploymentStatus(paths, def)
+    },
+
     async getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]> {
       const def = await requireGame(game)
       await getProfile(paths, game, profileId)
+      if (def.loader === 'deploy') {
+        const dir = (await loadSettings(paths)).gamePathOverrides[def.label] ?? null
+        return launchWarnings({
+          platform,
+          game: def,
+          gameDir: dir,
+          profileDir: paths.profileDir(game, profileId),
+          steamRoot: ''
+        })
+      }
       const steamRoot = await getSteamRoot()
       if (!steamRoot) return ['steam-not-found']
       const gameDir = await resolveGameDir(def, await loadSettings(paths), steamRoot)
@@ -645,10 +685,15 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
       if (mode !== 'modded' && mode !== 'vanilla') {
         throw new Error(`Unknown launch mode: ${String(mode)}`)
       }
+      const def = await requireGame(game)
+      if (def.loader === 'deploy') {
+        throw new Error(
+          `HML doesn't launch ${def.displayName}. Deploy mods, then start the game as usual.`
+        )
+      }
       if (mode === 'modded' && !profileId) {
         throw new Error('Select a profile to launch with mods.')
       }
-      const def = await requireGame(game)
       if (!def.steamAppId)
         throw new Error(`${def.displayName} has no Steam app id, so HML cannot launch it.`)
       const steamRoot = await getSteamRoot()

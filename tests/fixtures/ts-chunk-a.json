@@ -9,9 +9,7 @@
     "is_pinned": false,
     "is_deprecated": false,
     "has_nsfw_content": false,
-    "categories": [
-      "Mods"
-    ],
+    "categories": ["Mods"],
     "versions": [
       {
         "name": "Alpha",
@@ -19,9 +17,7 @@
         "description": "Alpha desc 1.1.0",
         "icon": "https://ccdn.thunderstore.io/Alpha.png",
         "version_number": "1.1.0",
-        "dependencies": [
-          "BepInEx-BepInExPack-5.4.2100"
-        ],
+        "dependencies": ["BepInEx-BepInExPack-5.4.2100"],
         "download_url": "https://thunderstore.io/package/download/A/Alpha/1.1.0/",
         "downloads": 10,
         "date_created": "2026-01-01T00:00:00Z",
@@ -35,9 +31,7 @@
         "description": "Alpha desc 1.0.0",
         "icon": "https://ccdn.thunderstore.io/Alpha.png",
         "version_number": "1.0.0",
-        "dependencies": [
-          "BepInEx-BepInExPack-5.4.2100"
-        ],
+        "dependencies": ["BepInEx-BepInExPack-5.4.2100"],
         "download_url": "https://thunderstore.io/package/download/A/Alpha/1.0.0/",
         "downloads": 5,
         "date_created": "2026-01-01T00:00:00Z",
@@ -57,9 +51,7 @@
     "is_pinned": false,
     "is_deprecated": false,
     "has_nsfw_content": false,
-    "categories": [
-      "Mods"
-    ],
+    "categories": ["Mods"],
     "versions": [
       {
         "name": "Beta",
@@ -67,9 +59,7 @@
         "description": "Beta desc 2.0.0",
         "icon": "https://ccdn.thunderstore.io/Beta.png",
         "version_number": "2.0.0",
-        "dependencies": [
-          "BepInEx-BepInExPack-5.4.2100"
-        ],
+        "dependencies": ["BepInEx-BepInExPack-5.4.2100"],
         "download_url": "https://thunderstore.io/package/download/A/Beta/2.0.0/",
         "downloads": 99,
         "date_created": "2026-01-01T00:00:00Z",
@@ -83,9 +73,7 @@
         "description": "Beta desc 1.0.0",
         "icon": "https://ccdn.thunderstore.io/Beta.png",
         "version_number": "1.0.0",
-        "dependencies": [
-          "BepInEx-BepInExPack-5.4.2100"
-        ],
+        "dependencies": ["BepInEx-BepInExPack-5.4.2100"],
         "download_url": "https://thunderstore.io/package/download/A/Beta/1.0.0/",
         "downloads": 10,
         "date_created": "2026-01-01T00:00:00Z",
@@ -105,9 +93,7 @@
     "is_pinned": false,
     "is_deprecated": true,
     "has_nsfw_content": false,
-    "categories": [
-      "Mods"
-    ],
+    "categories": ["Mods"],
     "versions": [
       {
         "name": "Gamma",
@@ -115,9 +101,7 @@
         "description": "Gamma desc 0.1.0",
         "icon": "https://ccdn.thunderstore.io/Gamma.png",
         "version_number": "0.1.0",
-        "dependencies": [
-          "BepInEx-BepInExPack-5.4.2100"
-        ],
+        "dependencies": ["BepInEx-BepInExPack-5.4.2100"],
         "download_url": "https://thunderstore.io/package/download/A/Gamma/0.1.0/",
         "downloads": 10,
         "date_created": "2026-01-01T00:00:00Z",
