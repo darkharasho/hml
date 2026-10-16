@@ -8,6 +8,7 @@ import {
   displayName,
   initials,
   newestVersion,
+  ownInstalledVersion,
   relativeTime,
   splitDependency,
   UNSUPPORTED_LOADER
@@ -77,7 +78,9 @@ export function PackageDetail({
   const mods = profile?.mods ?? []
   const selected = pkg.versions.find((v) => v.version === version)
   const installedVersion = findInstalledMod(mods, pkg.fullName, loaderIds)?.version ?? null
-  const isInstalled = installedVersion === version
+  // Only the package's own copy blocks installing that version; a GitHub stand-in that provides
+  // it can be replaced by the Thunderstore package at any version.
+  const isInstalled = ownInstalledVersion(pkg, mods, loaderIds) === version
 
   async function openWebsite(): Promise<void> {
     try {

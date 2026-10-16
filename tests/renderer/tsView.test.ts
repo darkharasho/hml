@@ -6,6 +6,7 @@ import {
   initials,
   installState,
   installToast,
+  ownInstalledVersion,
   progressLabel,
   relativeTime,
   splitDependency
@@ -202,5 +203,35 @@ describe('installToast', () => {
       kind: 'info',
       message: 'Installed X — replaced X — missing dependencies: A-B-1.0.0'
     })
+  })
+})
+
+describe('ownInstalledVersion', () => {
+  const lib = pkg('Dep-Lib', ['2.0.0', '1.0.0'])
+  const loaders = ['BepInEx-BepInExPack']
+  it('is the version of the Thunderstore copy or a local loader alias', () => {
+    expect(ownInstalledVersion(lib, [mod('Dep-Lib', '1.0.0')], [])).toBe('1.0.0')
+    const local: InstalledMod = {
+      ...mod('BepInExPack', '5.4.2100'),
+      source: { kind: 'local', fileName: 'BepInExPack.zip', sha256: '' }
+    }
+    const bep = pkg('BepInEx-BepInExPack', ['5.4.2100'])
+    expect(ownInstalledVersion(bep, [local], loaders)).toBe('5.4.2100')
+    expect(ownInstalledVersion(lib, [], [])).toBeNull()
+  })
+  it('ignores a GitHub mod that provides the package, so it can be installed over it', () => {
+    const gh: InstalledMod = {
+      ...mod('gh-lib', '2.0.0'),
+      source: {
+        kind: 'github',
+        owner: 'gh',
+        repo: 'lib',
+        tag: 'v2.0.0',
+        asset: 'a.zip',
+        sha256: ''
+      },
+      provides: ['Dep-Lib']
+    }
+    expect(ownInstalledVersion(lib, [gh], [])).toBeNull()
   })
 })

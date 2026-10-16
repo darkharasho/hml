@@ -7,7 +7,7 @@ import type {
   TsVersion
 } from '../../shared/types'
 import { compareVersions } from '../../shared/version'
-import { findInstalledMod } from '../../shared/modIdentity'
+import { findInstalledMod, loaderAlias } from '../../shared/modIdentity'
 
 export const UNSUPPORTED_LOADER = 'Mod loader not supported yet'
 
@@ -75,6 +75,24 @@ export function installState(
   if (latest && compareVersions(mod.version, latest) < 0)
     return { kind: 'update', installed: mod.version, latest }
   return { kind: 'installed', version: mod.version }
+}
+
+/**
+ * The installed version of the package's own copy: a Thunderstore mod, or a local loader under its
+ * alias. Null for none, and for a mod that only provides the package (a GitHub stand-in), so the
+ * Thunderstore package can be installed over it at any version.
+ */
+export function ownInstalledVersion(
+  pkg: TsPackage,
+  mods: InstalledMod[],
+  loaderPackageIds: readonly string[] = []
+): string | null {
+  const mod = findInstalledMod(mods, pkg.fullName, loaderPackageIds)
+  if (!mod) return null
+  const own =
+    mod.source.kind === 'thunderstore' ||
+    (mod.source.kind === 'local' && mod.id === loaderAlias(pkg.fullName))
+  return own ? mod.version : null
 }
 
 /**
