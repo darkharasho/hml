@@ -189,6 +189,8 @@ export function Menu({
   position?: string
 }): React.JSX.Element {
   const [up, setUp] = useState(false)
+  const [alignLeft, setAlignLeft] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
   const hasChecks = items.some((i) => i.checked !== undefined)
   const ref = useRef<HTMLDetailsElement>(null)
   useEffect(() => {
@@ -215,6 +217,9 @@ export function Menu({
         if (e.currentTarget.open) {
           const r = e.currentTarget.getBoundingClientRect()
           setUp(r.bottom > window.innerHeight * 0.6)
+          // A wide menu near the window's left edge opens rightward instead of being clipped.
+          const menuWidth = menuRef.current?.offsetWidth ?? 0
+          setAlignLeft(r.right - menuWidth < 0)
         }
       }}
     >
@@ -226,8 +231,9 @@ export function Menu({
         <Icon name="dots" />
       </summary>
       <div
+        ref={menuRef}
         role="menu"
-        className={`absolute right-0 z-20 min-w-40 overflow-hidden whitespace-nowrap rounded-lg border border-line bg-raised py-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)] ${
+        className={`absolute ${alignLeft ? 'left-0' : 'right-0'} z-20 min-w-40 overflow-hidden whitespace-nowrap rounded-lg border border-line bg-raised py-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)] ${
           up ? 'bottom-full mb-1' : 'mt-1'
         }`}
       >
