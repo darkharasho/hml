@@ -58,7 +58,8 @@ export function planInstall(
 ): InstallPlan {
   const { packageId, rules, loaderPackage } = opts
   const items = entries.map((from) => ({ from, segs: normalize(from) }))
-  const stripped = stripWrappers(items, rules)
+  // The loader rootFolder is itself the wrapper, so skip stripping for loader packages.
+  const stripped = loaderPackage ? items : stripWrappers(items, rules)
 
   if (loaderPackage) {
     const files: PlannedFile[] = []
