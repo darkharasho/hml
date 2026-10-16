@@ -23,6 +23,7 @@ export interface LaunchPlan {
 }
 
 const DOORSTOP_FILES = ['winhttp.dll', 'doorstop_config.ini', '.doorstop_version']
+const IL2CPP_PRELOADER = 'BepInEx/core/BepInEx.Unity.IL2CPP.dll'
 
 /** '/home/u/a b' -> 'Z:\\home\\u\\a b' (Proton maps the host root to Z:). */
 export function toProtonPath(p: string): string {
@@ -51,9 +52,18 @@ export function buildLaunchPlan(i: LaunchInput): LaunchPlan {
     return { command, args, copyToGameDir: [] }
   }
 
-  const rel = i.preloaderRelPath.split('/')
-  let target = p.join(i.profileDir, ...rel)
-  if (i.proton) target = toProtonPath(target)
-  args.push(enableFlag, 'true', targetFlag, target)
+  const hostPath = (...segments: string[]): string => {
+    const joined = p.join(i.profileDir, ...segments)
+    return i.proton ? toProtonPath(joined) : joined
+  }
+  args.push(enableFlag, 'true', targetFlag, hostPath(...i.preloaderRelPath.split('/')))
+  if (i.doorstop === 4 && i.preloaderRelPath === IL2CPP_PRELOADER) {
+    args.push(
+      '--doorstop-clr-corlib-dir',
+      hostPath('dotnet'),
+      '--doorstop-clr-runtime-coreclr-path',
+      hostPath('dotnet', 'coreclr.dll')
+    )
+  }
   return { command, args, copyToGameDir: [...DOORSTOP_FILES] }
 }

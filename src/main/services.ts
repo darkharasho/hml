@@ -2,12 +2,25 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { Catalog, GameDef, InstalledMod, LaunchMode, Settings } from '../shared/types'
+import type {
+  Catalog,
+  GameDef,
+  InstalledMod,
+  LaunchMode,
+  LaunchWarning,
+  Settings
+} from '../shared/types'
 import type { GameSummary, HmlApi } from '../shared/ipc'
 import type { AppPaths } from './store/paths'
 import { loadCatalog } from './catalog/catalog'
 import { rankGame, searchGames } from './catalog/ecosystem'
-import { findSteamRoot, isFlatpakSteam, steamRootCandidates } from './steam/steam'
+import {
+  findSteamRoot,
+  isFlatpakSteam,
+  readWinSteamPath,
+  steamRootCandidates,
+  type ExecFilePort
+} from './steam/steam'
 import { loadSettings, resolveGameDir, saveSettings } from './store/settings'
 import {
   createProfile,
@@ -23,7 +36,8 @@ import {
   findPreloader,
   isProtonGame,
   launch,
-  launchWarnings
+  launchWarnings,
+  NATIVE_LINUX_UNSUPPORTED
 } from './launch/launcher'
 
 export interface DialogPort {
@@ -48,6 +62,8 @@ export interface ServiceDeps {
   dialog: DialogPort
   shell: ShellPort
   spawn: SpawnPort
+  /** Used for the Windows registry lookup of Steam (`reg query`). */
+  execFile: ExecFilePort
 }
 
 const DEFAULT_PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll'
@@ -91,7 +107,8 @@ export function createServices(deps: ServiceDeps): HmlApi {
     steamRootPromise ??= (async () => {
       const { steamRootOverride } = await loadSettings(paths)
       if (steamRootOverride) return steamRootOverride
-      return findSteamRoot(steamRootCandidates(deps.platform, deps.home))
+      const winSteamPath = deps.platform === 'win32' ? await readWinSteamPath(deps.execFile) : null
+      return findSteamRoot(steamRootCandidates(deps.platform, deps.home, winSteamPath ?? undefined))
     })().catch((e) => {
       steamRootPromise = null
       throw e
@@ -235,7 +252,7 @@ export function createServices(deps: ServiceDeps): HmlApi {
       return serialize(game, profileId, () => uninstallMod(paths, def, profileId, modId))
     },
 
-    async getLaunchWarnings(game: string, profileId: string): Promise<string[]> {
+    async getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]> {
       const def = await requireGame(game)
       await getProfile(paths, game, profileId)
       const steamRoot = await getSteamRoot()
@@ -269,20 +286,26 @@ export function createServices(deps: ServiceDeps): HmlApi {
       if (def.loader !== 'bepinex') {
         throw new Error(`${def.displayName} uses a mod loader HML does not support yet.`)
       }
-      // Vanilla launches only toggle doorstop off, so no profile directory is involved.
+      const proton = await isProtonGame(platform, gameDir, def.exeNames)
+      if (mode === 'modded' && platform === 'linux' && !proton) {
+        throw new Error(NATIVE_LINUX_UNSUPPORTED)
+      }
+      // Vanilla launches only toggle doorstop off, so no profile directory is involved; the
+      // doorstop version comes from the ini already in the game install.
       const profileDir = profileId ? paths.profileDir(game, profileId) : paths.gameDir(game)
       if (profileId) await getProfile(paths, game, profileId)
-      const preloader = (profileId && (await findPreloader(profileDir))) || DEFAULT_PRELOADER
+      const modded = mode === 'modded'
+      const preloader = (modded && (await findPreloader(profileDir))) || DEFAULT_PRELOADER
       const plan = buildLaunchPlan({
         platform,
         mode,
         steamRoot,
         steamAppId: def.steamAppId,
         flatpak: isFlatpakSteam(steamRoot),
-        proton: await isProtonGame(platform, gameDir, def.exeNames),
+        proton,
         profileDir,
         preloaderRelPath: preloader,
-        doorstop: await detectDoorstopVersion(profileDir)
+        doorstop: await detectDoorstopVersion(modded ? profileDir : gameDir)
       })
       try {
         await launch(plan, profileDir, gameDir, deps.spawn)
@@ -302,6 +325,8 @@ export function createServices(deps: ServiceDeps): HmlApi {
     async saveSettings(s: Settings): Promise<void> {
       await saveSettings(paths, s)
       invalidateSteamRoot()
-    }
+    },
+
+    getGamesDataDir: async () => paths.gamesDir
   }
 }

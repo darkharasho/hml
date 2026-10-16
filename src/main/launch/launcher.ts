@@ -1,9 +1,12 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { DoorstopVersion, GameDef } from '../../shared/types'
-import { readLaunchOptions } from '../steam/steam'
+import type { DoorstopVersion, GameDef, LaunchWarning } from '../../shared/types'
+import { isFlatpakSteam, readLaunchOptions } from '../steam/steam'
 import type { LaunchPlan } from './launchPlan'
+
+export const NATIVE_LINUX_UNSUPPORTED =
+  "Native Linux games aren't supported for modded launch yet. Force Proton for this game in Steam (Properties → Compatibility)."
 
 const PRELOADERS = [
   'BepInEx/core/BepInEx.Preloader.dll',
@@ -54,18 +57,21 @@ export async function launchWarnings(input: {
   gameDir: string | null
   profileDir: string
   steamRoot: string
-}): Promise<string[]> {
-  const warnings: string[] = []
+}): Promise<LaunchWarning[]> {
+  const warnings: LaunchWarning[] = []
   if (input.gameDir === null) warnings.push('game-not-found')
   if (input.game.loader !== 'bepinex') warnings.push('loader-unsupported')
   if ((await findPreloader(input.profileDir)) === null) warnings.push('no-bepinex')
-  if (
-    input.gameDir !== null &&
-    input.game.steamAppId &&
-    (await isProtonGame(input.platform, input.gameDir, input.game.exeNames))
-  ) {
-    const opts = await readLaunchOptions(input.steamRoot, input.game.steamAppId)
-    if (!opts || !opts.includes('winhttp=n,b')) warnings.push('proton-launch-options')
+  if (input.gameDir !== null) {
+    const proton = await isProtonGame(input.platform, input.gameDir, input.game.exeNames)
+    if (input.platform === 'linux' && !proton) warnings.push('native-linux-unsupported')
+    if (proton && input.game.steamAppId) {
+      const opts = await readLaunchOptions(input.steamRoot, input.game.steamAppId)
+      if (!opts || !opts.includes('winhttp=n,b')) warnings.push('proton-launch-options')
+    }
+  }
+  if (input.platform === 'linux' && isFlatpakSteam(input.steamRoot)) {
+    warnings.push('flatpak-filesystem')
   }
   return warnings
 }

@@ -127,6 +127,9 @@ export async function renameProfile(
   id: string,
   name: string
 ): Promise<void> {
+  if (typeof name !== 'string' || !name.trim()) {
+    throw new Error('Profile name must not be empty.')
+  }
   const m = await getProfile(paths, game, id)
   await saveProfile(paths, { ...m, name })
 }

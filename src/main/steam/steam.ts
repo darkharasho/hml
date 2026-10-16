@@ -4,6 +4,25 @@ import { parseVdf, vdfGet, type VdfObject } from './vdf'
 
 const FLATPAK_MARKER = '/.var/app/com.valvesoftware.Steam/'
 
+/** Runs a program without a shell and resolves with its stdout (rejects on failure). */
+export type ExecFilePort = (file: string, args: string[]) => Promise<{ stdout: string }>
+
+/** Steam's install path from the registry (HKCU\Software\Valve\Steam, SteamPath), or null. */
+export async function readWinSteamPath(execFile: ExecFilePort): Promise<string | null> {
+  try {
+    const { stdout } = await execFile('reg', [
+      'query',
+      'HKCU\\Software\\Valve\\Steam',
+      '/v',
+      'SteamPath'
+    ])
+    const match = /^[ \t]*SteamPath[ \t]+REG_(?:EXPAND_)?SZ[ \t]*(.*)$/im.exec(stdout)
+    return match?.[1].trim() || null
+  } catch {
+    return null
+  }
+}
+
 export function steamRootCandidates(
   platform: NodeJS.Platform,
   home: string,

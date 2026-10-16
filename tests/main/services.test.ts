@@ -30,6 +30,7 @@ let steamRoot: string
 let gameDir: string
 let picked: string[]
 let spawned: { cmd: string; args: string[] }[]
+let execCalls: { file: string; args: string[] }[]
 let deps: ServiceDeps
 
 const dialog: DialogPort = {
@@ -49,6 +50,7 @@ beforeEach(() => {
   )
   picked = []
   spawned = []
+  execCalls = []
   const paths = makePaths(path.join(tmp, 'data'))
   mkdirSync(paths.root, { recursive: true })
   writeFileSync(paths.settings, JSON.stringify({ steamRootOverride: steamRoot }))
@@ -60,6 +62,10 @@ beforeEach(() => {
     home: tmp,
     dialog,
     shell: { openPath: async () => '' },
+    execFile: async (file, args) => {
+      execCalls.push({ file, args })
+      throw new Error('reg is not available in tests')
+    },
     spawn: ((cmd: string, args: string[]) => {
       spawned.push({ cmd, args })
       const child = new EventEmitter() as EventEmitter & { unref(): void }
@@ -153,6 +159,7 @@ describe('services', () => {
   })
 
   test('launch modded spawns steam with doorstop args', async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
     const api = createServices(deps)
     const profile = await api.createProfile('repo', 'Test')
     await api.launch('repo', profile.id, 'modded')
@@ -164,6 +171,117 @@ describe('services', () => {
       '--doorstop-enable',
       'true'
     ])
+  })
+
+  test('vanilla launch detects doorstop 4 from the game install dir', async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    writeFileSync(path.join(gameDir, 'doorstop_config.ini'), '[General]\nenabled = true\n')
+    const api = createServices(deps)
+    await api.launch('repo', null, 'vanilla')
+    expect(spawned).toEqual([
+      { cmd: 'steam', args: ['-applaunch', '3241660', '--doorstop-enabled', 'false'] }
+    ])
+  })
+
+  test('vanilla launch with a profile still reads the game install dir ini', async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    writeFileSync(path.join(gameDir, 'doorstop_config.ini'), '[General]\nenabled = true\n')
+    const api = createServices(deps)
+    const profile = await api.createProfile('repo', 'Test')
+    await api.launch('repo', profile.id, 'vanilla')
+    expect(spawned[0].args).toEqual(['-applaunch', '3241660', '--doorstop-enabled', 'false'])
+  })
+
+  test('modded launch still detects doorstop from the profile ini', async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    writeFileSync(path.join(gameDir, 'doorstop_config.ini'), '[General]\nenabled = true\n')
+    const api = createServices(deps)
+    const profile = await api.createProfile('repo', 'Test')
+    await api.launch('repo', profile.id, 'modded')
+    expect(spawned[0].args.slice(2, 4)).toEqual(['--doorstop-enable', 'true'])
+  })
+
+  test('modded launch of a native Linux game is a readable error; vanilla still works', async () => {
+    const api = createServices(deps)
+    const profile = await api.createProfile('repo', 'Test')
+    await expect(api.launch('repo', profile.id, 'modded')).rejects.toThrow(
+      "Native Linux games aren't supported for modded launch yet. Force Proton for this game in Steam (Properties → Compatibility)."
+    )
+    expect(spawned).toHaveLength(0)
+    expect(await api.getLaunchWarnings('repo', profile.id)).toContain('native-linux-unsupported')
+    await api.launch('repo', null, 'vanilla')
+    expect(spawned).toHaveLength(1)
+  })
+
+  describe('windows registry Steam lookup', () => {
+    test('uses HKCU SteamPath from reg query before the default path', async () => {
+      writeFileSync(deps.paths.settings, JSON.stringify({ steamRootOverride: null }))
+      const api = createServices({
+        ...deps,
+        platform: 'win32',
+        execFile: async (file, args) => {
+          execCalls.push({ file, args })
+          return {
+            stdout: `\r\nHKEY_CURRENT_USER\\Software\\Valve\\Steam\r\n    SteamPath    REG_SZ    ${steamRoot}\r\n`
+          }
+        }
+      })
+      expect((await api.searchGames('repo'))[0].installDir).toBe(gameDir)
+      expect(execCalls).toEqual([
+        { file: 'reg', args: ['query', 'HKCU\\Software\\Valve\\Steam', '/v', 'SteamPath'] }
+      ])
+    })
+
+    test('a failing reg query falls back to the default path', async () => {
+      writeFileSync(deps.paths.settings, JSON.stringify({ steamRootOverride: null }))
+      const api = createServices({ ...deps, platform: 'win32' })
+      expect((await api.searchGames('repo'))[0].installDir).toBeNull()
+      expect(execCalls).toHaveLength(1)
+    })
+
+    test('reg is not queried on linux', async () => {
+      writeFileSync(deps.paths.settings, JSON.stringify({ steamRootOverride: null }))
+      await createServices(deps).searchGames('repo')
+      expect(execCalls).toHaveLength(0)
+    })
+  })
+
+  test('flatpak Steam adds the flatpak-filesystem warning and exposes the games data dir', async () => {
+    const flatpakRoot = path.join(
+      tmp,
+      '.var',
+      'app',
+      'com.valvesoftware.Steam',
+      '.local',
+      'share',
+      'Steam'
+    )
+    const flatpakGame = path.join(flatpakRoot, 'steamapps', 'common', 'REPO')
+    mkdirSync(flatpakGame, { recursive: true })
+    writeFileSync(
+      path.join(flatpakRoot, 'steamapps', 'libraryfolders.vdf'),
+      '"libraryfolders"\n{\n}\n'
+    )
+    writeFileSync(
+      path.join(flatpakRoot, 'steamapps', 'appmanifest_3241660.acf'),
+      '"AppState"\n{\n"installdir" "REPO"\n}\n'
+    )
+    writeFileSync(path.join(flatpakGame, 'REPO.exe'), '')
+    writeFileSync(deps.paths.settings, JSON.stringify({ steamRootOverride: null }))
+    const api = createServices(deps)
+    const profile = await api.createProfile('repo', 'Test')
+    expect(await api.getLaunchWarnings('repo', profile.id)).toContain('flatpak-filesystem')
+    expect(await api.getGamesDataDir()).toBe(path.join(deps.paths.root, 'games'))
+    // Warning only: the modded launch still goes ahead.
+    await api.launch('repo', profile.id, 'modded')
+    expect(spawned[0].cmd).toBe('flatpak')
+  })
+
+  test('native Steam has no flatpak-filesystem warning', async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    const api = createServices(deps)
+    const profile = await api.createProfile('repo', 'Test')
+    expect(await api.getLaunchWarnings('repo', profile.id)).not.toContain('flatpak-filesystem')
   })
 
   test('launch modded without a profile is a readable error', async () => {

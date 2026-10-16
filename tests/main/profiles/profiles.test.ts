@@ -33,7 +33,13 @@ const exists = (p: string): Promise<boolean> =>
 describe('profiles', () => {
   test('creates dir and manifest', async () => {
     const m = await createProfile(paths, 'repo', 'Default')
-    expect(m).toMatchObject({ formatVersion: 1, id: 'default', name: 'Default', game: 'repo', mods: [] })
+    expect(m).toMatchObject({
+      formatVersion: 1,
+      id: 'default',
+      name: 'Default',
+      game: 'repo',
+      mods: []
+    })
     expect(Number.isNaN(Date.parse(m.createdAt))).toBe(false)
     const dir = paths.profileDir('repo', 'default')
     expect(await exists(path.join(dir, 'hml-profile.json'))).toBe(true)
@@ -70,6 +76,16 @@ describe('profiles', () => {
     const m = await getProfile(paths, 'repo', 'default')
     expect(m.id).toBe('default')
     expect(m.name).toBe('Renamed')
+  })
+
+  test('rename rejects non-string and blank names, keeping the old name', async () => {
+    await createProfile(paths, 'repo', 'Default')
+    for (const bad of [42, null, undefined, {}, '', '   \t']) {
+      await expect(
+        renameProfile(paths, 'repo', 'default', bad as unknown as string)
+      ).rejects.toThrow('Profile name must not be empty.')
+    }
+    expect((await getProfile(paths, 'repo', 'default')).name).toBe('Default')
   })
 
   test('saveProfile persists mods', async () => {
@@ -128,7 +144,14 @@ describe('profiles', () => {
     await expect(createProfile(paths, '../repo', 'n')).rejects.toThrow()
     await expect(deleteProfile(paths, '../games', 'default')).rejects.toThrow()
     await expect(
-      saveProfile(paths, { formatVersion: 1, id: '../x', name: 'n', game: 'repo', createdAt: '', mods: [] })
+      saveProfile(paths, {
+        formatVersion: 1,
+        id: '../x',
+        name: 'n',
+        game: 'repo',
+        createdAt: '',
+        mods: []
+      })
     ).rejects.toThrow()
     expect(await exists(path.join(victim, 'keep.txt'))).toBe(true)
     expect(await exists(paths.profileDir('repo', 'default'))).toBe(true)

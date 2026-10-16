@@ -1,6 +1,12 @@
 import { create } from 'zustand'
 import type { GameSummary } from '../../shared/ipc'
-import type { InstalledMod, LaunchMode, ProfileManifest, Settings } from '../../shared/types'
+import type {
+  InstalledMod,
+  LaunchMode,
+  LaunchWarning,
+  ProfileManifest,
+  Settings
+} from '../../shared/types'
 import { api, errorMessage } from './api'
 
 export type ToastKind = 'error' | 'success' | 'info'
@@ -16,7 +22,7 @@ interface State {
   currentGame: GameSummary | null
   profiles: ProfileManifest[]
   currentProfile: string | null
-  warnings: string[]
+  warnings: LaunchWarning[]
   busy: boolean
   toasts: Toast[]
   settingsOpen: boolean

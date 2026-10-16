@@ -1,4 +1,11 @@
-import type { GameDef, InstalledMod, LaunchMode, ProfileManifest, Settings } from './types'
+import type {
+  GameDef,
+  InstalledMod,
+  LaunchMode,
+  LaunchWarning,
+  ProfileManifest,
+  Settings
+} from './types'
 
 export interface GameSummary extends GameDef {
   installDir: string | null
@@ -21,11 +28,13 @@ export interface HmlApi {
   installFromPaths(game: string, profileId: string, paths: string[]): Promise<InstalledMod[]>
   setModEnabled(game: string, profileId: string, modId: string, enabled: boolean): Promise<void>
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
-  getLaunchWarnings(game: string, profileId: string): Promise<string[]>
+  getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]>
   launch(game: string, profileId: string | null, mode: LaunchMode): Promise<void>
   openProfileFolder(game: string, profileId: string): Promise<void>
   getSettings(): Promise<Settings>
   saveSettings(s: Settings): Promise<void>
+  /** Absolute path of HML's per-game data dir (`<userData>/games`), for the Flatpak override. */
+  getGamesDataDir(): Promise<string>
 }
 
 // `satisfies` makes the compiler reject a missing or unknown method name.
@@ -46,7 +55,8 @@ const METHOD_TABLE = {
   launch: true,
   openProfileFolder: true,
   getSettings: true,
-  saveSettings: true
+  saveSettings: true,
+  getGamesDataDir: true
 } satisfies Record<keyof HmlApi, true>
 
 export const HML_METHODS = Object.keys(METHOD_TABLE) as (keyof HmlApi)[]

@@ -109,9 +109,37 @@ describe('launchWarnings', () => {
       'game-not-found',
       'no-bepinex'
     ])
+    await fs.writeFile(path.join(gameDir, 'REPO.exe'), '')
+    await writeLaunchOptions('WINEDLLOVERRIDES=winhttp=n,b %command%')
     expect(
       await launchWarnings({ ...input(), game: { ...game, loader: 'other' } as GameDef })
     ).toEqual(['loader-unsupported', 'no-bepinex'])
+  })
+
+  test('native-linux-unsupported when a linux game has no Proton exe', async () => {
+    await addPreloader()
+    expect(await launchWarnings(input())).toEqual(['native-linux-unsupported'])
+    expect(await launchWarnings({ ...input(), platform: 'win32' })).toEqual([])
+    await fs.writeFile(path.join(gameDir, 'REPO.exe'), '')
+    await writeLaunchOptions('WINEDLLOVERRIDES=winhttp=n,b %command%')
+    expect(await launchWarnings(input())).toEqual([])
+  })
+
+  test('flatpak-filesystem when Steam is the Flatpak install', async () => {
+    await addPreloader()
+    await fs.writeFile(path.join(gameDir, 'REPO.exe'), '')
+    const flatpakRoot = path.join(
+      tmp,
+      '.var',
+      'app',
+      'com.valvesoftware.Steam',
+      '.local',
+      'share',
+      'Steam'
+    )
+    steamRoot = flatpakRoot
+    await writeLaunchOptions('WINEDLLOVERRIDES=winhttp=n,b %command%')
+    expect(await launchWarnings(input())).toEqual(['flatpak-filesystem'])
   })
 })
 

@@ -13,13 +13,25 @@ describe('isSafeExternalUrl', () => {
 })
 
 describe('isAllowedNavigation', () => {
+  const INDEX = 'file:///opt/HML/resources/app.asar/out/renderer/index.html'
   test('dev: same origin only', () => {
-    expect(isAllowedNavigation('http://localhost:5173/x', 'http://localhost:5173/')).toBe(true)
-    expect(isAllowedNavigation('https://evil.com', 'http://localhost:5173/')).toBe(false)
+    expect(isAllowedNavigation('http://localhost:5173/x', 'http://localhost:5173/', INDEX)).toBe(
+      true
+    )
+    expect(isAllowedNavigation('https://evil.com', 'http://localhost:5173/', INDEX)).toBe(false)
   })
-  test('prod: file only', () => {
-    expect(isAllowedNavigation('file:///app/index.html')).toBe(true)
-    expect(isAllowedNavigation('https://evil.com')).toBe(false)
-    expect(isAllowedNavigation('garbage')).toBe(false)
+  test("prod: only the app's own index.html", () => {
+    expect(isAllowedNavigation(INDEX, undefined, INDEX)).toBe(true)
+    expect(isAllowedNavigation(INDEX + '#/profiles', undefined, INDEX)).toBe(true)
+    expect(isAllowedNavigation('https://evil.com', undefined, INDEX)).toBe(false)
+    expect(isAllowedNavigation('garbage', undefined, INDEX)).toBe(false)
+  })
+  test.each([
+    'file:///etc/passwd',
+    'file:///home/u/Downloads/evil.html',
+    'file:///opt/HML/resources/app.asar/out/renderer/other.html',
+    'file://remote-host/opt/HML/resources/app.asar/out/renderer/index.html'
+  ])('prod: rejects other file URL %s', (u) => {
+    expect(isAllowedNavigation(u, undefined, INDEX)).toBe(false)
   })
 })

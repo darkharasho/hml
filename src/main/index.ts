@@ -1,14 +1,20 @@
 import { app, shell, dialog, BrowserWindow } from 'electron'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'path'
+import { pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { isAllowedNavigation, isSafeExternalUrl } from './security'
 import { registerIpc } from './ipc'
 import { createServices } from './services'
 import { makePaths } from './store/paths'
+import { resolveSnapshotPath } from './snapshotPath'
 import icon from '../../resources/icon.png?asset'
-import snapshotPath from '../../resources/ecosystem-snapshot.json?asset'
+import devSnapshotPath from '../../resources/ecosystem-snapshot.json?asset'
+
+const execFileAsync = promisify(execFile)
+const indexHtml = join(__dirname, '../renderer/index.html')
 
 function createWindow(): void {
   // Create the browser window.
@@ -40,7 +46,7 @@ function createWindow(): void {
 
   const devUrl = is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!isAllowedNavigation(url, devUrl)) event.preventDefault()
+    if (!isAllowedNavigation(url, devUrl, pathToFileURL(indexHtml).href)) event.preventDefault()
   })
 
   // HMR for renderer base on electron-vite cli.
@@ -48,7 +54,7 @@ function createWindow(): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadFile(indexHtml)
   }
 }
 
@@ -70,7 +76,11 @@ app.whenReady().then(() => {
     createServices({
       paths: makePaths(app.getPath('userData')),
       fetch: globalThis.fetch,
-      snapshotPath,
+      snapshotPath: resolveSnapshotPath({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        devPath: devSnapshotPath
+      }),
       platform: process.platform,
       home: homedir(),
       dialog: {
@@ -90,7 +100,8 @@ app.whenReady().then(() => {
         }
       },
       shell,
-      spawn
+      spawn,
+      execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false })
     })
   )
 

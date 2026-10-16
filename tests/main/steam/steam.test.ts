@@ -8,7 +8,8 @@ import {
   isFlatpakSteam,
   listLibraries,
   findAppInstall,
-  readLaunchOptions
+  readLaunchOptions,
+  readWinSteamPath
 } from '../../../src/main/steam/steam'
 
 let tmp: string
@@ -41,7 +42,9 @@ describe('steam locator', () => {
       path.join(lib1, 'steamapps', 'appmanifest_3241660.acf'),
       '"AppState" { "appid" "3241660" "installdir" "REPO" }'
     )
-    expect(await findAppInstall(root, '3241660')).toBe(path.join(lib1, 'steamapps', 'common', 'REPO'))
+    expect(await findAppInstall(root, '3241660')).toBe(
+      path.join(lib1, 'steamapps', 'common', 'REPO')
+    )
   })
 
   test('supports library paths with spaces', async () => {
@@ -107,15 +110,39 @@ describe('steam locator', () => {
 
   test('reads launch options case-insensitively', async () => {
     const root = await makeRoot([])
-    await write(
-      path.join(root, 'userdata', '111', 'config', 'localconfig.vdf'),
-      '"broken" { "x'
-    )
+    await write(path.join(root, 'userdata', '111', 'config', 'localconfig.vdf'), '"broken" { "x')
     await write(
       path.join(root, 'userdata', '222', 'config', 'localconfig.vdf'),
       `"UserLocalConfigStore" { "software" { "valve" { "STEAM" { "Apps" { "3241660" { "launchoptions" "WINEDLLOVERRIDES=winhttp=n,b %command%" } } } } } }`
     )
     expect(await readLaunchOptions(root, '3241660')).toBe('WINEDLLOVERRIDES=winhttp=n,b %command%')
     expect(await readLaunchOptions(root, '5')).toBeNull()
+  })
+})
+
+describe('readWinSteamPath', () => {
+  const OUT =
+    '\r\nHKEY_CURRENT_USER\\Software\\Valve\\Steam\r\n    SteamPath    REG_SZ    c:/program files (x86)/steam\r\n\r\n'
+
+  test('queries HKCU SteamPath with reg and parses REG_SZ', async () => {
+    const calls: [string, string[]][] = []
+    const value = await readWinSteamPath(async (file, args) => {
+      calls.push([file, args])
+      return { stdout: OUT }
+    })
+    expect(value).toBe('c:/program files (x86)/steam')
+    expect(calls).toEqual([['reg', ['query', 'HKCU\\Software\\Valve\\Steam', '/v', 'SteamPath']]])
+  })
+
+  test('null on failure or unexpected output', async () => {
+    expect(
+      await readWinSteamPath(async () => {
+        throw new Error('ERROR: The system was unable to find the specified registry key')
+      })
+    ).toBeNull()
+    expect(await readWinSteamPath(async () => ({ stdout: 'nothing here' }))).toBeNull()
+    expect(
+      await readWinSteamPath(async () => ({ stdout: '    SteamPath    REG_SZ    \r\n' }))
+    ).toBeNull()
   })
 })

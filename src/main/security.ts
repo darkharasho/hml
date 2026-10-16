@@ -7,12 +7,24 @@ export function isSafeExternalUrl(url: string): boolean {
   }
 }
 
-/** In-window navigation is allowed only within the app's own origin (dev server, or file:// in prod). */
-export function isAllowedNavigation(url: string, devUrl?: string): boolean {
+/**
+ * In-window navigation is allowed only within the app itself: the dev server origin, or in
+ * production the app's own index.html file URL (query and hash ignored).
+ */
+export function isAllowedNavigation(
+  url: string,
+  devUrl: string | undefined,
+  indexUrl: string
+): boolean {
   try {
     const target = new URL(url)
     if (devUrl) return target.origin === new URL(devUrl).origin
-    return target.protocol === 'file:'
+    const index = new URL(indexUrl)
+    return (
+      target.protocol === 'file:' &&
+      target.host === index.host &&
+      target.pathname === index.pathname
+    )
   } catch {
     return false
   }

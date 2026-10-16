@@ -68,4 +68,14 @@ export interface ProfileManifest {
 }
 
 export type LaunchMode = 'modded' | 'vanilla'
+
+/** Codes returned by getLaunchWarnings. Blockers stop a modded launch; the rest are advice. */
+export type LaunchWarning =
+  | 'game-not-found'
+  | 'loader-unsupported'
+  | 'no-bepinex'
+  | 'proton-launch-options'
+  | 'steam-not-found'
+  | 'flatpak-filesystem'
+  | 'native-linux-unsupported'
 export type DoorstopVersion = 3 | 4

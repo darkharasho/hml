@@ -1,12 +1,23 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { LaunchWarning } from '../../../shared/types'
+import { api, errorMessage } from '../api'
 import { useCurrentProfile, useStore } from '../store'
 import { Button, Icon, Modal } from './ui'
 
 const PROTON_LAUNCH_OPTIONS = 'WINEDLLOVERRIDES="winhttp=n,b" %command%'
 
-type WarningAction = 'settings' | 'proton' | null
+/** Single-quotes a path for the shell only when it needs it. */
+function shellQuote(p: string): string {
+  return /^[\w@%+=:,./-]+$/.test(p) ? p : `'${p.replace(/'/g, `'\\''`)}'`
+}
 
-const WARNINGS: Record<string, { label: string; detail: string; action: WarningAction }> = {
+function flatpakOverrideCommand(gamesDir: string): string {
+  return `flatpak override --user --filesystem=${shellQuote(gamesDir)} com.valvesoftware.Steam`
+}
+
+type WarningAction = 'settings' | 'proton' | 'flatpak' | null
+
+const WARNINGS: Record<LaunchWarning, { label: string; detail: string; action: WarningAction }> = {
   'game-not-found': {
     label: 'Game folder not found',
     detail: 'HML could not find the game install. Set its folder in settings.',
@@ -31,6 +42,17 @@ const WARNINGS: Record<string, { label: string; detail: string; action: WarningA
     label: 'Steam launch options needed',
     detail: 'This game runs through Proton and needs a launch option so mods load.',
     action: 'proton'
+  },
+  'native-linux-unsupported': {
+    label: 'Native Linux game',
+    detail:
+      "Native Linux games aren't supported for modded launch yet. Force Proton for this game in Steam (Properties → Compatibility). Vanilla launches still work.",
+    action: null
+  },
+  'flatpak-filesystem': {
+    label: 'Flatpak Steam needs access',
+    detail: 'Flatpak Steam cannot read HML profiles until you grant it access to the HML folder.',
+    action: 'flatpak'
   }
 }
 
@@ -42,12 +64,14 @@ export function LaunchBar(): React.JSX.Element | null {
   const launch = useStore((s) => s.launch)
   const openSettings = useStore((s) => s.setSettingsOpen)
   const [protonOpen, setProtonOpen] = useState(false)
+  const [flatpakOpen, setFlatpakOpen] = useState(false)
 
   if (!game) return null
 
   function runAction(action: WarningAction): void {
     if (action === 'settings') openSettings(true)
     if (action === 'proton') setProtonOpen(true)
+    if (action === 'flatpak') setFlatpakOpen(true)
   }
 
   return (
@@ -93,21 +117,36 @@ export function LaunchBar(): React.JSX.Element | null {
       </Button>
 
       {protonOpen && <ProtonDialog onClose={() => setProtonOpen(false)} />}
+      {flatpakOpen && <FlatpakDialog onClose={() => setFlatpakOpen(false)} />}
     </header>
   )
 }
 
-function ProtonDialog({ onClose }: { onClose(): void }): React.JSX.Element {
+function CopyField({ text }: { text: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const toast = useStore((s) => s.toast)
   async function copy(): Promise<void> {
     try {
-      await navigator.clipboard.writeText(PROTON_LAUNCH_OPTIONS)
+      await navigator.clipboard.writeText(text)
       setCopied(true)
     } catch {
       toast('error', 'Could not copy. Select the text and copy it manually.')
     }
   }
+  return (
+    <div className="mt-4 flex items-center gap-2 rounded-lg border border-line bg-ink p-1.5 pl-3">
+      <code className="flex-1 overflow-x-auto text-[13px] whitespace-nowrap text-fg select-all">
+        {text}
+      </code>
+      <Button variant={copied ? 'ghost' : 'primary'} onClick={() => void copy()} className="h-8">
+        <Icon name="copy" className="size-3.5" />
+        {copied ? 'Copied' : 'Copy'}
+      </Button>
+    </div>
+  )
+}
+
+function ProtonDialog({ onClose }: { onClose(): void }): React.JSX.Element {
   return (
     <Modal
       title="Add Steam launch options"
@@ -123,16 +162,39 @@ function ProtonDialog({ onClose }: { onClose(): void }): React.JSX.Element {
         This game runs through Proton, which ignores the mod loader unless Steam tells it to. In
         Steam, right-click the game, open Properties, and paste this into Launch options:
       </p>
-      <div className="mt-4 flex items-center gap-2 rounded-lg border border-line bg-ink p-1.5 pl-3">
-        <code className="flex-1 overflow-x-auto text-[13px] whitespace-nowrap text-fg select-all">
-          {PROTON_LAUNCH_OPTIONS}
-        </code>
-        <Button variant={copied ? 'ghost' : 'primary'} onClick={() => void copy()} className="h-8">
-          <Icon name="copy" className="size-3.5" />
-          {copied ? 'Copied' : 'Copy'}
-        </Button>
-      </div>
+      <CopyField text={PROTON_LAUNCH_OPTIONS} />
       <p className="mt-3">Vanilla launches keep working with this option set.</p>
+    </Modal>
+  )
+}
+
+function FlatpakDialog({ onClose }: { onClose(): void }): React.JSX.Element {
+  const [gamesDir, setGamesDir] = useState<string | null>(null)
+  const toast = useStore((s) => s.toast)
+  useEffect(() => {
+    api.getGamesDataDir().then(setGamesDir, (e) => toast('error', errorMessage(e)))
+  }, [toast])
+  return (
+    <Modal
+      title="Let Flatpak Steam read HML profiles"
+      onClose={onClose}
+      width="w-[560px]"
+      footer={
+        <Button variant="primary" onClick={onClose}>
+          Done
+        </Button>
+      }
+    >
+      <p>
+        Steam is installed as a Flatpak, which is sandboxed and cannot see the folder where HML
+        keeps its profiles, so mods will not load. Run this once in a terminal, then restart Steam:
+      </p>
+      {gamesDir ? (
+        <CopyField text={flatpakOverrideCommand(gamesDir)} />
+      ) : (
+        <p className="mt-4 text-muted">Loading the HML folder path...</p>
+      )}
+      <p className="mt-3">This only grants access to HML&apos;s game folders.</p>
     </Modal>
   )
 }
