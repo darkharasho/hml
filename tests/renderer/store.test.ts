@@ -8,7 +8,8 @@ const api = vi.hoisted(() => ({
   getDeployment: vi.fn(),
   removeDeployment: vi.fn(),
   listProfiles: vi.fn(),
-  ghCheckUpdates: vi.fn()
+  ghCheckUpdates: vi.fn(),
+  nxInstall: vi.fn()
 }))
 vi.mock('../../src/renderer/src/api', () => ({
   api,
@@ -16,6 +17,7 @@ vi.mock('../../src/renderer/src/api', () => ({
 }))
 
 const { useStore } = await import('../../src/renderer/src/store')
+const { NX_NO_KEY } = await import('../../src/renderer/src/nxView')
 
 const status: DeploymentStatus = {
   profileId: 'p',
@@ -179,5 +181,36 @@ describe('store update lists after a failed check', () => {
     await useStore.getState().checkUpdates()
     expect(useStore.getState().ghUpdates.map((u) => u.modId)).toEqual(['kept'])
     expect(useStore.getState().toasts.filter((t) => t.kind === 'info')).toHaveLength(1)
+  })
+})
+
+describe('store nxInstall without an API key', () => {
+  const NO_KEY = NX_NO_KEY
+  const mod = { modId: 7, name: 'M' }
+  beforeEach(() => {
+    api.nxInstall.mockReset().mockRejectedValue(new Error(NO_KEY))
+    api.listProfiles.mockReset().mockResolvedValue([])
+    useStore.setState({
+      currentGame: { label: 'repo', displayName: 'R', loader: 'bepinex' } as unknown as GameSummary,
+      currentProfile: 'p',
+      nxInstalling: [],
+      toasts: []
+    })
+  })
+
+  test('toasts with a Settings action by default', async () => {
+    expect(await useStore.getState().nxInstall(mod)).toBe('needs-key')
+    expect(useStore.getState().toasts.map((t) => t.message)).toEqual([NO_KEY])
+  })
+
+  test('skips the toast when the caller shows the notice inline', async () => {
+    expect(await useStore.getState().nxInstall(mod, 1, { inlineNoKey: true })).toBe('needs-key')
+    expect(useStore.getState().toasts).toEqual([])
+  })
+
+  test('still toasts other errors when inline', async () => {
+    api.nxInstall.mockRejectedValue(new Error('boom'))
+    expect(await useStore.getState().nxInstall(mod, 1, { inlineNoKey: true })).toBe('done')
+    expect(useStore.getState().toasts.map((t) => t.message)).toEqual(['boom'])
   })
 })

@@ -195,7 +195,9 @@ export function NexusDetail({
                     title={supported ? undefined : UNSUPPORTED_LOADER}
                     aria-label={`Install ${f.name}`}
                     onClick={() =>
-                      void nxInstall(mod, f.fileId).then((r) => setNeedsKey(r === 'needs-key'))
+                      void nxInstall(mod, f.fileId, { inlineNoKey: true }).then((r) =>
+                        setNeedsKey(r === 'needs-key')
+                      )
                     }
                   >
                     {installing ? 'Installing…' : 'Install'}

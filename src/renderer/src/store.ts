@@ -98,7 +98,12 @@ interface State {
    * Installs a Nexus mod's newest main file, or the given file. Resolves 'needs-key' when it
    * failed for want of an API key, so a dialog (above the toasts) can offer Settings itself.
    */
-  nxInstall(mod: { modId: number; name: string }, fileId?: number): Promise<'needs-key' | 'done'>
+  nxInstall(
+    mod: { modId: number; name: string },
+    fileId?: number,
+    /** The caller shows the missing-key notice itself, so no toast for it. */
+    opts?: { inlineNoKey?: boolean }
+  ): Promise<'needs-key' | 'done'>
   /** Saves a Nexus Mods API key, or removes it with null. Resolves false when that failed. */
   nxSetKey(key: string | null): Promise<boolean>
   /** Updates Nexus mods: in place for Premium, by opening each file page for free accounts. */
@@ -317,14 +322,15 @@ export const useStore = create<State>()((set, get) => {
   }
 
   /** Toasts a Nexus error, with a Settings action when the API key is missing. */
-  function nexusFail(e: unknown): 'needs-key' | 'done' {
+  function nexusFail(e: unknown, inlineNoKey = false): 'needs-key' | 'done' {
     const message = errorMessage(e)
     const noKey = message === NX_NO_KEY
-    get().toast(
-      'error',
-      message,
-      noKey ? { label: 'Settings', run: () => get().setSettingsOpen(true) } : undefined
-    )
+    if (!(noKey && inlineNoKey))
+      get().toast(
+        'error',
+        message,
+        noKey ? { label: 'Settings', run: () => get().setSettingsOpen(true) } : undefined
+      )
     return noKey ? 'needs-key' : 'done'
   }
 
@@ -638,7 +644,7 @@ export const useStore = create<State>()((set, get) => {
       return true
     },
 
-    async nxInstall(mod, fileId) {
+    async nxInstall(mod, fileId, opts) {
       const { currentGame, currentProfile } = get()
       if (!currentGame || !currentProfile || get().nxInstalling.includes(mod.modId)) return 'done'
       set((s) => ({ nxInstalling: [...s.nxInstalling, mod.modId] }))
@@ -652,7 +658,7 @@ export const useStore = create<State>()((set, get) => {
           }
         })
       } catch (e) {
-        return nexusFail(e)
+        return nexusFail(e, opts?.inlineNoKey)
       } finally {
         set((s) => ({ nxInstalling: s.nxInstalling.filter((id) => id !== mod.modId) }))
       }
