@@ -1,0 +1,84 @@
+import { spawn as nodeSpawn } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import type { DoorstopVersion, GameDef } from '../../shared/types'
+import { readLaunchOptions } from '../steam/steam'
+import type { LaunchPlan } from './launchPlan'
+
+const PRELOADERS = [
+  'BepInEx/core/BepInEx.Preloader.dll',
+  'BepInEx/core/BepInEx.Unity.Mono.Preloader.dll',
+  'BepInEx/core/BepInEx.Unity.IL2CPP.dll'
+]
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function detectDoorstopVersion(profileDir: string): Promise<DoorstopVersion> {
+  try {
+    const ini = await fs.readFile(path.join(profileDir, 'doorstop_config.ini'), 'utf8')
+    return /^\s*\[General\]\s*$/m.test(ini) ? 4 : 3
+  } catch {
+    return 3
+  }
+}
+
+export async function findPreloader(profileDir: string): Promise<string | null> {
+  for (const rel of PRELOADERS) {
+    if (await exists(path.join(profileDir, ...rel.split('/')))) return rel
+  }
+  return null
+}
+
+export async function isProtonGame(
+  platform: 'win32' | 'linux' | NodeJS.Platform,
+  gameDir: string,
+  exeNames: string[]
+): Promise<boolean> {
+  if (platform !== 'linux') return false
+  for (const exe of exeNames) {
+    if (exe.toLowerCase().endsWith('.exe') && (await exists(path.join(gameDir, exe)))) return true
+  }
+  return false
+}
+
+export async function launchWarnings(input: {
+  platform: 'win32' | 'linux'
+  game: GameDef
+  gameDir: string | null
+  profileDir: string
+  steamRoot: string
+}): Promise<string[]> {
+  const warnings: string[] = []
+  if (input.gameDir === null) warnings.push('game-not-found')
+  if (input.game.loader !== 'bepinex') warnings.push('loader-unsupported')
+  if ((await findPreloader(input.profileDir)) === null) warnings.push('no-bepinex')
+  if (
+    input.gameDir !== null &&
+    input.game.steamAppId &&
+    (await isProtonGame(input.platform, input.gameDir, input.game.exeNames))
+  ) {
+    const opts = await readLaunchOptions(input.steamRoot, input.game.steamAppId)
+    if (!opts || !opts.includes('winhttp=n,b')) warnings.push('proton-launch-options')
+  }
+  return warnings
+}
+
+export async function launch(
+  plan: LaunchPlan,
+  profileDir: string,
+  gameDir: string,
+  spawnFn: typeof nodeSpawn = nodeSpawn
+): Promise<void> {
+  for (const rel of plan.copyToGameDir) {
+    const src = path.join(profileDir, rel)
+    if (await exists(src)) await fs.copyFile(src, path.join(gameDir, rel))
+  }
+  spawnFn(plan.command, plan.args, { detached: true, stdio: 'ignore', shell: false }).unref()
+}

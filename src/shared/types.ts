@@ -66,3 +66,6 @@ export interface ProfileManifest {
   createdAt: string
   mods: InstalledMod[]
 }
+
+export type LaunchMode = 'modded' | 'vanilla'
+export type DoorstopVersion = 3 | 4
