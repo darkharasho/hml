@@ -32,8 +32,14 @@ function normalize(entry: string): string[] {
   if (p.startsWith('/') || /^[A-Za-z]:/.test(p)) throw new UnsafeEntryError(entry)
   const segs = p.split('/').filter((s) => s !== '' && s !== '.')
   if (segs.length === 0 || segs.includes('..')) throw new UnsafeEntryError(entry)
+  if (segs.some(isWindowsUnsafe)) throw new UnsafeEntryError(entry)
   return segs
 }
+
+/** Names Windows can't store as written: stream/drive colons, device names, trailing `.`/space. */
+const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i
+const isWindowsUnsafe = (seg: string): boolean =>
+  seg.includes(':') || WINDOWS_DEVICE.test(seg) || /[. ]$/.test(seg)
 
 /** Thunderstore package metadata at a zip's root; not part of the mod's files. */
 const PACKAGE_METADATA = new Set([

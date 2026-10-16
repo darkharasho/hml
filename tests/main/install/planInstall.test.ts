@@ -194,6 +194,31 @@ describe('planInstall', () => {
     }
   })
 
+  test('rejects Windows-unsafe entry names', () => {
+    const bad = [
+      'a:b.dll',
+      'dir/file:stream.dll',
+      'con',
+      'CON.txt',
+      'plugins/nul.dll',
+      'Aux.tar.gz',
+      'prn',
+      'com1.dll',
+      'LPT9',
+      'a./b.dll',
+      'trailing.',
+      'dir/trailing ',
+      ' lead/x.dll/ '
+    ]
+    for (const e of bad) {
+      expect(() => plan([e]), e).toThrow(UnsafeEntryError)
+      expect(() => planDeploy([e]), e).toThrow(UnsafeEntryError)
+    }
+    for (const e of ['console.dll', 'com10.dll', 'conf/nulled.dll', 'comx', 'a.b/c.dll']) {
+      expect(() => plan([e]), e).not.toThrow()
+    }
+  })
+
   test('loader rootFolder match is case-insensitive', () => {
     const out = planInstall(['bepinexpack/winhttp.dll'], {
       packageId,
