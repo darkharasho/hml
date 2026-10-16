@@ -66,7 +66,7 @@ beforeEach(() => {
     platform: 'linux',
     home: tmp,
     dialog,
-    shell: { openPath: async () => '' },
+    shell: { openPath: async () => '', openExternal: async () => undefined },
     execFile: async (file, args) => {
       execCalls.push({ file, args })
       throw new Error('reg is not available in tests')
@@ -614,9 +614,53 @@ describe('services', () => {
   })
 
   test('HML_METHODS covers every HmlApi key', () => {
-    expect([...HML_METHODS].sort()).toEqual(Object.keys(createServices(deps))
-        .filter((k) => !k.startsWith('ts'))
-        .sort()
-    )
+    expect([...HML_METHODS].sort()).toEqual(Object.keys(createServices(deps)).sort())
+  })
+
+  test('HML_METHODS includes the thunderstore methods and openExternal', () => {
+    for (const m of [
+      'tsSearch',
+      'tsRefresh',
+      'tsGetPackage',
+      'tsInstall',
+      'tsCheckUpdates',
+      'tsUpdate',
+      'openExternal'
+    ])
+      expect(HML_METHODS).toContain(m)
+  })
+
+  describe('openExternal', () => {
+    const MSG = 'HML only opens Thunderstore and GitHub links.'
+    test.each([
+      'https://thunderstore.io/c/repo/p/a/b/',
+      'https://github.com/x/y',
+      'https://www.github.com/x',
+      'https://new.thunderstore.io/'
+    ])('accepts %s', async (u) => {
+      const opened: string[] = []
+      const api = createServices({
+        ...deps,
+        shell: { openPath: async () => '', openExternal: async (x) => void opened.push(x) }
+      })
+      await api.openExternal(u)
+      expect(opened).toEqual([u])
+    })
+    test.each([
+      'http://thunderstore.io/',
+      'https://evil.com/',
+      'https://thunderstore.io.evil.com/',
+      'file:///etc/passwd',
+      'not a url',
+      'https://user@evil.com@thunderstore.io.evil.com/'
+    ])('rejects %s', async (u) => {
+      const opened: string[] = []
+      const api = createServices({
+        ...deps,
+        shell: { openPath: async () => '', openExternal: async (x) => void opened.push(x) }
+      })
+      await expect(api.openExternal(u)).rejects.toThrow(MSG)
+      expect(opened).toEqual([])
+    })
   })
 })

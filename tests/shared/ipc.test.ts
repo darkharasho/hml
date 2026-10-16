@@ -9,3 +9,17 @@ test('stripIpcErrorPrefix removes the Electron wrapper only', () => {
   ).toBe('Steam not found')
   expect(stripIpcErrorPrefix('Plain message')).toBe('Plain message')
 })
+import { HML_METHODS } from '../../src/shared/ipc'
+test('HML_METHODS lists the thunderstore methods', () => {
+  expect(HML_METHODS).toEqual(
+    expect.arrayContaining([
+      'tsSearch',
+      'tsRefresh',
+      'tsGetPackage',
+      'tsInstall',
+      'tsCheckUpdates',
+      'tsUpdate',
+      'openExternal'
+    ])
+  )
+})

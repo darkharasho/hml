@@ -16,6 +16,8 @@ import devSnapshotPath from '../../resources/ecosystem-snapshot.json?asset'
 const execFileAsync = promisify(execFile)
 const indexHtml = join(__dirname, '../renderer/index.html')
 
+let mainWindowRef: BrowserWindow | null = null
+
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -33,6 +35,11 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true
     }
+  })
+
+  mainWindowRef = mainWindow
+  mainWindow.on('closed', () => {
+    if (mainWindowRef === mainWindow) mainWindowRef = null
   })
 
   mainWindow.on('ready-to-show', () => {
@@ -82,7 +89,12 @@ app.whenReady().then(() => {
         devPath: devSnapshotPath
       }),
       platform: process.platform,
-      emit: () => {}, // wired to hml:event in Task 5
+      emit: (e) => {
+        const win = mainWindowRef
+        if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+          win.webContents.send('hml:event', e)
+        }
+      },
       home: homedir(),
       dialog: {
         async pickFiles({ title, filters }) {

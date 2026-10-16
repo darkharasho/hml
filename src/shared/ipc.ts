@@ -3,8 +3,13 @@ import type {
   InstalledMod,
   LaunchMode,
   LaunchWarning,
+  ModUpdate,
   ProfileManifest,
-  Settings
+  Settings,
+  TsInstallResult,
+  TsPackage,
+  TsQuery,
+  TsSearchResult
 } from './types'
 
 export interface GameSummary extends GameDef {
@@ -35,6 +40,19 @@ export interface HmlApi {
   saveSettings(s: Settings): Promise<void>
   /** Absolute path of HML's per-game data dir (`<userData>/games`), for the Flatpak override. */
   getGamesDataDir(): Promise<string>
+  tsSearch(game: string, q: TsQuery): Promise<TsSearchResult>
+  tsRefresh(game: string): Promise<{ count: number; fetchedAt: string; stale: boolean }>
+  tsGetPackage(game: string, fullName: string): Promise<TsPackage | null>
+  tsInstall(
+    game: string,
+    profileId: string,
+    fullName: string,
+    version?: string
+  ): Promise<TsInstallResult>
+  tsCheckUpdates(game: string, profileId: string): Promise<ModUpdate[]>
+  tsUpdate(game: string, profileId: string, modIds: string[]): Promise<TsInstallResult>
+  /** Opens an https Thunderstore or GitHub link in the system browser; anything else throws. */
+  openExternal(url: string): Promise<void>
 }
 
 // `satisfies` makes the compiler reject a missing or unknown method name.
@@ -56,7 +74,14 @@ const METHOD_TABLE = {
   openProfileFolder: true,
   getSettings: true,
   saveSettings: true,
-  getGamesDataDir: true
+  getGamesDataDir: true,
+  tsSearch: true,
+  tsRefresh: true,
+  tsGetPackage: true,
+  tsInstall: true,
+  tsCheckUpdates: true,
+  tsUpdate: true,
+  openExternal: true
 } satisfies Record<keyof HmlApi, true>
 
 export const HML_METHODS = Object.keys(METHOD_TABLE) as (keyof HmlApi)[]

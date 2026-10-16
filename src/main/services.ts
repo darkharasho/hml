@@ -9,12 +9,8 @@ import type {
   InstalledMod,
   LaunchMode,
   LaunchWarning,
-  ModUpdate,
   Settings,
-  TsInstallResult,
-  TsPackage,
-  TsQuery,
-  TsSearchResult
+  TsPackage
 } from '../shared/types'
 import type { GameSummary, HmlApi } from '../shared/ipc'
 import type { AppPaths } from './store/paths'
@@ -66,6 +62,7 @@ export interface DialogPort {
 export interface ShellPort {
   /** Resolves to an error message, or '' on success (Electron's shell.openPath). */
   openPath(p: string): Promise<string>
+  openExternal(url: string): Promise<void>
 }
 export type SpawnPort = typeof nodeSpawn
 
@@ -80,22 +77,8 @@ export interface ServiceDeps {
   spawn: SpawnPort
   /** Used for the Windows registry lookup of Steam (`reg query`). */
   execFile: ExecFilePort
-  /** Progress events for long operations (wired to the renderer in Task 5). */
+  /** Progress events for long operations (sent to the renderer as hml:event). */
   emit(e: HmlEvent): void
-}
-
-export interface TsServices {
-  tsSearch(game: string, q: TsQuery): Promise<TsSearchResult>
-  tsRefresh(game: string): Promise<{ count: number; fetchedAt: string; stale: boolean }>
-  tsGetPackage(game: string, fullName: string): Promise<TsPackage | null>
-  tsInstall(
-    game: string,
-    profileId: string,
-    fullName: string,
-    version?: string
-  ): Promise<TsInstallResult>
-  tsCheckUpdates(game: string, profileId: string): Promise<ModUpdate[]>
-  tsUpdate(game: string, profileId: string, modIds: string[]): Promise<TsInstallResult>
 }
 
 interface LoadedIndex extends TsIndex {
@@ -117,9 +100,26 @@ async function assertZipFile(file: string): Promise<void> {
   if (!stat?.isFile()) throw new Error(`${name} was not found or is not a file.`)
 }
 
+function isAllowedExternalUrl(raw: string): boolean {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return false
+  }
+  if (u.protocol !== 'https:') return false
+  const h = u.hostname.toLowerCase()
+  return (
+    h === 'thunderstore.io' ||
+    h.endsWith('.thunderstore.io') ||
+    h === 'github.com' ||
+    h === 'www.github.com'
+  )
+}
+
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export function createServices(deps: ServiceDeps): HmlApi & TsServices {
+export function createServices(deps: ServiceDeps): HmlApi {
   const { paths } = deps
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
 
@@ -218,7 +218,8 @@ export function createServices(deps: ServiceDeps): HmlApi & TsServices {
     while (indexes.size > INDEX_LRU) indexes.delete(indexes.keys().next().value as string)
   }
   function requireListing(def: GameDef): string {
-    if (def.packageIndex === null) throw new Error(`${def.displayName} has no Thunderstore listing.`)
+    if (def.packageIndex === null)
+      throw new Error(`${def.displayName} has no Thunderstore listing.`)
     return def.packageIndex
   }
   function loadIndex(def: GameDef, force: boolean): Promise<LoadedIndex> {
@@ -305,7 +306,10 @@ export function createServices(deps: ServiceDeps): HmlApi & TsServices {
       .map((m) => m.packageId)
   }
 
-  const tsServices: TsServices = {
+  const tsServices: Pick<
+    HmlApi,
+    'tsSearch' | 'tsRefresh' | 'tsGetPackage' | 'tsInstall' | 'tsCheckUpdates' | 'tsUpdate'
+  > = {
     async tsSearch(game, q) {
       const idx = await loadIndex(await requireGame(game), false)
       return {
@@ -531,6 +535,12 @@ export function createServices(deps: ServiceDeps): HmlApi & TsServices {
       await getProfile(paths, game, profileId)
       const error = await deps.shell.openPath(paths.profileDir(game, profileId))
       if (error) throw new Error(`Could not open the profile folder: ${error}`)
+    },
+
+    async openExternal(url: string): Promise<void> {
+      if (!isAllowedExternalUrl(url))
+        throw new Error('HML only opens Thunderstore and GitHub links.')
+      await deps.shell.openExternal(url)
     },
 
     getSettings: () => loadSettings(paths),

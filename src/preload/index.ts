@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { HmlEvent } from '../shared/types'
 import { HML_METHODS, channel, stripIpcErrorPrefix, type HmlApi } from '../shared/ipc'
 
 const api = Object.fromEntries(
@@ -21,4 +22,14 @@ contextBridge.exposeInMainWorld('hml', api)
 // Dropped File objects carry no path under contextIsolation; Electron resolves it here.
 contextBridge.exposeInMainWorld('hmlFiles', {
   getPathForFile: (f: File) => webUtils.getPathForFile(f)
+})
+
+contextBridge.exposeInMainWorld('hmlEvents', {
+  on(cb: (e: HmlEvent) => void): () => void {
+    const listener = (_ev: unknown, e: HmlEvent): void => cb(e)
+    ipcRenderer.on('hml:event', listener)
+    return () => {
+      ipcRenderer.removeListener('hml:event', listener)
+    }
+  }
 })
