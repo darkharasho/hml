@@ -544,7 +544,48 @@ export function createServices(
     serialize
   })
 
-  const shareApi = createShareServices({ deps, requireGame, serialize })
+  async function setModEnabledService(
+    game: string,
+    profileId: string,
+    modId: string,
+    enabled: boolean
+  ): Promise<void> {
+    const def = await requireGame(game)
+    return serialize(game, profileId, () => setModEnabled(paths, def, profileId, modId, enabled))
+  }
+
+  async function addNexusGame(domain: string): Promise<GameSummary> {
+    const def = await nexus.addGame(domain)
+    const catalog = await getCatalog()
+    return summarize(def, catalog, await loadSettings(paths), null)
+  }
+
+  async function nxGetDomain(game: string): Promise<string | null> {
+    const def = await requireGame(game)
+    const settings = await loadSettings(paths)
+    try {
+      return (await nexus.domainFor(def, settings))?.domain ?? null
+    } catch {
+      return nexus.cachedDomain(def, settings)
+    }
+  }
+
+  const shareApi = createShareServices({
+    deps,
+    getCatalog,
+    requireGame,
+    serialize,
+    installers: {
+      tsGetPackage: tsServices.tsGetPackage,
+      tsInstall: tsServices.tsInstall,
+      ghInstall: ghServices.ghInstall,
+      nxInstall: nexusApi.nxInstall,
+      nxGetDomain,
+      setModEnabled: setModEnabledService,
+      createProfile: (game, name) => createProfile(paths, game, name),
+      addNexusGame
+    }
+  })
 
   /** Handles an `nxm://` link end to end. Never throws: the outcome is an event. */
   async function handleNxm(raw: string): Promise<void> {
@@ -594,21 +635,8 @@ export function createServices(
       return [...sorted, ...extras]
     },
 
-    async addNexusGame(domain: string): Promise<GameSummary> {
-      const def = await nexus.addGame(domain)
-      const catalog = await getCatalog()
-      return summarize(def, catalog, await loadSettings(paths), null)
-    },
-
-    async nxGetDomain(game: string): Promise<string | null> {
-      const def = await requireGame(game)
-      const settings = await loadSettings(paths)
-      try {
-        return (await nexus.domainFor(def, settings))?.domain ?? null
-      } catch {
-        return nexus.cachedDomain(def, settings)
-      }
-    },
+    addNexusGame,
+    nxGetDomain,
 
     async nxSetDomain(game: string, domain: string | null): Promise<void> {
       await requireGame(game)
@@ -680,10 +708,7 @@ export function createServices(
       return installLocalFiles(def, profileId, files)
     },
 
-    async setModEnabled(game, profileId, modId, enabled): Promise<void> {
-      const def = await requireGame(game)
-      return serialize(game, profileId, () => setModEnabled(paths, def, profileId, modId, enabled))
-    },
+    setModEnabled: setModEnabledService,
 
     async uninstallMod(game, profileId, modId): Promise<void> {
       const def = await requireGame(game)

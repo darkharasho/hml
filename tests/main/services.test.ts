@@ -2311,3 +2311,442 @@ describe('share', () => {
     expect(HML_METHODS).toEqual(expect.arrayContaining(['exportProfileFile', 'shareProfile']))
   })
 })
+
+describe('share import', () => {
+  const IDX = 'https://thunderstore.io/c/repo/api/v1/package-listing-index/'
+  const CHUNK = 'https://ts.test/chunk-1'
+  const CODE = '0123456789'
+  const KEY = 'test-key-not-real'
+  const sha = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex')
+  const gz = (v: unknown): Uint8Array => gzipSync(Buffer.from(JSON.stringify(v)))
+  const tsDl = (n: string, v: string): string => `https://ts.test/dl/${n}/${v}`
+  const zipOf = (name: string, version: string): Uint8Array =>
+    zipSync({
+      'manifest.json': strToU8(JSON.stringify({ name, version_number: version })),
+      [`${name}.dll`]: strToU8('dll')
+    })
+  const bin = (b: Uint8Array): unknown => {
+    const buf = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
+    return { ok: true, status: 200, headers: new Headers(), arrayBuffer: async () => buf }
+  }
+  const reply = (body: unknown, status = 200): Response =>
+    new Response(JSON.stringify(body), { status })
+  const rawPkg = (
+    owner: string,
+    name: string,
+    versions: string[],
+    deps: string[] = []
+  ): unknown => ({
+    name,
+    full_name: `${owner}-${name}`,
+    owner,
+    package_url: `https://thunderstore.io/c/repo/p/${owner}/${name}/`,
+    date_updated: '2026-01-01T00:00:00Z',
+    rating_score: 1,
+    is_pinned: false,
+    is_deprecated: false,
+    has_nsfw_content: false,
+    categories: ['mods'],
+    versions: versions.map((v) => ({
+      name,
+      full_name: `${owner}-${name}-${v}`,
+      description: `${name} ${v}`,
+      icon: 'x',
+      version_number: v,
+      dependencies: deps,
+      download_url: tsDl(`${owner}-${name}`, v),
+      downloads: 1,
+      date_created: '2026-01-01T00:00:00Z',
+      website_url: '',
+      is_active: true,
+      file_size: 1
+    }))
+  })
+  const thing1 = zipOf('Thing', '1.0.0')
+  const thing2 = zipOf('Thing', '2.0.0')
+  const ghReleases: Record<string, Record<string, Uint8Array>> = {
+    'v1.0.0': { 'thing.zip': thing1 },
+    'v2.0.0': { 'thing.zip': thing2 }
+  }
+  const ghJson = (tag: string): unknown => ({
+    tag_name: tag,
+    name: tag,
+    prerelease: false,
+    draft: false,
+    published_at: '2026-01-01T00:00:00Z',
+    html_url: `https://github.com/owner/thing/releases/tag/${tag}`,
+    assets: Object.entries(ghReleases[tag]).map(([name, data], i) => ({
+      id: i + 1,
+      name,
+      size: data.length,
+      browser_download_url: `https://github.com/owner/thing/releases/download/${tag}/${name}`,
+      url: `https://api.github.com/repos/owner/thing/releases/assets/${i + 1}`,
+      digest: `sha256:${sha(data)}`
+    }))
+  })
+
+  let premium: boolean
+  let hml: Uint8Array
+  let ghDown: boolean
+  let clock: number
+  let api: ReturnType<typeof createServices>
+
+  const tsBlobs = new Map<string, Uint8Array>([
+    [tsDl('Own-Mod', '1.0.0'), zipOf('Mod', '1.0.0')],
+    [tsDl('Own-Mod', '2.0.0'), zipOf('Mod', '2.0.0')],
+    [tsDl('Dep-Lib', '1.0.0'), zipOf('Lib', '1.0.0')],
+    [tsDl('Dep-Lib', '1.5.0'), zipOf('Lib', '1.5.0')]
+  ])
+  const gql = (body: string): Response => {
+    const dom = /domainName:\\"([a-z0-9_-]+)\\"/.exec(body)?.[1]
+    if (body.includes('modFiles')) {
+      return reply({
+        data: {
+          modFiles: [
+            {
+              fileId: '11',
+              name: 'file11',
+              version: '1.0.0',
+              category: 'MAIN',
+              primary: 0,
+              size: 1,
+              sizeInBytes: '1024',
+              date: 100
+            }
+          ]
+        }
+      })
+    }
+    if (body.includes('game(domainName')) {
+      const name = dom === 'repo' ? 'R.E.P.O.' : 'Stardew Valley'
+      return reply({
+        data: { game: { id: dom === 'repo' ? '7398' : '1303', name, domainName: dom } }
+      })
+    }
+    if (body.includes('games(')) {
+      return reply({
+        data: { games: { nodes: [{ id: '7398', name: 'R.E.P.O.', domainName: 'repo' }] } }
+      })
+    }
+    return reply({
+      data: {
+        mods: {
+          totalCount: 1,
+          nodes: [
+            {
+              modId: '5',
+              name: 'Cool Mod',
+              summary: 's',
+              author: 'a',
+              version: '1.0.0',
+              downloads: 1,
+              endorsements: 1,
+              updatedAt: 'x',
+              adultContent: false
+            }
+          ]
+        }
+      }
+    })
+  }
+  const impFetch = (async (url: string, init?: { body?: string }) => {
+    const u = new URL(url)
+    if (url === IDX) return bin(gz([CHUNK]))
+    if (url === CHUNK) {
+      return bin(
+        gz([
+          rawPkg('Own', 'Mod', ['2.0.0', '1.0.0'], ['Dep-Lib-1.0.0']),
+          rawPkg('Dep', 'Lib', ['1.5.0', '1.0.0'])
+        ])
+      )
+    }
+    if (tsBlobs.has(url)) return bin(tsBlobs.get(url)!)
+    if (u.host === 'api.github.com') {
+      if (ghDown) throw new Error('network down')
+      const m = /^\/repos\/owner\/thing\/releases\/tags\/(.+)$/.exec(u.pathname)
+      const tag = m && decodeURIComponent(m[1])
+      return tag && ghReleases[tag]
+        ? { ok: true, status: 200, headers: new Headers(), json: async () => ghJson(tag) }
+        : { ok: false, status: 404, headers: new Headers(), json: async () => ({}) }
+    }
+    if (u.host === 'github.com') {
+      const m = /^\/owner\/thing\/releases\/download\/([^/]+)\/(.+)$/.exec(u.pathname)
+      const data = m && ghReleases[m[1]]?.[decodeURIComponent(m[2])]
+      return data ? bin(data) : { ok: false, status: 404, headers: new Headers() }
+    }
+    if (u.host === 'api.nexusmods.com' && u.pathname === '/v2/graphql') return gql(init?.body ?? '')
+    if (u.pathname === '/v1/users/validate.json') {
+      return reply({ user_id: 77, name: 'Haro', is_premium: premium, key: KEY })
+    }
+    const nxDl = /\/files\/(\d+)\/download_link\.json$/.exec(u.pathname)
+    if (nxDl) {
+      return reply([
+        { name: 'CDN', short_name: 'CDN', URI: `https://cf-files.nexusmods.com/f/${nxDl[1]}.zip` }
+      ])
+    }
+    if (u.host === 'cf-files.nexusmods.com')
+      return new Response(zipOf('CoolMod', '1.0.0') as BodyInit)
+    if (url === `https://share.test/v1/profiles/${CODE}`) return new Response(hml as BodyInit)
+    return { ok: true, json: async () => fixture }
+  }) as unknown as typeof fetch
+
+  type ExportMod = import('../../src/shared/types').HmlExportMod
+  const ts = (fullName: string, version: string, enabled = true): ExportMod => ({
+    source: { kind: 'thunderstore', fullName },
+    version,
+    enabled
+  })
+  const gh = (tag: string, sum = sha(ghReleases[tag]?.['thing.zip'] ?? thing1)): ExportMod => ({
+    name: 'Thing',
+    source: { kind: 'github', owner: 'owner', repo: 'thing', tag, asset: 'thing.zip', sha256: sum },
+    version: tag.replace(/^v/, ''),
+    enabled: true
+  })
+  const nx = (domain = 'repo'): ExportMod => ({
+    name: 'Cool Mod',
+    source: { kind: 'nexus', domain, modId: 5, fileId: 11 },
+    version: '1.0.0',
+    enabled: true
+  })
+  const local: ExportMod = {
+    source: { kind: 'local', fileName: 'mine.zip', sha256: 'ab' },
+    version: '1.0.0',
+    enabled: true
+  }
+  const makeHml = (
+    mods: ExportMod[],
+    o: { game?: string; profileName?: string; configs?: Record<string, string> } = {}
+  ): Uint8Array =>
+    zipSync({
+      'export.json': strToU8(
+        JSON.stringify({
+          formatVersion: 1,
+          game: o.game ?? 'repo',
+          profileName: o.profileName ?? 'Friends',
+          mods
+        })
+      ),
+      ...Object.fromEntries(Object.entries(o.configs ?? {}).map(([k, v]) => [k, strToU8(v)]))
+    })
+  const progressOf = (): Extract<HmlEvent, { type: 'progress' }>[] =>
+    emitted.filter((e): e is Extract<HmlEvent, { type: 'progress' }> => e.type === 'progress')
+
+  beforeEach(async () => {
+    premium = true
+    ghDown = false
+    clock = Date.now()
+    hml = makeHml([])
+    api = createServices({ ...deps, fetch: impFetch, now: () => clock })
+  })
+  const withKey = async (): Promise<void> => void (await api.nxSetKey(KEY))
+  const importCode = async (
+    mods: ExportMod[],
+    o: Parameters<typeof makeHml>[1] = {},
+    name = ''
+  ): Promise<import('../../src/shared/types').ImportResult> => {
+    hml = makeHml(mods, o)
+    const preview = await api.previewShare({ code: '01234-56789' })
+    return api.importShare(preview!.token, name)
+  }
+
+  test('a code preview names the game, profile and mods', async () => {
+    hml = makeHml([ts('Own-Mod', '1.0.0'), gh('v1.0.0'), local], {
+      configs: { 'BepInEx/config/a.cfg': 'x=1' }
+    })
+    const p = await api.previewShare({ code: '01234-56789' })
+    expect(p).toMatchObject({
+      game: 'repo',
+      gameName: 'R.E.P.O.',
+      profileName: 'Friends',
+      configFiles: 1,
+      mods: [
+        { name: 'Own-Mod', version: '1.0.0', kind: 'thunderstore' },
+        { name: 'Thing', version: '1.0.0', kind: 'github' },
+        { name: 'mine.zip', version: '1.0.0', kind: 'local' }
+      ]
+    })
+    expect(typeof p!.token).toBe('string')
+  })
+
+  test('a file preview reads the picked .hml, and cancel returns null', async () => {
+    let filters: unknown
+    const a = createServices({
+      ...deps,
+      fetch: impFetch,
+      dialog: {
+        ...dialog,
+        pickFiles: async (o) => {
+          filters = o.filters
+          return picked
+        }
+      }
+    })
+    expect(await a.previewShare({ file: true })).toBeNull()
+    expect(filters).toEqual([{ name: 'HML profile', extensions: ['hml'] }])
+    const file = path.join(tmp, 'p.hml')
+    writeFileSync(file, makeHml([local], { profileName: 'From file' }))
+    picked = [file]
+    expect(await a.previewShare({ file: true })).toMatchObject({
+      game: 'repo',
+      profileName: 'From file',
+      mods: [{ kind: 'local' }]
+    })
+  })
+
+  test('import rebuilds every mod at its exact version, keeps disabled mods off and writes configs', async () => {
+    await withKey()
+    const r = await importCode(
+      [ts('Dep-Lib', '1.0.0'), ts('Own-Mod', '1.0.0', false), gh('v1.0.0'), nx()],
+      { configs: { 'BepInEx/config/sub/a.cfg': 'shared=1' } },
+      'Mine'
+    )
+    expect(r.unresolved).toEqual([])
+    expect(r.warnings).toEqual([])
+    expect(r.installed).toBe(4)
+    expect(r.game).toBe('repo')
+    const byId = Object.fromEntries(r.profile.mods.map((m) => [m.id, m]))
+    expect(byId['Own-Mod']).toMatchObject({ version: '1.0.0', enabled: false })
+    expect(byId['Dep-Lib']).toMatchObject({ version: '1.0.0', enabled: true })
+    expect(byId['owner-thing']).toMatchObject({
+      version: '1.0.0',
+      source: { kind: 'github', tag: 'v1.0.0' }
+    })
+    expect(byId['nexus-5']).toMatchObject({ source: { kind: 'nexus', modId: 5, fileId: 11 } })
+    const dir = deps.paths.profileDir('repo', r.profile.id)
+    expect(readFileSync(path.join(dir, 'BepInEx', 'config', 'sub', 'a.cfg'), 'utf8')).toBe(
+      'shared=1'
+    )
+    // The installs' own progress events are interleaved; the import's count up to the mod total.
+    const prog = progressOf()
+    const importing = prog.filter((e) => e.message.startsWith('Importing '))
+    expect(importing.map((e) => [e.message, e.done, e.total])).toEqual([
+      ['Importing Dep-Lib', 0, 4],
+      ['Importing Own-Mod', 1, 4],
+      ['Importing Thing', 2, 4],
+      ['Importing Cool Mod', 3, 4]
+    ])
+    expect(prog[prog.length - 1]).toEqual({ type: 'progress', message: 'Done', done: 4, total: 4 })
+  })
+
+  test('an explicit Thunderstore version wins over one a dependency pulled in', async () => {
+    const r = await importCode([ts('Own-Mod', '1.0.0'), ts('Dep-Lib', '1.5.0')])
+    expect(r.installed).toBe(2)
+    const byId = Object.fromEntries(r.profile.mods.map((m) => [m.id, m]))
+    expect(byId['Dep-Lib'].version).toBe('1.5.0')
+    expect(byId['Own-Mod'].version).toBe('1.0.0')
+  })
+
+  test('unresolved entries carry the exact reasons', async () => {
+    premium = false
+    await withKey()
+    const r = await importCode([
+      ts('Own-Mod', '0.5.0'),
+      ts('Gone-Pkg', '1.0.0'),
+      gh('v9.9.9', 'ab'),
+      nx(),
+      nx('skyrim'),
+      local
+    ])
+    expect(r.installed).toBe(0)
+    expect(r.unresolved).toEqual([
+      {
+        name: 'Own-Mod',
+        version: '0.5.0',
+        kind: 'thunderstore',
+        reason: 'Version 0.5.0 is no longer on Thunderstore.'
+      },
+      {
+        name: 'Gone-Pkg',
+        version: '1.0.0',
+        kind: 'thunderstore',
+        reason: 'Not on Thunderstore anymore.'
+      },
+      {
+        name: 'Thing',
+        version: '9.9.9',
+        kind: 'github',
+        reason: "Release v9.9.9 isn't available on GitHub anymore."
+      },
+      {
+        name: 'Cool Mod',
+        version: '1.0.0',
+        kind: 'nexus',
+        reason: 'Needs Nexus Mods Premium. Download it from the website.',
+        url: 'https://www.nexusmods.com/repo/mods/5?tab=files&file_id=11'
+      },
+      {
+        name: 'Cool Mod',
+        version: '1.0.0',
+        kind: 'nexus',
+        reason: 'This mod is for a different game on Nexus Mods (skyrim).'
+      },
+      {
+        name: 'mine.zip',
+        version: '1.0.0',
+        kind: 'local',
+        reason: "Local file (mine.zip). Files aren't included in share codes."
+      }
+    ])
+  })
+
+  test('without a Nexus key the mod is unresolved with the Settings hint', async () => {
+    const r = await importCode([nx()])
+    expect(r.unresolved).toEqual([
+      expect.objectContaining({ reason: 'Add your Nexus Mods API key in Settings to download.' })
+    ])
+  })
+
+  test('a changed GitHub file is installed with a warning', async () => {
+    const r = await importCode([gh('v1.0.0', '0'.repeat(64))])
+    expect(r.installed).toBe(1)
+    expect(r.warnings).toEqual([
+      'owner/thing v1.0.0: the release file changed since this profile was shared.'
+    ])
+    expect(r.profile.mods.map((m) => m.id)).toEqual(['owner-thing'])
+  })
+
+  test('a failure in the middle leaves the other mods installed', async () => {
+    ghDown = true
+    const r = await importCode([ts('Dep-Lib', '1.0.0'), gh('v1.0.0'), ts('Own-Mod', '1.0.0')])
+    expect(r.installed).toBe(2)
+    expect(r.unresolved.map((u) => u.reason)).toEqual([
+      "Release v1.0.0 isn't available on GitHub anymore."
+    ])
+    expect(r.profile.mods.map((m) => m.id).sort()).toEqual(['Dep-Lib', 'Own-Mod'])
+  })
+
+  test('a taken name gets a unique id and a blank name uses the profile name', async () => {
+    await api.createProfile('repo', 'Friends')
+    const r = await importCode([], {}, '   ')
+    expect(r.profile.name).toBe('Friends')
+    expect(r.profile.id).toBe('friends-2')
+  })
+
+  test('a nexus-<domain> export adds the game; an unknown game is rejected', async () => {
+    hml = makeHml([], { game: 'nexus-stardewvalley' })
+    const p = await api.previewShare({ code: CODE })
+    const r = await api.importShare(p!.token, '')
+    expect(r.game).toBe('nexus-stardewvalley')
+    expect((await api.searchGames('')).map((g) => g.label)).toContain('nexus-stardewvalley')
+
+    hml = makeHml([], { game: 'nosuchgame' })
+    await expect(api.previewShare({ code: CODE })).rejects.toThrow(
+      "This profile is for a game HML doesn't know (nosuchgame)."
+    )
+  })
+
+  test('unknown, used and expired tokens give the exact message', async () => {
+    const EXPIRED = 'This import has expired. Open the code or file again.'
+    await expect(api.importShare('nope', '')).rejects.toThrow(EXPIRED)
+    const p1 = await api.previewShare({ code: CODE })
+    await api.importShare(p1!.token, '')
+    await expect(api.importShare(p1!.token, '')).rejects.toThrow(EXPIRED)
+    const p2 = await api.previewShare({ code: CODE })
+    clock += 600_001
+    await expect(api.importShare(p2!.token, '')).rejects.toThrow(EXPIRED)
+  })
+
+  test('HML_METHODS lists the import methods', () => {
+    expect(HML_METHODS).toEqual(expect.arrayContaining(['previewShare', 'importShare']))
+  })
+})
