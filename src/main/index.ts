@@ -1,5 +1,6 @@
 import { app, shell, dialog, BrowserWindow, safeStorage } from 'electron'
 import { execFile, spawn } from 'node:child_process'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir, release as osRelease, type as osType } from 'node:os'
 import { join } from 'path'
 import { pathToFileURL } from 'node:url'
@@ -8,6 +9,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { isAllowedNavigation, parseAllowedExternalUrl } from './security'
 import { registerIpc } from './ipc'
 import { createServices } from './services'
+import { findNxmArg, linuxDesktopEntry, type HandlerPort } from './nexus/nxm'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
 import { makePaths } from './store/paths'
 import { resolveSnapshotPath } from './snapshotPath'
@@ -18,6 +20,52 @@ const execFileAsync = promisify(execFile)
 const indexHtml = join(__dirname, '../renderer/index.html')
 
 let mainWindowRef: BrowserWindow | null = null
+
+const NXM_DESKTOP = 'hml-nxm.desktop'
+const NXM_DEV_REFUSAL = 'Nexus download links can only be handled by an installed build of HML.'
+
+/** Registers HML for `nxm://` links, only when the user asks (Vortex may own them). */
+const nxmHandler: HandlerPort = {
+  async status() {
+    if (!app.isPackaged) return 'unavailable'
+    if (process.platform === 'win32') {
+      return app.isDefaultProtocolClient('nxm') ? 'registered' : 'not-registered'
+    }
+    if (process.platform !== 'linux') return 'unavailable'
+    try {
+      const { stdout } = await execFileAsync('xdg-mime', [
+        'query',
+        'default',
+        'x-scheme-handler/nxm'
+      ])
+      return stdout.trim() === NXM_DESKTOP ? 'registered' : 'not-registered'
+    } catch {
+      return 'not-registered'
+    }
+  },
+  async register() {
+    if (!app.isPackaged) throw new Error(NXM_DEV_REFUSAL)
+    if (process.platform === 'win32') {
+      if (!app.setAsDefaultProtocolClient('nxm')) {
+        throw new Error("Windows wouldn't let HML handle Nexus download links.")
+      }
+      return
+    }
+    if (process.platform !== 'linux') throw new Error(NXM_DEV_REFUSAL)
+    const dir = join(homedir(), '.local', 'share', 'applications')
+    await mkdir(dir, { recursive: true })
+    // An AppImage's real path is APPIMAGE; execPath points into its temporary mount.
+    await writeFile(
+      join(dir, NXM_DESKTOP),
+      linuxDesktopEntry(process.env['APPIMAGE'] ?? process.execPath)
+    )
+    await execFileAsync('xdg-mime', ['default', NXM_DESKTOP, 'x-scheme-handler/nxm'])
+  }
+}
+
+// One running HML receives every nxm:// link; a second launch hands its argv over and exits.
+const hasLock = app.requestSingleInstanceLock()
+if (!hasLock) app.quit()
 
 function createWindow(): void {
   // Create the browser window.
@@ -70,87 +118,105 @@ function createWindow(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
-  // Set app user model id for windows
-  electronApp.setAppUserModelId('com.darkharasho.hml')
+if (hasLock)
+  app.whenReady().then(() => {
+    // Set app user model id for windows
+    electronApp.setAppUserModelId('com.darkharasho.hml')
 
-  // Default open or close DevTools by F12 in development
-  // and ignore CommandOrControl + R in production.
-  // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
-
-  const services = createServices({
-    paths: makePaths(app.getPath('userData')),
-    fetch: globalThis.fetch,
-    appVersion: app.getVersion(),
-    os: { type: osType(), release: osRelease(), arch: process.arch },
-    snapshotPath: resolveSnapshotPath({
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      devPath: devSnapshotPath
-    }),
-    platform: process.platform,
-    emit: (e) => {
-      const win = mainWindowRef
-      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-        try {
-          win.webContents.send('hml:event', e)
-        } catch {
-          // A closing window must never abort the operation that emitted.
-        }
-      }
-    },
-    secrets: {
-      isAvailable: () =>
-        safeStorage.isEncryptionAvailable() &&
-        (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
-      encrypt: (plain) => safeStorage.encryptString(plain),
-      decrypt: (data) => safeStorage.decryptString(data)
-    },
-    home: homedir(),
-    dialog: {
-      async pickFiles({ title, filters }) {
-        const win = BrowserWindow.getFocusedWindow()
-        const opts = { title, filters, properties: ['openFile', 'multiSelections'] as const }
-        const r = win
-          ? await dialog.showOpenDialog(win, { ...opts, properties: [...opts.properties] })
-          : await dialog.showOpenDialog({ ...opts, properties: [...opts.properties] })
-        return r.canceled ? [] : r.filePaths
-      },
-      async pickFolder(title) {
-        const win = BrowserWindow.getFocusedWindow()
-        const opts = { title, properties: ['openDirectory' as const] }
-        const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-        return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
-      }
-    },
-    shell,
-    spawn,
-    execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false })
-  })
-  registerIpc(services)
-
-  createWindow()
-
-  // Check GitHub mods for updates shortly after startup and then periodically.
-  const runGhUpdates = (): void => {
-    services.ghAutoUpdateAll().catch((e) => {
-      console.warn(`GitHub auto-update failed: ${e instanceof Error ? e.message : String(e)}`)
+    // Default open or close DevTools by F12 in development
+    // and ignore CommandOrControl + R in production.
+    // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
     })
-  }
-  setTimeout(() => {
-    runGhUpdates()
-    setInterval(runGhUpdates, GH_CHECK_INTERVAL_MS)
-  }, 10_000)
 
-  app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    const services = createServices({
+      paths: makePaths(app.getPath('userData')),
+      fetch: globalThis.fetch,
+      appVersion: app.getVersion(),
+      os: { type: osType(), release: osRelease(), arch: process.arch },
+      snapshotPath: resolveSnapshotPath({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        devPath: devSnapshotPath
+      }),
+      platform: process.platform,
+      emit: (e) => {
+        const win = mainWindowRef
+        if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+          try {
+            win.webContents.send('hml:event', e)
+          } catch {
+            // A closing window must never abort the operation that emitted.
+          }
+        }
+      },
+      secrets: {
+        isAvailable: () =>
+          safeStorage.isEncryptionAvailable() &&
+          (process.platform !== 'linux' ||
+            safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+        encrypt: (plain) => safeStorage.encryptString(plain),
+        decrypt: (data) => safeStorage.decryptString(data)
+      },
+      home: homedir(),
+      dialog: {
+        async pickFiles({ title, filters }) {
+          const win = BrowserWindow.getFocusedWindow()
+          const opts = { title, filters, properties: ['openFile', 'multiSelections'] as const }
+          const r = win
+            ? await dialog.showOpenDialog(win, { ...opts, properties: [...opts.properties] })
+            : await dialog.showOpenDialog({ ...opts, properties: [...opts.properties] })
+          return r.canceled ? [] : r.filePaths
+        },
+        async pickFolder(title) {
+          const win = BrowserWindow.getFocusedWindow()
+          const opts = { title, properties: ['openDirectory' as const] }
+          const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+          return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+        }
+      },
+      shell,
+      spawn,
+      execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false }),
+      nxmHandler
+    })
+    registerIpc(services)
+
+    createWindow()
+
+    // A link that launched HML is handled once the renderer can receive the event.
+    const launchLink = findNxmArg(process.argv)
+    if (launchLink && mainWindowRef) {
+      mainWindowRef.webContents.once('did-finish-load', () => void services.handleNxm(launchLink))
+    }
+    app.on('second-instance', (_event, argv) => {
+      const win = mainWindowRef
+      if (win && !win.isDestroyed()) {
+        if (win.isMinimized()) win.restore()
+        win.focus()
+      }
+      const link = findNxmArg(argv)
+      if (link) void services.handleNxm(link)
+    })
+
+    // Check GitHub mods for updates shortly after startup and then periodically.
+    const runGhUpdates = (): void => {
+      services.ghAutoUpdateAll().catch((e) => {
+        console.warn(`GitHub auto-update failed: ${e instanceof Error ? e.message : String(e)}`)
+      })
+    }
+    setTimeout(() => {
+      runGhUpdates()
+      setInterval(runGhUpdates, GH_CHECK_INTERVAL_MS)
+    }, 10_000)
+
+    app.on('activate', function () {
+      // On macOS it's common to re-create a window in the app when the
+      // dock icon is clicked and there are no other windows open.
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
   })
-})
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

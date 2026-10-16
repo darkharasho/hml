@@ -81,6 +81,8 @@ export interface HmlApi {
   /** Saves (after verifying) or, with null/empty, removes the Nexus Mods API key. Never returns it. */
   nxSetKey(key: string | null): Promise<NxUser | null>
   nxStatus(): Promise<NxStatus>
+  /** Makes HML the operating system's handler for `nxm://` links (only on the user's request). */
+  nxRegisterHandler(): Promise<void>
   nxSearch(game: string, q: NxQuery): Promise<NxSearchResult>
   nxGetMod(game: string, modId: number): Promise<NxModDetail>
   nxInstall(
@@ -137,6 +139,7 @@ const METHOD_TABLE = {
   nxSetDomain: true,
   nxSetKey: true,
   nxStatus: true,
+  nxRegisterHandler: true,
   nxSearch: true,
   nxGetMod: true,
   nxInstall: true,

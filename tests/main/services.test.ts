@@ -75,6 +75,7 @@ beforeEach(() => {
     appVersion: '1.0.0',
     os: { type: 'Linux', release: '6', arch: 'x64' },
     emit: (e) => emitted.push(e),
+    nxmHandler: { status: async () => 'not-registered', register: async () => undefined },
     fetch: (async () => ({ ok: true, json: async () => fixture })) as unknown as typeof fetch,
     snapshotPath: path.join(__dirname, '../fixtures/ecosystem-min.json'),
     platform: 'linux',
@@ -849,8 +850,10 @@ describe('services', () => {
   })
 
   test('HML_METHODS covers every HmlApi key', () => {
-    // ghAutoUpdateAll is for the main-process scheduler, not an IPC method.
-    const keys = Object.keys(createServices(deps)).filter((k) => k !== 'ghAutoUpdateAll')
+    // ghAutoUpdateAll and handleNxm are for the main process, not IPC methods.
+    const keys = Object.keys(createServices(deps)).filter(
+      (k) => k !== 'ghAutoUpdateAll' && k !== 'handleNxm'
+    )
     expect([...HML_METHODS].sort()).toEqual(keys.sort())
   })
 
@@ -2005,6 +2008,87 @@ describe('services', () => {
           'Pick a profile for R.E.P.O. in HML first.'
         )
       })
+
+      describe('handleNxm', () => {
+        const raw = (over = ''): string =>
+          `nxm://repo/mods/5/files/11?key=LINKKEY&expires=1234&user_id=${over || 77}`
+        const last = (): HmlEvent => emitted[emitted.length - 1]
+
+        test('installs and emits nexus-installed', async () => {
+          lastProfile()
+          await withKey()
+          premium = false
+          await api.handleNxm(raw())
+          expect(last()).toEqual({
+            type: 'nexus-installed',
+            game: 'repo',
+            profileId: pid,
+            mod: { name: 'Cool Mod', version: 'v11' }
+          })
+          expect(
+            calls.some((c) => c.url.includes('download_link.json?key=LINKKEY&expires=1234'))
+          ).toBe(true)
+        })
+
+        test('a link for another account is refused', async () => {
+          lastProfile()
+          await withKey()
+          await api.handleNxm(raw('78'))
+          expect(last()).toEqual({
+            type: 'nexus-failed',
+            message: 'This download link is for a different Nexus Mods account.'
+          })
+          expect(calls.some((c) => c.url.includes('download_link.json'))).toBe(false)
+        })
+
+        test('unknown domain, no profile, expired link and invalid link all emit failures', async () => {
+          lastProfile()
+          await withKey()
+          await api.handleNxm('nxm://nowhere/mods/5/files/11?key=k&expires=1&user_id=77')
+          expect(last()).toEqual({
+            type: 'nexus-failed',
+            message: 'Open nowhere in HML before downloading its mods.'
+          })
+          downloadStatus = 410
+          await expect(api.handleNxm(raw())).resolves.toBeUndefined()
+          expect(last()).toMatchObject({ type: 'nexus-failed' })
+          expect((last() as { message: string }).message).toMatch(/expired/i)
+          await expect(api.handleNxm('https://example.com/')).resolves.toBeUndefined()
+          expect(last()).toEqual({
+            type: 'nexus-failed',
+            message: "That isn't a Nexus Mods download link."
+          })
+        })
+
+        test('no profile picked', async () => {
+          const s = JSON.parse(readFileSync(deps.paths.settings, 'utf8'))
+          writeFileSync(
+            deps.paths.settings,
+            JSON.stringify({ ...s, nexusDomainOverrides: { repo: 'repo' } })
+          )
+          await withKey()
+          await api.handleNxm(raw())
+          expect(last()).toEqual({
+            type: 'nexus-failed',
+            message: 'Pick a profile for R.E.P.O. in HML first.'
+          })
+        })
+      })
+
+      test('nxRegisterHandler delegates and nxStatus reads the handler', async () => {
+        let registered = 0
+        const a = createServices({
+          ...deps,
+          fetch: nxFetch,
+          nxmHandler: {
+            status: async () => (registered ? 'registered' : 'not-registered'),
+            register: async () => void registered++
+          }
+        })
+        expect((await a.nxStatus()).handler).toBe('not-registered')
+        await a.nxRegisterHandler()
+        expect((await a.nxStatus()).handler).toBe('registered')
+      })
     })
   })
 
@@ -2025,12 +2109,14 @@ describe('services', () => {
       expect(await run('https://thunderstore.io:8443/')).toEqual(['https://thunderstore.io:8443/'])
     })
     test.each(['javascript:alert(1)', 'https://thunderstore.io./'])('rejects %s', async (u) => {
-      await expect(run(u)).rejects.toThrow('HML only opens Thunderstore and GitHub links.')
+      await expect(run(u)).rejects.toThrow(
+        'HML only opens Thunderstore, GitHub and Nexus Mods links.'
+      )
     })
   })
 
   describe('openExternal', () => {
-    const MSG = 'HML only opens Thunderstore and GitHub links.'
+    const MSG = 'HML only opens Thunderstore, GitHub and Nexus Mods links.'
     test.each([
       'https://thunderstore.io/c/repo/p/a/b/',
       'https://github.com/x/y',

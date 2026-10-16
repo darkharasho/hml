@@ -67,6 +67,8 @@ export function createNexusServices(ctx: NexusContext): Pick<
   'nxSetKey' | 'nxStatus' | 'nxSearch' | 'nxGetMod' | 'nxInstall' | 'nxCheckUpdates' | 'nxUpdate'
 > & {
   installFromNxm(link: NxmLink): Promise<{ game: string; profileId: string; mod: InstalledMod }>
+  /** The logged-in Nexus user's id (validating the key if needed); null without a key. */
+  loggedInUserId(): Promise<number | null>
 } {
   const { deps, client, games, serialize } = ctx
   const { paths } = deps
@@ -116,7 +118,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
       set: key !== null,
       encryptionAvailable: deps.secrets.isAvailable(),
       user: key && user ? { name: user.name, isPremium: user.isPremium } : null,
-      handler: 'not-registered'
+      handler: await deps.nxmHandler.status()
     }
   }
 
@@ -370,6 +372,10 @@ export function createNexusServices(ctx: NexusContext): Pick<
     nxInstall: install,
     nxCheckUpdates: checkUpdates,
     nxUpdate: update,
-    installFromNxm
+    installFromNxm,
+    async loggedInUserId() {
+      const key = await loadKey()
+      return key ? (await currentUser(key)).userId : null
+    }
   }
 }

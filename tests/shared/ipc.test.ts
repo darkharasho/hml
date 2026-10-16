@@ -50,6 +50,7 @@ test('HML_METHODS lists the nexus methods', () => {
     expect.arrayContaining([
       'nxSetKey',
       'nxStatus',
+      'nxRegisterHandler',
       'nxSearch',
       'nxGetMod',
       'nxInstall',

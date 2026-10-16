@@ -58,6 +58,7 @@ import { deployProfile, deploymentStatus, removeDeployment } from './deploy/depl
 import { createNexusGames } from './nexus/games'
 import { createNexusServices } from './nexus/service'
 import { gameByDomain } from './nexus/api'
+import { parseNxm, type HandlerPort } from './nexus/nxm'
 import { findInstalledMod } from '../shared/modIdentity'
 
 export interface DialogPort {
@@ -95,6 +96,8 @@ export interface ServiceDeps {
   appVersion: string
   /** OS details for the Nexus User-Agent. */
   os: { type: string; release: string; arch: string }
+  /** Registers and reports HML as the operating system's `nxm://` handler. */
+  nxmHandler: HandlerPort
 }
 
 interface LoadedIndex extends TsIndex {
@@ -130,7 +133,9 @@ async function assertZipFile(file: string): Promise<void> {
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll(): Promise<void> } {
+export function createServices(
+  deps: ServiceDeps
+): HmlApi & { ghAutoUpdateAll(): Promise<void>; handleNxm(raw: string): Promise<void> } {
   const { paths } = deps
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
   const now = deps.now ?? Date.now
@@ -516,7 +521,7 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
     isGameRunning: () => false
   })
 
-  const { installFromNxm, ...nexusApi } = createNexusServices({
+  const { installFromNxm, loggedInUserId, ...nexusApi } = createNexusServices({
     deps,
     client: nexusClient,
     games: nexus,
@@ -525,13 +530,35 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
     serialize
   })
 
-  // Task 6 wires this into handleNxm.
-  void installFromNxm
+  /** Handles an `nxm://` link end to end. Never throws: the outcome is an event. */
+  async function handleNxm(raw: string): Promise<void> {
+    try {
+      const link = parseNxm(raw)
+      if (!link) throw new Error("That isn't a Nexus Mods download link.")
+      if (link.userId !== null) {
+        const me = await loggedInUserId()
+        if (me !== null && me !== link.userId) {
+          throw new Error('This download link is for a different Nexus Mods account.')
+        }
+      }
+      const { game, profileId, mod } = await installFromNxm(link)
+      deps.emit({
+        type: 'nexus-installed',
+        game,
+        profileId,
+        mod: { name: mod.name, version: mod.version }
+      })
+    } catch (e) {
+      deps.emit({ type: 'nexus-failed', message: errMsg(e) })
+    }
+  }
 
   return {
     ...tsServices,
     ...ghServices,
     ...nexusApi,
+    handleNxm,
+    nxRegisterHandler: () => deps.nxmHandler.register(),
     async searchGames(query: string): Promise<GameSummary[]> {
       const catalog = await getCatalog()
       const ranked = searchGames(catalog.games, query)
@@ -751,7 +778,7 @@ export function createServices(deps: ServiceDeps): HmlApi & { ghAutoUpdateAll():
 
     async openExternal(url: string): Promise<void> {
       const u = parseAllowedExternalUrl(url)
-      if (!u) throw new Error('HML only opens Thunderstore and GitHub links.')
+      if (!u) throw new Error('HML only opens Thunderstore, GitHub and Nexus Mods links.')
       await deps.shell.openExternal(u.href)
     },
 
