@@ -42,7 +42,16 @@ const names = (r: { plan: { fullName: string; version: string }[] }): string[] =
   r.plan.map((p) => `${p.fullName}@${p.version}`)
 
 function mod(id: string, version: string, source: InstalledMod['source']): InstalledMod {
-  return { id, name: id, version, source, enabled: true, files: [], disableable: [], installedAt: '' }
+  return {
+    id,
+    name: id,
+    version,
+    source,
+    enabled: true,
+    files: [],
+    disableable: [],
+    installedAt: ''
+  }
 }
 const ts = (fullName: string, version: string): InstalledMod =>
   mod(fullName, version, { kind: 'thunderstore', fullName })
@@ -156,6 +165,36 @@ describe('resolveInstall', () => {
     expect(r.skipped).not.toContain('O-B')
   })
 
+  it('skips an installed dependency whose required version left the index', () => {
+    const i = idx(pkg('O-A', { '1.0.0': ['O-B-2.0.0', 'O-C-1.0.0'] }), pkg('O-B', { '1.0.0': [] }))
+    const r = resolveInstall(
+      i,
+      { fullName: 'O-A' },
+      new Map([
+        ['O-B', '2.0.0'],
+        ['O-C', '1.0.0']
+      ])
+    )
+    expect(r.missing).toEqual([])
+    expect(r.skipped.sort()).toEqual(['O-B', 'O-C'])
+    expect(names(r)).toEqual(['O-A@1.0.0'])
+  })
+
+  it('settles a cascade where raising a version changes its dependencies', () => {
+    const i = idx(
+      pkg('O-A', { '1.0.0': ['O-B-1.0.0', 'O-C-1.0.0'] }),
+      pkg('O-B', { '1.0.0': ['O-D-1.0.0'] }),
+      pkg('O-C', { '1.0.0': ['O-B-2.0.0'] }),
+      pkg('O-B', { '1.0.0': ['O-D-1.0.0'], '2.0.0': ['O-E-1.0.0'] }),
+      pkg('O-D', { '1.0.0': [] }),
+      pkg('O-E', { '1.0.0': [] })
+    )
+    const r = resolveInstall(i, { fullName: 'O-A' }, new Map())
+    expect(r.plan.map((p) => p.fullName).sort()).toEqual(['O-A', 'O-B', 'O-C', 'O-E'])
+    expect(names(r)).toContain('O-B@2.0.0')
+    expect(resolveInstall(i, { fullName: 'O-A' }, new Map())).toEqual(r)
+  })
+
   it('skips a target already at the requested version', () => {
     const i = idx(pkg('O-A', { '1.0.0': ['O-B-1.0.0'] }), pkg('O-B', { '1.0.0': [] }))
     const r = resolveInstall(i, { fullName: 'O-A' }, new Map([['O-A', '1.0.0']]))
@@ -200,7 +239,14 @@ describe('installedVersions', () => {
     const m = installedVersions(
       [
         ts('O-A', '1.0.0'),
-        mod('x', '3.0.0', { kind: 'github', owner: 'o', repo: 'r', tag: 't', asset: 'a', sha256: '' }),
+        mod('x', '3.0.0', {
+          kind: 'github',
+          owner: 'o',
+          repo: 'r',
+          tag: 't',
+          asset: 'a',
+          sha256: ''
+        }),
         ts('BepInEx-BepInExPack', '5.4.1')
       ],
       ['BepInEx-BepInExPack', 'bbepis-BepInExPack']

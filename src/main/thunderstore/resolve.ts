@@ -77,8 +77,7 @@ export function resolveInstall(
     const visit = (version: TsVersion): void => {
       for (const dep of version.dependencies) {
         const parsed = parseDependency(dep)
-        const depPkg = parsed && index.get(parsed.fullName)
-        if (!parsed || !depPkg) {
+        if (!parsed) {
           missing.add(dep)
           continue
         }
@@ -89,17 +88,21 @@ export function resolveInstall(
         }
         req.set(fullName, min)
         if (visited.has(fullName)) continue
-        const pick = pickVersion(depPkg, min)
-        if (!pick) {
+        // An installed version that satisfies the minimum is enough; the index is
+        // only consulted when something has to be downloaded.
+        const have = installed.get(fullName)
+        if (have !== undefined && compareVersions(have, min) >= 0) {
+          visited.add(fullName)
+          skipped.add(fullName)
+          continue
+        }
+        const depPkg = index.get(fullName)
+        const pick = depPkg && pickVersion(depPkg, min)
+        if (!depPkg || !pick) {
           missing.add(dep)
           continue
         }
         visited.add(fullName)
-        const have = installed.get(fullName)
-        if (have !== undefined && compareVersions(have, min) >= 0) {
-          skipped.add(fullName)
-          continue
-        }
         visit(pick)
         plan.push({
           fullName,
@@ -125,15 +128,20 @@ export function resolveInstall(
     return { req, plan, skipped: [...skipped], missing: [...missing] }
   }
 
-  const same = (a: Map<string, string>, b: Map<string, string>): boolean =>
-    a.size === b.size && [...a].every(([k, v]) => b.get(k) === v)
-
-  let pass = walk(new Map())
-  for (let i = 0; i < 50; i++) {
-    const next = walk(pass.req)
-    const done = same(next.req, pass.req)
-    pass = next
-    if (done) break
+  // Floors only ever rise (max over every pass), and each is a version string taken from
+  // the index, so this reaches a fixed point; the final walk then runs with a stable floor
+  // and is deterministic. The bound is only a guard.
+  let floor = new Map<string, string>()
+  let pass = walk(floor)
+  for (let i = 0; i < 1000; i++) {
+    const merged = new Map(floor)
+    for (const [k, v] of pass.req) {
+      const cur = merged.get(k)
+      if (!cur || compareVersions(v, cur) > 0) merged.set(k, v)
+    }
+    if (merged.size === floor.size && [...merged].every(([k, v]) => floor.get(k) === v)) break
+    floor = merged
+    pass = walk(floor)
   }
   return { plan: pass.plan, skipped: pass.skipped, missing: pass.missing }
 }
