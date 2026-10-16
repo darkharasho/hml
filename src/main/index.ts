@@ -92,7 +92,11 @@ app.whenReady().then(() => {
       emit: (e) => {
         const win = mainWindowRef
         if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-          win.webContents.send('hml:event', e)
+          try {
+            win.webContents.send('hml:event', e)
+          } catch {
+            // A closing window must never abort the operation that emitted.
+          }
         }
       },
       home: homedir(),

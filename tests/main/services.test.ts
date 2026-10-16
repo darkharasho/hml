@@ -630,6 +630,27 @@ describe('services', () => {
       expect(HML_METHODS).toContain(m)
   })
 
+  describe('openExternal normalization', () => {
+    const run = async (u: string): Promise<string[]> => {
+      const opened: string[] = []
+      const api = createServices({
+        ...deps,
+        shell: { openPath: async () => '', openExternal: async (x) => void opened.push(x) }
+      })
+      await api.openExternal(u)
+      return opened
+    }
+    test('opens the normalized href', async () => {
+      expect(await run('HTTPS://THUNDERSTORE.IO/x')).toEqual(['https://thunderstore.io/x'])
+    })
+    test('policy: explicit ports on allowed hosts are accepted', async () => {
+      expect(await run('https://thunderstore.io:8443/')).toEqual(['https://thunderstore.io:8443/'])
+    })
+    test.each(['javascript:alert(1)', 'https://thunderstore.io./'])('rejects %s', async (u) => {
+      await expect(run(u)).rejects.toThrow('HML only opens Thunderstore and GitHub links.')
+    })
+  })
+
   describe('openExternal', () => {
     const MSG = 'HML only opens Thunderstore and GitHub links.'
     test.each([

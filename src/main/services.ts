@@ -100,21 +100,21 @@ async function assertZipFile(file: string): Promise<void> {
   if (!stat?.isFile()) throw new Error(`${name} was not found or is not a file.`)
 }
 
-function isAllowedExternalUrl(raw: string): boolean {
+function parseAllowedExternalUrl(raw: string): URL | null {
   let u: URL
   try {
     u = new URL(raw)
   } catch {
-    return false
+    return null
   }
-  if (u.protocol !== 'https:') return false
-  const h = u.hostname.toLowerCase()
-  return (
+  if (u.protocol !== 'https:') return null
+  const h = u.hostname
+  const ok =
     h === 'thunderstore.io' ||
     h.endsWith('.thunderstore.io') ||
     h === 'github.com' ||
     h === 'www.github.com'
-  )
+  return ok ? u : null
 }
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -538,9 +538,9 @@ export function createServices(deps: ServiceDeps): HmlApi {
     },
 
     async openExternal(url: string): Promise<void> {
-      if (!isAllowedExternalUrl(url))
-        throw new Error('HML only opens Thunderstore and GitHub links.')
-      await deps.shell.openExternal(url)
+      const u = parseAllowedExternalUrl(url)
+      if (!u) throw new Error('HML only opens Thunderstore and GitHub links.')
+      await deps.shell.openExternal(u.href)
     },
 
     getSettings: () => loadSettings(paths),
