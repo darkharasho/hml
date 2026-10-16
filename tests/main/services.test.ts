@@ -1264,10 +1264,12 @@ describe('services', () => {
 
       test('unavailable secure storage refuses to save and reports it', async () => {
         const secrets = { ...deps.secrets, isAvailable: () => false }
-        api = createServices({ ...deps, secrets, fetch: loginFetch([]) })
+        const seen: Seen[] = []
+        api = createServices({ ...deps, secrets, fetch: loginFetch(seen) })
         await expect(api.ghSetToken('ghp_abc123')).rejects.toThrow(
           "Secure storage isn't available on this system, so HML can't save a GitHub token."
         )
+        expect(seen).toEqual([])
         expect(await api.ghTokenStatus()).toEqual({ set: false, encryptionAvailable: false })
         expect(await api.ghSetToken(null)).toEqual({ login: null })
       })

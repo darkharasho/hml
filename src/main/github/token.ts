@@ -18,6 +18,9 @@ export async function loadToken(paths: AppPaths, secrets: SecretPort): Promise<s
   }
 }
 
+export const NO_SECURE_STORAGE =
+  "Secure storage isn't available on this system, so HML can't save a GitHub token."
+
 export async function saveToken(
   paths: AppPaths,
   secrets: SecretPort,
@@ -28,9 +31,7 @@ export async function saveToken(
     return
   }
   if (!secrets.isAvailable()) {
-    throw new Error(
-      "Secure storage isn't available on this system, so HML can't save a GitHub token."
-    )
+    throw new Error(NO_SECURE_STORAGE)
   }
   await fs.mkdir(path.dirname(paths.ghToken), { recursive: true })
   const tmp = `${paths.ghToken}.${randomUUID()}.tmp`

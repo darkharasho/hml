@@ -22,7 +22,7 @@ import {
   isNewerTag,
   type GhRelease
 } from './api'
-import { loadToken, saveToken } from './token'
+import { loadToken, NO_SECURE_STORAGE, saveToken } from './token'
 
 export const GH_CHECK_INTERVAL_MS = 21_600_000
 
@@ -54,7 +54,7 @@ interface Chosen {
 
 const BAD_TOKEN = "That doesn't look like a GitHub token."
 
-/** True for an empty-free token without whitespace or control characters, at most 255 long. */
+/** True for a non-empty token without whitespace or control characters, at most 255 long. */
 function looksLikeToken(t: string): boolean {
   if (t.length > 255) return false
   for (let i = 0; i < t.length; i++) {
@@ -443,6 +443,8 @@ export function createGithubServices(ctx: GhContext): Pick<
       return { login: null }
     }
     if (!looksLikeToken(token)) throw new Error(BAD_TOKEN)
+    // Don't send a token to GitHub that can't be stored afterwards.
+    if (!deps.secrets.isAvailable()) throw new Error(NO_SECURE_STORAGE)
     const login = await fetchLogin({ fetch: deps.fetch, token })
     await saveToken(paths, deps.secrets, token)
     return { login }
