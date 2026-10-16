@@ -78,4 +78,46 @@ describe('chooseAsset', () => {
     const r2 = await chooseAsset(two, 'Nope-{version}.zip', async () => noManifest)
     expect(r2).toMatchObject({ ask: [{}, {}] })
   })
+  it('probes at most 5 zips', async () => {
+    const download = vi.fn(async () => noManifest)
+    const zips = Array.from({ length: 6 }, (_, i) => asset(`m${i}.zip`))
+    const r = await chooseAsset(zips, null, download)
+    expect(download).toHaveBeenCalledTimes(5)
+    expect(r).toHaveProperty('ask')
+    if ('ask' in r) expect(r.ask).toHaveLength(6)
+  })
+  it('does not probe zips over 100 MB', async () => {
+    const download = vi.fn(async () => withManifest)
+    const r = await chooseAsset(
+      [asset('big.zip', 104_857_601), asset('small.zip', 5)],
+      null,
+      download
+    )
+    expect(download).toHaveBeenCalledTimes(1)
+    expect(r).toMatchObject({ asset: { name: 'small.zip' } })
+  })
+  it('treats an unreadable zip as having no manifest', async () => {
+    const data: Record<string, Uint8Array> = {
+      'bad.zip': strToU8('not a zip'),
+      'good.zip': withManifest
+    }
+    const r = await chooseAsset(
+      [asset('bad.zip'), asset('good.zip')],
+      null,
+      async (a) => data[a.name]
+    )
+    expect(r).toMatchObject({ asset: { name: 'good.zip' } })
+  })
+  it('counts upper-case .ZIP as a zip', async () => {
+    const r = await chooseAsset([asset('A.ZIP'), asset('a.dll')], null, async () => noManifest)
+    expect(r).toMatchObject({ asset: { name: 'A.ZIP' } })
+  })
+  it('ignores pattern hits that are not zip or dll', async () => {
+    const r = await chooseAsset(
+      [asset('Mod-1.0.txt'), asset('Mod-1.0.zip')],
+      'Mod-{version}.txt',
+      async () => noManifest
+    )
+    expect(r).toMatchObject({ asset: { name: 'Mod-1.0.zip' } })
+  })
 })

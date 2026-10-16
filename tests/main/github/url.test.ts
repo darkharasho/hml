@@ -36,10 +36,22 @@ describe('parseGithubUrl', () => {
       'https://github.com/a',
       'https://github.com/-bad/x',
       'https://github.com/a/..',
+      'http://localhost/a/b',
+      'localhost/a/b',
       '',
       'not a url'
     ]) {
       expect(parseGithubUrl(s)).toBeNull()
     }
+  })
+  it('keeps slashes in tags', () => {
+    expect(parseGithubUrl('https://github.com/a/b/releases/tag/feature/v1')).toEqual({
+      owner: 'a',
+      repo: 'b',
+      tag: 'feature/v1'
+    })
+    expect(
+      parseGithubUrl('https://github.com/a/b/releases/download/feature/v1/M%20od.zip')
+    ).toEqual({ owner: 'a', repo: 'b', tag: 'feature/v1', asset: 'M od.zip' })
   })
 })

@@ -46,13 +46,14 @@ export async function chooseAsset(
     data: data ?? (await download(asset))
   })
 
+  const zips = candidates.filter((a) => /\.zip$/i.test(a.name))
+  const dlls = candidates.filter((a) => /\.dll$/i.test(a.name))
+
   if (pattern) {
-    const hits = candidates.filter((a) => matchesAssetPattern(pattern, a.name))
+    const hits = [...zips, ...dlls].filter((a) => matchesAssetPattern(pattern, a.name))
     if (hits.length === 1) return pick(hits[0])
   }
 
-  const zips = candidates.filter((a) => /\.zip$/i.test(a.name))
-  const dlls = candidates.filter((a) => /\.dll$/i.test(a.name))
   if (zips.length === 1) return pick(zips[0])
   if (zips.length > 1) {
     const probed: Chosen[] = []
