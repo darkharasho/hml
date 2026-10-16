@@ -13,7 +13,7 @@ import type {
   UnresolvedMod
 } from '../../shared/types'
 import { compareVersions } from '../../shared/version'
-import { getProfile } from '../profiles/profiles'
+import { getProfile, RESERVED } from '../profiles/profiles'
 import type { ServiceDeps } from '../services'
 import { buildHmlFile, IMPORT_TOO_BIG, MAX_HML_BYTES, readHmlFile } from './hmlFile'
 import { downloadShare, uploadShare } from './client'
@@ -89,8 +89,12 @@ function nexusDomainOf(game: string): string | null {
 /** Replaces characters that are unsafe in file names on Windows or Linux. */
 export function safeFileName(name: string): string {
   // eslint-disable-next-line no-control-regex
-  const cleaned = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim()
-  return cleaned || 'profile'
+  const cleaned = name
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .trim()
+    .replace(/[. ]+$/, '')
+  if (!cleaned) return 'profile'
+  return RESERVED.test(cleaned) ? `_${cleaned}` : cleaned
 }
 
 export function createShareServices(ctx: ShareContext): ShareApi {

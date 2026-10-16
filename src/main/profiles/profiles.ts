@@ -5,7 +5,7 @@ import type { AppPaths } from '../store/paths'
 import { readJson, writeJsonAtomic } from '../store/json'
 
 const MANIFEST = 'hml-profile.json'
-const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/
+export const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
 const SAFE_SEGMENT = /^[a-z0-9._-]+$/i
 
 /** game and id come from the renderer; they must never escape the data root. */
