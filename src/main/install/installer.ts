@@ -60,6 +60,12 @@ function assertSafePackageId(id: string): void {
 }
 
 /** Deploy games keep each mod in its own profile folder, so the id must be one plain segment. */
+/** A deploy-game mod folder name: unsafe characters become `_` (e.g. `My Mod (1)` → `My_Mod__1_`). */
+function deployFolderId(id: string): string {
+  const safe = id.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_')
+  return safe === '' ? 'mod' : safe
+}
+
 function assertDeployPackageId(id: string): void {
   if (!/^[A-Za-z0-9._-]+$/.test(id) || id === '.' || id === '..') throw new UnsafeEntryError(id)
 }
@@ -145,12 +151,14 @@ export async function installZip(
   const fallback = fallbackNameFor(source)
   const meta = detectPackageMeta(zip, fallback)
 
-  const packageId = opts.packageId ?? meta?.name ?? fallback
+  const deploy = game.loader === 'deploy'
+  const rawId = opts.packageId ?? meta?.name ?? fallback
+  // Deploy games use the id as a folder name, so a local file name like `My Mod (1)` is made safe.
+  const packageId = deploy && opts.packageId === undefined ? deployFolderId(rawId) : rawId
   assertSafePackageId(packageId)
   const version = opts.version ?? meta?.version ?? '0.0.0'
-  const name = opts.name ?? meta?.name ?? packageId
+  const name = opts.name ?? meta?.name ?? rawId
 
-  const deploy = game.loader === 'deploy'
   if (deploy) assertDeployPackageId(packageId)
   const loaderPackage = deploy
     ? undefined

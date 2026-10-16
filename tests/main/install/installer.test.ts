@@ -340,6 +340,17 @@ describe('installer', () => {
     expect((await getProfile(paths, 'nexus-x', p)).mods).toEqual([])
   })
 
+  test('a deploy game makes a local file name safe as its mod folder', async () => {
+    const deployGame: GameDef = { ...game, label: 'nexus-x', loader: 'deploy', installRules: [] }
+    const p = (await createProfile(paths, 'nexus-x', 'p')).id
+    const zip = zipSync({ 'a.esp': strToU8('esp') })
+    const local = { kind: 'local' as const, fileName: 'My Mod (1).zip', sha256: 'x' }
+    const mod = await installZip(paths, deployGame, catalog, p, zip, local)
+    expect(mod.id).toBe('My_Mod__1_')
+    expect(mod.name).toBe('My Mod (1)')
+    expect(mod.files).toEqual(['My_Mod__1_/a.esp'])
+  })
+
   test('deploy game mods sharing a path each keep their own copy', async () => {
     const deployGame: GameDef = { ...game, label: 'nexus-x', loader: 'deploy', installRules: [] }
     const p = (await createProfile(paths, 'nexus-x', 'p')).id
