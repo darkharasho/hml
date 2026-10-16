@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  truncateSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -26,14 +27,19 @@ import { HML_METHODS } from '../../src/shared/ipc'
 import type { HmlEvent, TsQuery } from '../../src/shared/types'
 
 const hooks = vi.hoisted(() => ({
-  rename: null as null | ((...a: unknown[]) => Promise<void>)
+  rename: null as null | ((...a: unknown[]) => Promise<void>),
+  getProfile: null as null | ((...a: unknown[]) => Promise<unknown>)
 }))
 vi.mock('../../src/main/profiles/profiles', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/profiles/profiles')>()
   return {
     ...actual,
     renameProfile: (...a: Parameters<typeof actual.renameProfile>) =>
-      hooks.rename ? hooks.rename(...a) : actual.renameProfile(...a)
+      hooks.rename ? hooks.rename(...a) : actual.renameProfile(...a),
+    getProfile: (...a: Parameters<typeof actual.getProfile>) =>
+      hooks.getProfile
+        ? (hooks.getProfile(...a) as ReturnType<typeof actual.getProfile>)
+        : actual.getProfile(...a)
   }
 })
 
@@ -2388,6 +2394,12 @@ describe('share import', () => {
   let premium: boolean
   let hml: Uint8Array
   let ghDown: boolean
+  let ghLimited: boolean
+  let nexusDown: boolean
+  let ownModVersions: string[]
+  let ownModDeps: string[]
+  let chunkUrl: string
+  let idxFetches: number
   let clock: number
   let api: ReturnType<typeof createServices>
 
@@ -2451,11 +2463,14 @@ describe('share import', () => {
   }
   const impFetch = (async (url: string, init?: { body?: string }) => {
     const u = new URL(url)
-    if (url === IDX) return bin(gz([CHUNK]))
-    if (url === CHUNK) {
+    if (url === IDX) {
+      idxFetches++
+      return bin(gz([chunkUrl]))
+    }
+    if (url.startsWith(CHUNK)) {
       return bin(
         gz([
-          rawPkg('Own', 'Mod', ['2.0.0', '1.0.0'], ['Dep-Lib-1.0.0']),
+          rawPkg('Own', 'Mod', ownModVersions, ownModDeps),
           rawPkg('Dep', 'Lib', ['1.5.0', '1.0.0'])
         ])
       )
@@ -2463,6 +2478,14 @@ describe('share import', () => {
     if (tsBlobs.has(url)) return bin(tsBlobs.get(url)!)
     if (u.host === 'api.github.com') {
       if (ghDown) throw new Error('network down')
+      if (ghLimited) {
+        return {
+          ok: false,
+          status: 403,
+          headers: new Headers({ 'x-ratelimit-remaining': '0' }),
+          json: async () => ({})
+        }
+      }
       const m = /^\/repos\/owner\/thing\/releases\/tags\/(.+)$/.exec(u.pathname)
       const tag = m && decodeURIComponent(m[1])
       return tag && ghReleases[tag]
@@ -2474,6 +2497,7 @@ describe('share import', () => {
       const data = m && ghReleases[m[1]]?.[decodeURIComponent(m[2])]
       return data ? bin(data) : { ok: false, status: 404, headers: new Headers() }
     }
+    if (u.host === 'api.nexusmods.com' && nexusDown) throw new TypeError('fetch failed')
     if (u.host === 'api.nexusmods.com' && u.pathname === '/v2/graphql') return gql(init?.body ?? '')
     if (u.pathname === '/v1/users/validate.json') {
       return reply({ user_id: 77, name: 'Haro', is_premium: premium, key: KEY })
@@ -2534,6 +2558,13 @@ describe('share import', () => {
   beforeEach(async () => {
     premium = true
     ghDown = false
+    ghLimited = false
+    nexusDown = false
+    ownModVersions = ['2.0.0', '1.0.0']
+    ownModDeps = ['Dep-Lib-1.0.0']
+    chunkUrl = CHUNK
+    idxFetches = 0
+    hooks.getProfile = null
     clock = Date.now()
     hml = makeHml([])
     api = createServices({ ...deps, fetch: impFetch, now: () => clock })
@@ -2710,9 +2741,62 @@ describe('share import', () => {
     const r = await importCode([ts('Dep-Lib', '1.0.0'), gh('v1.0.0'), ts('Own-Mod', '1.0.0')])
     expect(r.installed).toBe(2)
     expect(r.unresolved.map((u) => u.reason)).toEqual([
-      "Release v1.0.0 isn't available on GitHub anymore."
+      "Couldn't reach GitHub. Check your connection and try again."
     ])
     expect(r.profile.mods.map((m) => m.id).sort()).toEqual(['Dep-Lib', 'Own-Mod'])
+  })
+
+  test("a GitHub rate limit keeps GitHub's message; a missing asset says the release is gone", async () => {
+    ghLimited = true
+    const r = await importCode([gh('v1.0.0')])
+    expect(r.unresolved.map((u) => u.reason)).toEqual([
+      "GitHub's rate limit was reached. Try again later, or add a GitHub token in Settings."
+    ])
+    ghLimited = false
+    const missingAsset: ExportMod = {
+      ...gh('v1.0.0'),
+      source: { ...(gh('v1.0.0').source as object), asset: 'other.zip' } as ExportMod['source']
+    }
+    const r2 = await importCode([missingAsset])
+    expect(r2.unresolved.map((u) => u.reason)).toEqual([
+      "Release v1.0.0 isn't available on GitHub anymore."
+    ])
+  })
+
+  test('a version missing from the cached index is found after one forced refresh', async () => {
+    ownModVersions = ['1.0.0']
+    expect((await api.tsGetPackage('repo', 'Own-Mod'))!.versions.map((v) => v.version)).toEqual([
+      '1.0.0'
+    ])
+    const before = idxFetches
+    // Thunderstore's chunk URLs change with their content.
+    ownModVersions = ['2.0.0', '1.0.0']
+    chunkUrl = `${CHUNK}-v2`
+    const r = await importCode([ts('Own-Mod', '2.0.0'), ts('Gone-Pkg', '1.0.0')])
+    expect(r.profile.mods.find((m) => m.id === 'Own-Mod')?.version).toBe('2.0.0')
+    expect(r.unresolved.map((u) => u.reason)).toEqual(['Not on Thunderstore anymore.'])
+    // Both misses share one refresh.
+    expect(idxFetches - before).toBe(1)
+  })
+
+  test('missing dependencies and unwritable config files become warnings', async () => {
+    ownModDeps = ['Dep-Lib-1.0.0', 'Gone-A-1.0.0', 'Gone-B-2.0.0']
+    const r0 = await importCode([ts('Own-Mod', '1.0.0')])
+    expect(r0.warnings).toEqual(['Own-Mod: missing dependencies Gone-A-1.0.0, Gone-B-2.0.0.'])
+    expect(r0.installed).toBe(1)
+    // A config path whose parent is a file can't be written; the next one still is.
+    hml = makeHml([], {
+      configs: {
+        'BepInEx/config/blocker': 'file',
+        'BepInEx/config/blocker/x.cfg': 'x',
+        'BepInEx/config/ok.cfg': 'ok'
+      }
+    })
+    const p = await api.previewShare({ code: CODE })
+    const r = await api.importShare(p!.token, 'Cfg')
+    expect(r.warnings).toEqual(["Couldn't write BepInEx/config/blocker/x.cfg."])
+    const dir = deps.paths.profileDir('repo', r.profile.id)
+    expect(readFileSync(path.join(dir, 'BepInEx', 'config', 'ok.cfg'), 'utf8')).toBe('ok')
   })
 
   test('a taken name gets a unique id and a blank name uses the profile name', async () => {
@@ -2735,6 +2819,54 @@ describe('share import', () => {
     )
   })
 
+  test('a resolveGame failure keeps the token, so the import can be retried', async () => {
+    hml = makeHml([], { game: 'nexus-stardewvalley' })
+    const p = await api.previewShare({ code: CODE })
+    nexusDown = true
+    await expect(api.importShare(p!.token, '')).rejects.toThrow()
+    nexusDown = false
+    const r = await api.importShare(p!.token, '')
+    expect(r.game).toBe('nexus-stardewvalley')
+    await expect(api.importShare(p!.token, '')).rejects.toThrow(
+      'This import has expired. Open the code or file again.'
+    )
+  })
+
+  test('a second concurrent import of one token is refused', async () => {
+    const p = await api.previewShare({ code: CODE })
+    const first = api.importShare(p!.token, '')
+    await expect(api.importShare(p!.token, '')).rejects.toThrow(
+      'This import has expired. Open the code or file again.'
+    )
+    await expect(first).resolves.toMatchObject({ game: 'repo' })
+  })
+
+  test('a failing final read still returns the created profile with a warning', async () => {
+    const p = await api.previewShare({ code: CODE })
+    hooks.getProfile = async () => {
+      throw new Error('disk gone')
+    }
+    const r = await api.importShare(p!.token, 'Read')
+    hooks.getProfile = null
+    expect(r.profile).toMatchObject({ name: 'Read', game: 'repo', mods: [] })
+    expect(r.warnings).toEqual(["The imported profile couldn't be read back: disk gone"])
+  })
+
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'a picked file over 10 MB is refused without being read',
+    async () => {
+      const file = path.join(tmp, 'huge.hml')
+      writeFileSync(file, '')
+      truncateSync(file, 10485761)
+      // Unreadable: only a stat can succeed, so the refusal proves the file wasn't read.
+      chmodSync(file, 0o000)
+      picked = [file]
+      await expect(api.previewShare({ file: true })).rejects.toThrow(
+        'This HML profile file is too large to import (over 10 MB).'
+      )
+    }
+  )
+
   test('unknown, used and expired tokens give the exact message', async () => {
     const EXPIRED = 'This import has expired. Open the code or file again.'
     await expect(api.importShare('nope', '')).rejects.toThrow(EXPIRED)
@@ -2744,6 +2876,58 @@ describe('share import', () => {
     const p2 = await api.previewShare({ code: CODE })
     clock += 600_001
     await expect(api.importShare(p2!.token, '')).rejects.toThrow(EXPIRED)
+  })
+
+  test('a profile built by real installs round trips through a share code', async () => {
+    // A fake Worker: the upload stores the bytes that the code download then serves.
+    const shareFetch = (async (url: string, init?: RequestInit) => {
+      if (url === 'https://share.test/v1/profiles' && init?.method === 'POST') {
+        hml = new Uint8Array(init.body as Uint8Array)
+        return Response.json({ code: CODE }, { status: 201 })
+      }
+      return impFetch(url, init as { body?: string })
+    }) as unknown as typeof fetch
+    const src = createServices({ ...deps, fetch: shareFetch, now: () => clock })
+    const profile = await src.createProfile('repo', 'Round trip')
+    await src.tsInstall('repo', profile.id, 'Own-Mod', '1.0.0')
+    await src.ghInstall(
+      'repo',
+      profile.id,
+      'https://github.com/owner/thing/releases/download/v1.0.0/thing.zip'
+    )
+    await src.setModEnabled('repo', profile.id, 'Dep-Lib', false)
+    const cfgBytes = new Uint8Array([0, 1, 2, 255, 10, 13])
+    const cfgDir = path.join(deps.paths.profileDir('repo', profile.id), 'BepInEx', 'config')
+    mkdirSync(path.join(cfgDir, 'sub'), { recursive: true })
+    writeFileSync(path.join(cfgDir, 'sub', 'mod.cfg'), cfgBytes)
+    const shared = await src.shareProfile('repo', profile.id)
+    expect(shared.code).toBe(CODE)
+
+    // A fresh install of HML with its own data dir.
+    const otherPaths = makePaths(path.join(tmp, 'data-2'))
+    mkdirSync(otherPaths.root, { recursive: true })
+    writeFileSync(otherPaths.settings, JSON.stringify({ steamRootOverride: steamRoot }))
+    const dst = createServices({ ...deps, paths: otherPaths, fetch: shareFetch, now: () => clock })
+    const preview = await dst.previewShare({ code: shared.code })
+    const r = await dst.importShare(preview!.token, '')
+    expect(r.unresolved).toEqual([])
+    expect(r.warnings).toEqual([])
+
+    const summary = (mods: typeof r.profile.mods): unknown[] =>
+      mods
+        .map((m) => ({ id: m.id, version: m.version, enabled: m.enabled, source: m.source }))
+        .sort((x, y) => (x.id < y.id ? -1 : 1))
+    const original = (await src.listProfiles('repo')).find((p) => p.id === profile.id)!
+    expect(summary(r.profile.mods)).toEqual(summary(original.mods))
+    expect(summary(r.profile.mods)).toEqual([
+      expect.objectContaining({ id: 'Dep-Lib', version: '1.0.0', enabled: false }),
+      expect.objectContaining({ id: 'Own-Mod', version: '1.0.0', enabled: true }),
+      expect.objectContaining({ id: 'owner-thing', version: '1.0.0', enabled: true })
+    ])
+    const copied = readFileSync(
+      path.join(otherPaths.profileDir('repo', r.profile.id), 'BepInEx', 'config', 'sub', 'mod.cfg')
+    )
+    expect([...copied]).toEqual([...cfgBytes])
   })
 
   test('HML_METHODS lists the import methods', () => {

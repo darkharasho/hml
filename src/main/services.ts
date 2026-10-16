@@ -577,6 +577,7 @@ export function createServices(
     serialize,
     installers: {
       tsGetPackage: tsServices.tsGetPackage,
+      tsRefresh: tsServices.tsRefresh,
       tsInstall: tsServices.tsInstall,
       ghInstall: ghServices.ghInstall,
       nxInstall: nexusApi.nxInstall,

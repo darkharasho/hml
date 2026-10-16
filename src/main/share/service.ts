@@ -9,18 +9,20 @@ import type {
   HmlExportMod,
   ImportResult,
   ProfileManifest,
+  TsPackage,
   UnresolvedMod
 } from '../../shared/types'
 import { compareVersions } from '../../shared/version'
 import { getProfile } from '../profiles/profiles'
 import type { ServiceDeps } from '../services'
-import { buildHmlFile, readHmlFile } from './hmlFile'
+import { buildHmlFile, IMPORT_TOO_BIG, MAX_HML_BYTES, readHmlFile } from './hmlFile'
 import { downloadShare, uploadShare } from './client'
 
 /** The in-process service methods an import uses; each takes the profile lock itself. */
 export type ShareInstallers = Pick<
   HmlApi,
   | 'tsGetPackage'
+  | 'tsRefresh'
   | 'tsInstall'
   | 'ghInstall'
   | 'nxInstall'
@@ -45,6 +47,12 @@ const EXPIRED = 'This import has expired. Open the code or file again.'
 const NEXUS_PREFIX = 'nexus-'
 const NEXUS_DOMAIN_RE = /^[a-z0-9_-]{1,64}$/
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** GitHub install errors that mean the release or its file is gone, not that GitHub is unreachable. */
+const GH_GONE = [/ has no release /, / has no file named /, / failed: HTTP 404$/]
+
+const missingWarning = (fullName: string, missing: string[]): string[] =>
+  missing.length > 0 ? [`${fullName}: missing dependencies ${missing.join(', ')}.`] : []
 
 interface Pending {
   export: HmlExport
@@ -91,6 +99,8 @@ export function createShareServices(ctx: ShareContext): ShareApi {
 
   // Previewed profiles, in memory only; an entry is checked for expiry whenever it is read.
   const pending = new Map<string, Pending>()
+  // Tokens whose import is under way; a second import of one is refused until it settles.
+  const inFlight = new Set<string>()
   const dropExpired = (): void => {
     for (const [token, p] of pending) if (p.expiresAt <= now()) pending.delete(token)
   }
@@ -106,12 +116,31 @@ export function createShareServices(ctx: ShareContext): ShareApi {
     return (await api.addNexusGame(domain)).label
   }
 
+  /**
+   * The Thunderstore package of an exported mod. When the cached index lacks the package or the
+   * exact version, the index is refreshed (once per import) and checked again.
+   */
+  async function findPackage(
+    game: string,
+    fullName: string,
+    version: string,
+    refreshOnce: () => Promise<void>
+  ): Promise<TsPackage | null> {
+    const hasVersion = (p: TsPackage | null): boolean =>
+      !!p && p.versions.some((v) => compareVersions(v.version, version) === 0)
+    const pkg = await api.tsGetPackage(game, fullName)
+    if (hasVersion(pkg)) return pkg
+    await refreshOnce()
+    return api.tsGetPackage(game, fullName)
+  }
+
   /** Installs one exported mod. Never throws: a failure comes back as an unresolved entry. */
   async function installEntry(
     game: string,
     profileId: string,
-    entry: HmlExportMod
-  ): Promise<{ modId: string; warning?: string } | { unresolved: UnresolvedMod }> {
+    entry: HmlExportMod,
+    refreshOnce: () => Promise<void>
+  ): Promise<{ modId: string; warnings: string[] } | { unresolved: UnresolvedMod }> {
     const unresolved = (reason: string, url?: string): { unresolved: UnresolvedMod } => ({
       unresolved: {
         name: modName(entry),
@@ -125,16 +154,17 @@ export function createShareServices(ctx: ShareContext): ShareApi {
     try {
       switch (s.kind) {
         case 'thunderstore': {
-          const pkg = await api.tsGetPackage(game, s.fullName)
+          const pkg = await findPackage(game, s.fullName, entry.version, refreshOnce)
           if (!pkg) return unresolved('Not on Thunderstore anymore.')
           if (!pkg.versions.some((v) => compareVersions(v.version, entry.version) === 0)) {
             return unresolved(`Version ${entry.version} is no longer on Thunderstore.`)
           }
           // Already there at this version (pulled in as a dependency): nothing to install.
-          if (!(await tsModAt(game, profileId, s.fullName, entry.version))) {
-            await api.tsInstall(game, profileId, s.fullName, entry.version)
+          if (await tsModAt(game, profileId, s.fullName, entry.version)) {
+            return { modId: s.fullName, warnings: [] }
           }
-          return { modId: s.fullName }
+          const r = await api.tsInstall(game, profileId, s.fullName, entry.version)
+          return { modId: s.fullName, warnings: missingWarning(s.fullName, r.missing) }
         }
         case 'github': {
           const tag = s.tag.split('/').map(encodeURIComponent).join('/')
@@ -142,7 +172,10 @@ export function createShareServices(ctx: ShareContext): ShareApi {
           let r
           try {
             r = await api.ghInstall(game, profileId, url)
-          } catch {
+          } catch (e) {
+            // A network failure or rate limit keeps GitHub's own message, which says what to do.
+            const msg = errMsg(e)
+            if (!GH_GONE.some((re) => re.test(msg))) return unresolved(msg)
             return unresolved(`Release ${s.tag} isn't available on GitHub anymore.`)
           }
           if (r.kind !== 'installed') {
@@ -151,11 +184,12 @@ export function createShareServices(ctx: ShareContext): ShareApi {
           const got = r.mod.source.kind === 'github' ? r.mod.source.sha256 : ''
           return {
             modId: r.mod.id,
-            ...(got.toLowerCase() !== s.sha256.toLowerCase()
-              ? {
-                  warning: `${s.owner}/${s.repo} ${s.tag}: the release file changed since this profile was shared.`
-                }
-              : {})
+            warnings:
+              got.toLowerCase() !== s.sha256.toLowerCase()
+                ? [
+                    `${s.owner}/${s.repo} ${s.tag}: the release file changed since this profile was shared.`
+                  ]
+                : []
           }
         }
         case 'nexus': {
@@ -167,7 +201,7 @@ export function createShareServices(ctx: ShareContext): ShareApi {
           if (r.kind === 'open-website') {
             return unresolved('Needs Nexus Mods Premium. Download it from the website.', r.url)
           }
-          return { modId: r.mod.id }
+          return { modId: r.mod.id, warnings: [] }
         }
         case 'local':
           return unresolved(`Local file (${s.fileName}). Files aren't included in share codes.`)
@@ -193,20 +227,29 @@ export function createShareServices(ctx: ShareContext): ShareApi {
     )
   }
 
-  /** Writes the shared config files over whatever the installs created. */
+  /**
+   * Writes the shared config files over whatever the installs created. A file that can't be
+   * written doesn't stop the rest; it comes back as a warning.
+   */
   async function writeConfigs(
     game: string,
     profileId: string,
     configs: Map<string, Uint8Array>
-  ): Promise<void> {
+  ): Promise<string[]> {
     const root = path.resolve(deps.paths.profileDir(game, profileId))
+    const warnings: string[] = []
     for (const [rel, data] of configs) {
       const target = path.resolve(root, ...rel.split('/'))
       const inside = path.relative(root, target)
       if (!inside || inside.startsWith('..') || path.isAbsolute(inside)) continue
-      await fs.mkdir(path.dirname(target), { recursive: true })
-      await fs.writeFile(target, data)
+      try {
+        await fs.mkdir(path.dirname(target), { recursive: true })
+        await fs.writeFile(target, data)
+      } catch {
+        warnings.push(`Couldn't write ${rel}.`)
+      }
     }
+    return warnings
   }
 
   /** Reads the manifest and zips the profile under the profile lock, so installs can't interleave. */
@@ -253,6 +296,8 @@ export function createShareServices(ctx: ShareContext): ShareApi {
           filters: [{ name: 'HML profile', extensions: ['hml'] }]
         })
         if (files.length === 0) return null
+        // Checked before reading, so a huge file is never loaded into memory.
+        if ((await fs.stat(files[0])).size > MAX_HML_BYTES) throw new Error(IMPORT_TOO_BIG)
         data = new Uint8Array(await fs.readFile(files[0]))
       } else if (input && typeof input === 'object' && 'code' in input) {
         data = await downloadShare(
@@ -262,7 +307,7 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       } else {
         throw new Error('Expected a share code or a file.')
       }
-      const read = await readHmlFile(data)
+      const read = await readHmlFile(data, { forImport: true })
       const exp = read.export
       const def = await findGame(exp.game)
       const domain = def ? null : nexusDomainOf(exp.game)
@@ -282,17 +327,35 @@ export function createShareServices(ctx: ShareContext): ShareApi {
     },
 
     async importShare(token, name) {
+      // Looked up, checked and claimed synchronously, so two imports of one token can't both run.
       const held = typeof token === 'string' ? pending.get(token) : undefined
-      if (!held || held.expiresAt <= now()) {
-        if (held) pending.delete(token)
+      if (!held || inFlight.has(token)) throw new Error(EXPIRED)
+      if (held.expiresAt <= now()) {
+        pending.delete(token)
         throw new Error(EXPIRED)
       }
-      pending.delete(token)
+      inFlight.add(token)
       const exp = held.export
-      const game = await resolveGame(exp.game)
-      const wanted = typeof name === 'string' ? name.trim() : ''
-      const created = await api.createProfile(game, wanted || exp.profileName)
+      let game: string
+      let created: ProfileManifest
+      try {
+        game = await resolveGame(exp.game)
+        const wanted = typeof name === 'string' ? name.trim() : ''
+        created = await api.createProfile(game, wanted || exp.profileName)
+      } finally {
+        inFlight.delete(token)
+      }
+      // Only spent once the profile exists: an earlier failure (Nexus unreachable) can be retried.
+      pending.delete(token)
       const profileId = created.id
+
+      // At most one forced Thunderstore index refresh per import, shared by every entry.
+      let refreshed: Promise<void> | null = null
+      const refreshOnce = (): Promise<void> =>
+        (refreshed ??= api.tsRefresh(game).then(
+          () => undefined,
+          () => undefined
+        ))
 
       // Installs call the service methods directly: each takes this profile's lock itself, and
       // the lock isn't re-entrant, so wrapping them here would deadlock.
@@ -302,13 +365,13 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       const total = exp.mods.length
       for (const [i, entry] of exp.mods.entries()) {
         deps.emit({ type: 'progress', message: `Importing ${modName(entry)}`, done: i, total })
-        const r = await installEntry(game, profileId, entry)
+        const r = await installEntry(game, profileId, entry, refreshOnce)
         if ('unresolved' in r) {
           unresolved.push(r.unresolved)
           installedIds.push(null)
         } else {
           installedIds.push(r.modId)
-          if (r.warning) warnings.push(r.warning)
+          warnings.push(...r.warnings)
         }
       }
 
@@ -319,7 +382,8 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         if (s.kind !== 'thunderstore' || installedIds[i] === null) continue
         try {
           if (!(await tsModAt(game, profileId, s.fullName, entry.version))) {
-            await api.tsInstall(game, profileId, s.fullName, entry.version)
+            const r = await api.tsInstall(game, profileId, s.fullName, entry.version)
+            warnings.push(...missingWarning(s.fullName, r.missing))
           }
         } catch (e) {
           warnings.push(`${modName(entry)}: ${errMsg(e)}`)
@@ -337,15 +401,26 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       }
 
       try {
-        await serialize(game, profileId, () => writeConfigs(game, profileId, held.configs))
+        warnings.push(
+          ...(await serialize(game, profileId, () => writeConfigs(game, profileId, held.configs)))
+        )
       } catch (e) {
         warnings.push(`The config files couldn't be restored: ${errMsg(e)}`)
       }
       deps.emit({ type: 'progress', message: 'Done', done: total, total })
 
+      // The profile exists by now, so a failed read falls back to the created manifest.
+      let profile: ProfileManifest
+      try {
+        profile = await getProfile(deps.paths, game, profileId)
+      } catch (e) {
+        profile = created
+        warnings.push(`The imported profile couldn't be read back: ${errMsg(e)}`)
+      }
+
       return {
         game,
-        profile: await getProfile(deps.paths, game, profileId),
+        profile,
         installed: installedIds.filter((id) => id !== null).length,
         unresolved,
         warnings
