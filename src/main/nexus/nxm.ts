@@ -48,7 +48,12 @@ export function findNxmArg(argv: string[]): string | null {
 
 /** The desktop entry that makes `xdg-mime` route `nxm://` links to HML. */
 export function linuxDesktopEntry(execPath: string): string {
-  const quoted = execPath.replace(/[\\"`$]/g, (c) => `\\${c}`)
+  // Desktop Entry Exec rules: escape " ` $ \ inside quotes, then escape backslashes again for the
+  // string value, and double % so it isn't read as a field code.
+  const quoted = execPath
+    .replace(/[\\"`$]/g, (c) => `\\${c}`)
+    .replace(/\\/g, '\\\\')
+    .replace(/%/g, '%%')
   return [
     '[Desktop Entry]',
     'Type=Application',

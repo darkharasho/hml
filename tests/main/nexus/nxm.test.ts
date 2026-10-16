@@ -49,4 +49,8 @@ describe('linuxDesktopEntry', () => {
     expect(e).toContain('Exec="/opt/My Apps/HML" %u')
     expect(e).toContain('NoDisplay=true')
   })
+  it('escapes special characters in the exec path', () => {
+    expect(linuxDesktopEntry('/opt/100%/a$b')).toContain('Exec="/opt/100%%/a\\\\$b" %u')
+    expect(linuxDesktopEntry('/x\\y')).toContain('Exec="/x\\\\\\\\y" %u')
+  })
 })
