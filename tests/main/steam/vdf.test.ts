@@ -82,4 +82,11 @@ describe('vdfGet', () => {
     const o = parseVdf(libraryFolders)
     expect(vdfGet(o, 'libraryfolders', '1', 'path', 'deeper')).toBeUndefined()
   })
+
+  test('treats __proto__ as an ordinary key', () => {
+    const o = parseVdf('"__proto__" { "a" "1" }')
+    expect(Object.getPrototypeOf(o)).toBe(Object.prototype)
+    expect(Object.keys(o)).toEqual(['__proto__'])
+    expect(vdfGet(o, '__proto__', 'a')).toBe('1')
+  })
 })

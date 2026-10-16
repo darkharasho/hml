@@ -60,6 +60,11 @@ function tokenize(text: string): TokenWithValue[] {
   return tokens
 }
 
+/** Plain assignment would turn a `__proto__` key into a prototype change; define it as data. */
+function define(obj: VdfObject, key: string, value: string | VdfObject): void {
+  Object.defineProperty(obj, key, { value, enumerable: true, writable: true, configurable: true })
+}
+
 export function parseVdf(text: string): VdfObject {
   const tokens = tokenize(text)
   let pos = 0
@@ -84,9 +89,9 @@ export function parseVdf(text: string): VdfObject {
       if (valueTok === undefined) throw new Error(`VDF: missing value for "${key}"`)
       if (valueTok.type === 'open') {
         pos++
-        obj[key] = parseBody(true)
+        define(obj, key, parseBody(true))
       } else if (valueTok.type === 'string') {
-        obj[key] = valueTok.value
+        define(obj, key, valueTok.value)
         pos++
       } else {
         throw new Error(`VDF: missing value for "${key}"`)
