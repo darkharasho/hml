@@ -46,6 +46,12 @@ beforeEach(() => {
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
 describe('domainFor', () => {
+  it('a custom no-loader game is not treated as Nexus-only', async () => {
+    const def: GameDef = { ...repo, label: 'steam-3314580', loader: 'deploy' }
+    const settings = { ...defaultSettings(), nexusDomainOverrides: { 'steam-3314580': 'trashday' } }
+    expect(await make().cachedDomain(def, settings)).toBe('trashday')
+  })
+
   it('resolves by name, caches, and re-checks after 7 days', async () => {
     const g = make()
     const s = defaultSettings()

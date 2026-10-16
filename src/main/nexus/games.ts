@@ -66,7 +66,8 @@ export function nexusGameDef(g: { name: string; domain: string; modCount?: numbe
   }
 }
 
-const isDeploy = (g: GameDef): boolean => g.loader === 'deploy'
+/** Nexus-only games (label `nexus-…`); a custom no-loader game also deploys but is not one. */
+const isNexusOnly = (g: GameDef): boolean => g.label.startsWith(DEPLOY_PREFIX)
 const deployDomain = (g: GameDef): string => g.label.slice(DEPLOY_PREFIX.length)
 const normalizeDomain = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
 
@@ -106,14 +107,14 @@ export function createNexusGames(ctx: {
     const hit = cache[game.label]
     const fresh = hit && now() - hit.checkedAt < RECHECK_MS
 
-    const known = isDeploy(game) ? deployDomain(game) : overrideFor(game, settings)
+    const known = isNexusOnly(game) ? deployDomain(game) : overrideFor(game, settings)
     if (known) {
       if (hit && hit.domain === known && hit.gameId !== null && fresh) {
         return { domain: known, gameId: hit.gameId }
       }
       const found = await gameByDomain(client, known)
       if (!found) {
-        if (isDeploy(game)) return null
+        if (isNexusOnly(game)) return null
         throw new Error(`Nexus Mods has no game "${known}".`)
       }
       await putCache(game.label, { domain: found.domain, gameId: found.id, checkedAt: now() })
@@ -139,7 +140,7 @@ export function createNexusGames(ctx: {
     settings: Settings,
     preloaded?: Cache
   ): Promise<string | null> {
-    if (isDeploy(game)) return deployDomain(game)
+    if (isNexusOnly(game)) return deployDomain(game)
     return (
       overrideFor(game, settings) ?? (preloaded ?? (await readCache()))[game.label]?.domain ?? null
     )
