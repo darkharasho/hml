@@ -1,0 +1,81 @@
+import { describe, it, expect, vi } from 'vitest'
+import { strToU8, zipSync } from 'fflate'
+import {
+  assetPattern,
+  chooseAsset,
+  matchesAssetPattern,
+  type GhReleaseAsset
+} from '../../../src/main/github/assets'
+
+const asset = (name: string, size = 10): GhReleaseAsset => ({
+  id: 1,
+  name,
+  size,
+  downloadUrl: `https://github.com/o/r/releases/download/v1/${name}`,
+  apiUrl: 'https://api.github.com/repos/o/r/releases/assets/1',
+  digest: null
+})
+const withManifest = zipSync({
+  'manifest.json': strToU8(JSON.stringify({ name: 'M', version_number: '1.0.0' }))
+})
+const noManifest = zipSync({ 'a.dll': strToU8('x') })
+
+describe('assetPattern', () => {
+  it('replaces versions', () => {
+    expect(assetPattern('BepInEx_linux_x64_5.4.23.5.zip', 'v5.4.23.5')).toBe(
+      'BepInEx_linux_x64_{version}.zip'
+    )
+    expect(assetPattern('MyMod-v1.2.zip', 'v1.2')).toBe('MyMod-{version}.zip')
+    expect(assetPattern('mod-r42.zip', 'r42')).toBe('mod-{version}.zip')
+    expect(assetPattern('Plugin.zip', 'v3')).toBe('Plugin.zip')
+  })
+  it('matches the pattern', () => {
+    const p = 'BepInEx_linux_x64_{version}.zip'
+    expect(matchesAssetPattern(p, 'BepInEx_linux_x64_5.4.24.0.zip')).toBe(true)
+    expect(matchesAssetPattern(p, 'BepInEx_linux_x86_5.4.24.0.zip')).toBe(false)
+    expect(matchesAssetPattern(p, 'bepinex_LINUX_x64_5.4.24.0.ZIP')).toBe(true)
+  })
+})
+
+describe('chooseAsset', () => {
+  it('picks the only zip over a dll with one download', async () => {
+    const download = vi.fn(async () => noManifest)
+    const r = await chooseAsset([asset('a.dll'), asset('a.zip')], null, download)
+    expect(r).toMatchObject({ asset: { name: 'a.zip' } })
+    expect(download).toHaveBeenCalledTimes(1)
+  })
+  it('probes multiple zips for a manifest', async () => {
+    const data: Record<string, Uint8Array> = { 'a.zip': noManifest, 'b.zip': withManifest }
+    const download = vi.fn(async (a: GhReleaseAsset) => data[a.name])
+    const r = await chooseAsset([asset('a.zip'), asset('b.zip')], null, download)
+    expect(r).toMatchObject({ asset: { name: 'b.zip' }, data: withManifest })
+    expect(download).toHaveBeenCalledTimes(2)
+  })
+  it('asks when no zip has a manifest', async () => {
+    const r = await chooseAsset([asset('a.zip'), asset('b.zip')], null, async () => noManifest)
+    expect(r).toMatchObject({ ask: [{ name: 'a.zip' }, { name: 'b.zip' }] })
+  })
+  it('uses a lone dll, asks for several', async () => {
+    const download = async (): Promise<Uint8Array> => noManifest
+    expect(await chooseAsset([asset('a.dll')], null, download)).toMatchObject({
+      asset: { name: 'a.dll' }
+    })
+    expect(await chooseAsset([asset('a.dll'), asset('b.dll')], null, download)).toMatchObject({
+      ask: [{ name: 'a.dll' }, { name: 'b.dll' }]
+    })
+  })
+  it('throws when nothing is installable', async () => {
+    await expect(
+      chooseAsset([asset('Mod-src.zip'), asset('Mod.tar.gz')], null, async () => noManifest)
+    ).rejects.toThrow('This release has no .zip or .dll file to install.')
+  })
+  it('uses a pattern when it matches exactly one, else falls back', async () => {
+    const download = vi.fn(async () => noManifest)
+    const two = [asset('Mod-linux-1.0.zip'), asset('Mod-win-1.0.zip')]
+    const r = await chooseAsset(two, 'Mod-win-{version}.zip', download)
+    expect(r).toMatchObject({ asset: { name: 'Mod-win-1.0.zip' } })
+    expect(download).toHaveBeenCalledTimes(1)
+    const r2 = await chooseAsset(two, 'Nope-{version}.zip', async () => noManifest)
+    expect(r2).toMatchObject({ ask: [{}, {}] })
+  })
+})

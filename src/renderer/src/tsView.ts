@@ -84,7 +84,7 @@ export function installToast(
 }
 
 /** "Installing BepInExPack 5.4.2100 (1/3)"; null once the run is finished. */
-export function progressLabel(e: HmlEvent): string | null {
+export function progressLabel(e: Extract<HmlEvent, { type: 'progress' }>): string | null {
   if (e.total <= 0 || e.done >= e.total) return null
   return `${e.message} (${e.done + 1}/${e.total})`
 }

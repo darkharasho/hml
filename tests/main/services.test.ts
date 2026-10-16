@@ -525,9 +525,12 @@ describe('services', () => {
       expect(r.installed.every((m) => m.source.kind === 'thunderstore')).toBe(true)
       const mods = (await api.listProfiles('repo'))[0].mods
       expect(mods.map((m) => m.id).sort()).toEqual(['Dep-Lib', 'Own-Mod'])
-      expect(emitted.map((e) => e.done)).toEqual([0, 1, 2])
-      expect(emitted.every((e) => e.total === 2)).toBe(true)
-      expect(emitted[0].message).toBe('Installing Lib 1.0.0')
+      const progress = emitted.filter(
+        (e): e is Extract<HmlEvent, { type: 'progress' }> => e.type === 'progress'
+      )
+      expect(progress.map((e) => e.done)).toEqual([0, 1, 2])
+      expect(progress.every((e) => e.total === 2)).toBe(true)
+      expect(progress[0].message).toBe('Installing Lib 1.0.0')
     })
 
     test('a failing second download names the package and keeps the first', async () => {

@@ -56,6 +56,8 @@ export interface InstalledMod {
   files: string[]
   disableable: string[]
   installedAt: string
+  /** Set only on github-source mods. */
+  github?: GhModConfig
 }
 
 export interface ProfileManifest {
@@ -135,4 +137,32 @@ export interface ModUpdate {
   current: string
   latest: string
 }
-export type HmlEvent = { type: 'progress'; message: string; done: number; total: number }
+export type GhUpdateMode = 'auto' | 'notify' | 'pinned'
+export interface GhModConfig {
+  updateMode: GhUpdateMode
+  /** Saved when the user picked the asset; `{version}` stands for version-like parts. */
+  assetPattern: string | null
+}
+export interface GhAsset {
+  name: string
+  size: number
+}
+export type GhInstallResult =
+  | { kind: 'installed'; mod: InstalledMod; replaced: string[] }
+  | { kind: 'choose-asset'; owner: string; repo: string; tag: string; assets: GhAsset[] }
+export interface GhUpdate {
+  modId: string
+  owner: string
+  repo: string
+  current: string // installed tag
+  latest: string // latest tag
+  mode: GhUpdateMode
+}
+export type HmlEvent =
+  | { type: 'progress'; message: string; done: number; total: number }
+  | {
+      type: 'github-updated'
+      game: string
+      profileId: string
+      mods: { name: string; tag: string }[]
+    }
