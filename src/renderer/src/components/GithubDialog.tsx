@@ -18,11 +18,30 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   const [choice, setChoice] = useState<Choice | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
+  const chooser = useRef<HTMLFieldSetElement>(null)
+  // False once this dialog unmounts, so a late result never touches a later dialog.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   // The field is disabled while installing, which drops focus; give it back so the link can be fixed.
   useEffect(() => {
     if (error) input.current?.focus()
   }, [error])
+
+  // Move focus to the first file once the release asks for one.
+  useEffect(() => {
+    chooser.current?.querySelector('input')?.focus()
+  }, [choice])
+
+  // An install can't be abandoned halfway, so the dialog stays open until it finishes.
+  const close = (): void => {
+    if (!running) onClose()
+  }
 
   const link = url.trim()
   const canSubmit = !running && link !== '' && (!choice || picked !== null)
@@ -33,26 +52,27 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
     setRunning(true)
     try {
       const result = await ghInstall(link, choice ? (picked ?? undefined) : undefined)
+      if (!mounted.current) return
       if (result.kind === 'installed') return onClose()
       setChoice(result)
       setPicked(null)
     } catch (e) {
-      setError(errorMessage(e))
+      if (mounted.current) setError(errorMessage(e))
     } finally {
-      setRunning(false)
+      if (mounted.current) setRunning(false)
     }
   }
 
   return (
     <Modal
       title="Add from GitHub"
-      onClose={onClose}
+      onClose={close}
       width="w-[520px]"
       footer={
         <div className="flex w-full items-center justify-between gap-3">
           {running ? <ProgressLine /> : <span />}
           <div className="flex shrink-0 gap-2">
-            <Button variant="quiet" onClick={onClose}>
+            <Button variant="quiet" disabled={running} onClick={close}>
               Cancel
             </Button>
             <Button variant="primary" disabled={!canSubmit} onClick={() => void submit()}>
@@ -92,7 +112,7 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
       </label>
 
       {choice && (
-        <fieldset className="mt-5" disabled={running}>
+        <fieldset ref={chooser} className="mt-5" disabled={running}>
           <legend className="flex w-full items-baseline gap-2">
             <Icon name="github" className="size-3.5 self-center text-fg" />
             <span className="font-medium text-fg">

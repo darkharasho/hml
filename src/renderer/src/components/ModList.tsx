@@ -126,7 +126,9 @@ export function ModList(): React.JSX.Element | null {
       {tab === 'online' ? null : mods.length === 0 ? (
         <EmptyState
           onPick={() => void installFromFile()}
-          onGithub={game.supported ? openGithub : undefined}
+          onGithub={openGithub}
+          supported={game.supported}
+          busy={busy}
         />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -343,11 +345,14 @@ function Toggle({
 
 function EmptyState({
   onPick,
-  onGithub
+  onGithub,
+  supported,
+  busy
 }: {
   onPick(): void
-  /** Omitted when the game's loader isn't supported. */
-  onGithub?: () => void
+  onGithub(): void
+  supported: boolean
+  busy: boolean
 }): React.JSX.Element {
   return (
     <div className="grid flex-1 place-items-center p-8">
@@ -362,12 +367,14 @@ function EmptyState({
           <Button variant="primary" onClick={onPick}>
             Install from file
           </Button>
-          {onGithub && (
-            <Button onClick={onGithub}>
-              <Icon name="github" />
-              Add from GitHub
-            </Button>
-          )}
+          <Button
+            disabled={busy || !supported}
+            title={supported ? undefined : UNSUPPORTED_LOADER}
+            onClick={onGithub}
+          >
+            <Icon name="github" />
+            Add from GitHub
+          </Button>
         </div>
       </div>
     </div>
