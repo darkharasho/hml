@@ -296,6 +296,8 @@ describe('services', () => {
       '../../src/main/profiles/profiles'
     )
     hooks.getProfile = async (...a2) => {
+      // Gate profile a's read in copy-back, not the up-front check of profile b.
+      if (a2[2] !== a.id) return getProfile(...(a2 as Parameters<typeof getProfile>))
       hooks.getProfile = null
       reached()
       await gate
@@ -311,6 +313,35 @@ describe('services', () => {
     await Promise.all([deploying, uninstalling])
     expect(await api.getDeployment(label)).toMatchObject({ profileId: b.id, files: 0 })
     expect((await api.listProfiles(label)).find((p) => p.id === a.id)?.mods).toEqual([])
+  })
+
+  test('deploying a missing profile or into a missing folder leaves the current deployment', async () => {
+    deps.fetch = nexusFetch
+    const api = createServices(deps)
+    const label = 'nexus-aaa'
+    await api.addNexusGame('aaa')
+    const a = await api.createProfile(label, 'a')
+    const b = await api.createProfile(label, 'b')
+    const dir = path.join(tmp, 'aaa')
+    mkdirSync(dir)
+    await api.setGamePath(label, dir)
+    const file = path.join(tmp, 'm.zip')
+    writeFileSync(file, zipSync({ 'Data/a.esp': strToU8('esp') }))
+    await api.installFromPaths(label, a.id, [file])
+    await api.deployProfile(label, a.id)
+    await expect(api.deployProfile(label, 'nope')).rejects.toThrow(
+      `Profile not found: ${label}/nope`
+    )
+    expect(await api.getDeployment(label)).toMatchObject({ profileId: a.id, files: 1 })
+    expect(readFileSync(path.join(dir, 'Data/a.esp'), 'utf8')).toBe('esp')
+    // A game folder setting that is no longer a folder (the deployment's own folder is intact).
+    const elsewhere = path.join(tmp, 'gone')
+    await api.setGamePath(label, elsewhere)
+    await expect(api.deployProfile(label, b.id)).rejects.toThrow(
+      `The game folder ${elsewhere} doesn't exist.`
+    )
+    expect(await api.getDeployment(label)).toMatchObject({ profileId: a.id, files: 1 })
+    expect(readFileSync(path.join(dir, 'Data/a.esp'), 'utf8')).toBe('esp')
   })
 
   test('two deploy games can not deploy to one folder', async () => {

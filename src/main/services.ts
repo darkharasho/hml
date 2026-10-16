@@ -765,6 +765,11 @@ export function createServices(
     async deployProfile(game, profileId) {
       const { def, gameDir } = await requireDeploy(game)
       if (profileId === DEPLOY_KEY) throw new Error(`Profile not found: ${game}/${profileId}`)
+      // Fail before removing the current deployment; deploy.ts repeats these checks under the locks.
+      await getProfile(paths, game, profileId)
+      if (!(await isDirectory(gameDir))) {
+        throw new Error(`The game folder ${path.resolve(gameDir)} doesn't exist.`)
+      }
       for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
         // Removing another profile's deployment copies files back into that profile, so it runs
         // under that profile's lock as its own step. Two profile locks are never held at once.
