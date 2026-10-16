@@ -4,6 +4,7 @@ import type {
   Catalog,
   GameDef,
   GhModConfig,
+  GhTrack,
   GhUpdate,
   GhUpdateMode,
   InstalledMod
@@ -18,7 +19,7 @@ import {
 } from '../install/installer'
 import { getProfile, listProfiles, saveProfile } from '../profiles/profiles'
 import { parseGithubUrl } from './url'
-import { assetPattern, chooseAsset, type GhReleaseAsset } from './assets'
+import { assetPattern, chooseAsset, matchesAssetPattern, type GhReleaseAsset } from './assets'
 import {
   downloadAsset,
   fetchLogin,
@@ -87,6 +88,10 @@ export interface GhInstallOptions {
    * installed mod; it throws to refuse (the running-game check).
    */
   beforeReplacing?: (def: GameDef) => Promise<void>
+  /** Follow only this release track (a loader mod); saved in the mod's config. */
+  track?: GhTrack
+  /** Pick the one asset matching this pattern (`{version}` allowed); saved in the config. */
+  assetPattern?: string
 }
 
 export function createGithubServices(ctx: GhContext): Pick<
@@ -109,7 +114,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     token: string | null,
     owner: string,
     repo: string,
-    opts: { tag?: string; maxAgeMs?: number } = {}
+    opts: { tag?: string; maxAgeMs?: number; track?: GhTrack } = {}
   ): Promise<GhRelease> =>
     fetchRelease({
       fetch: deps.fetch,
@@ -125,13 +130,14 @@ export function createGithubServices(ctx: GhContext): Pick<
   function memoLookup(
     token: string | null,
     maxAgeMs?: number
-  ): (owner: string, repo: string) => Promise<GhRelease> {
+  ): (owner: string, repo: string, track?: GhTrack) => Promise<GhRelease> {
     const seen = new Map<string, Promise<GhRelease>>()
-    return (owner, repo) => {
-      const key = `${owner}/${repo}`.toLowerCase()
+    return (owner, repo, track) => {
+      const key =
+        `${owner}/${repo}${track ? `#${track.major}/${track.prerelease}` : ''}`.toLowerCase()
       let p = seen.get(key)
       if (!p) {
-        p = lookup(token, owner, repo, { maxAgeMs })
+        p = lookup(token, owner, repo, { maxAgeMs, track })
         seen.set(key, p)
       }
       return p
@@ -360,7 +366,7 @@ export function createGithubServices(ctx: GhContext): Pick<
 
     progress(`Checking ${owner}/${repo}`, 0)
     const token = await loadToken(paths, deps.secrets)
-    const release = await lookup(token, owner, repo, { tag: ref.tag })
+    const release = await lookup(token, owner, repo, { tag: ref.tag, track: opts.track })
     const { mods } = await getProfile(paths, game, profileId)
     const prior = mods
       .filter(isGhMod)
@@ -369,7 +375,14 @@ export function createGithubServices(ctx: GhContext): Pick<
     const named = assetArg ?? ref.asset
     const onDownload = (a: GhReleaseAsset): void => progress(`Downloading ${a.name}`, 1)
     let chosen: Chosen
-    if (named !== undefined) {
+    if (opts.assetPattern !== undefined) {
+      const pattern = opts.assetPattern
+      const matching = release.assets.filter((a) => matchesAssetPattern(pattern, a.name))
+      if (matching.length !== 1) {
+        throw new Error(`${owner}/${repo} ${release.tag} has no file like ${pattern}.`)
+      }
+      chosen = await download(token, matching[0], onDownload)
+    } else if (named !== undefined) {
       const asset = release.assets.find((a) => a.name === named)
       if (!asset) throw new Error(`${release.tag} has no file named ${named}.`)
       chosen = await download(token, asset, onDownload)
@@ -403,13 +416,19 @@ export function createGithubServices(ctx: GhContext): Pick<
         packageId,
         onInstalling: (name, version) => progress(`Installing ${name} ${version}`, 2),
         provides: opts.provides,
-        config: (previous) => ({
-          updateMode: ref.tag ? 'pinned' : (previous?.github?.updateMode ?? 'auto'),
-          assetPattern:
-            named !== undefined
-              ? assetPattern(chosen.asset.name, release.tag)
-              : (previous?.github?.assetPattern ?? null)
-        })
+        config: (previous) =>
+          opts.assetPattern !== undefined
+            ? { updateMode: 'auto', assetPattern: opts.assetPattern, track: opts.track }
+            : {
+                updateMode: ref.tag ? 'pinned' : (previous?.github?.updateMode ?? 'auto'),
+                assetPattern:
+                  named !== undefined
+                    ? assetPattern(chosen.asset.name, release.tag)
+                    : (previous?.github?.assetPattern ?? null),
+                ...((opts.track ?? previous?.github?.track)
+                  ? { track: opts.track ?? previous?.github?.track }
+                  : {})
+              }
       })
       progress('Done', total)
       return { kind: 'installed', mod, replaced }
@@ -428,7 +447,7 @@ export function createGithubServices(ctx: GhContext): Pick<
       const mode = configOf(m).updateMode
       if (mode === 'pinned') continue
       try {
-        const latest = await latestOf(m.source.owner, m.source.repo)
+        const latest = await latestOf(m.source.owner, m.source.repo, configOf(m).track)
         checked++
         if (needsUpdate(m, latest)) {
           out.push({
@@ -468,7 +487,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     for (const m of mods.filter(isGhMod)) {
       if (!wanted.has(m.id) || !manualAllows(configOf(m).updateMode)) continue
       try {
-        const latest = await latestOf(m.source.owner, m.source.repo)
+        const latest = await latestOf(m.source.owner, m.source.repo, configOf(m).track)
         if (!needsUpdate(m, latest)) continue
         const mod = await updateMod(def, catalog, profileId, m, latest, token, manualAllows)
         if (mod) updated.push(mod)
@@ -517,7 +536,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     catalog: Catalog,
     profileId: string,
     token: string | null,
-    latestOf: (owner: string, repo: string) => Promise<GhRelease>,
+    latestOf: (owner: string, repo: string, track?: GhTrack) => Promise<GhRelease>,
     /** False while the game runs: notify-mode lookups still happen, installs don't. */
     installs: boolean
   ): Promise<void> {
@@ -527,7 +546,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     for (const m of mods.filter(isGhMod)) {
       if (configOf(m).updateMode === 'notify') {
         try {
-          const latest = await latestOf(m.source.owner, m.source.repo)
+          const latest = await latestOf(m.source.owner, m.source.repo, configOf(m).track)
           const key = `${def.label}/${profileId}/${m.id}@${latest.tag}`
           if (needsUpdate(m, latest) && !announced.has(key)) fresh.push(key)
         } catch (e) {
@@ -539,7 +558,7 @@ export function createGithubServices(ctx: GhContext): Pick<
       }
       if (!installs || !autoAllows(configOf(m).updateMode)) continue
       try {
-        const latest = await latestOf(m.source.owner, m.source.repo)
+        const latest = await latestOf(m.source.owner, m.source.repo, configOf(m).track)
         if (!needsUpdate(m, latest)) continue
         const mod = await updateMod(def, catalog, profileId, m, latest, token, autoAllows)
         if (mod) done.push({ name: mod.name, tag: latest.tag })

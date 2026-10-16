@@ -24,7 +24,7 @@ import { loadCatalog } from '../../src/main/catalog/catalog'
 import { createNexusServices } from '../../src/main/nexus/service'
 import { createNexusGames } from '../../src/main/nexus/games'
 import { createGithubServices } from '../../src/main/github/service'
-import { saveProfile } from '../../src/main/profiles/profiles'
+import { getProfile, saveProfile } from '../../src/main/profiles/profiles'
 import { readHmlFile } from '../../src/main/share/hmlFile'
 import { HML_METHODS } from '../../src/shared/ipc'
 import type { HmlEvent, TsQuery } from '../../src/shared/types'
@@ -1551,10 +1551,18 @@ describe('services', () => {
         const u = new URL(url)
         if (u.host === 'api.github.com') {
           calls.push(url)
-          const m = /^\/repos\/([^/]+)\/([^/]+)\/releases\/(latest|tags\/(.+))$/.exec(u.pathname)
+          const m = /^\/repos\/([^/]+)\/([^/]+)\/releases(?:\/(latest|tags\/(.+)))?$/.exec(
+            u.pathname
+          )
           const entry = m && repos.get(slug(m[1], m[2]))
           if (!m || !entry) return res(404)
           if (entry.down) return res(entry.down)
+          if (!m[3]) {
+            return res(
+              200,
+              [...entry.releases].reverse().map((x) => json(m[1], m[2], x))
+            )
+          }
           const rel = m[4]
             ? entry.releases.find((x) => x.tag === decodeURIComponent(m[4]))
             : entry.releases[entry.releases.length - 1]
@@ -2224,6 +2232,25 @@ describe('services', () => {
         await api.uninstallMod('repo', pid, 'owner-repo')
         expect(tasklistCalls).toBe(0)
       })
+    })
+
+    test('ghCheckUpdates respects a saved release track', async () => {
+      await setup()
+      publish('BepInEx', 'BepInEx', 'v5.4.23.4', { 'a.zip': zipOf('BepInEx', '5.4.23.4') })
+      await api.ghInstall('repo', pid, 'BepInEx/BepInEx')
+      const profile = await getProfile(deps.paths, 'repo', pid)
+      await saveProfile(deps.paths, {
+        ...profile,
+        mods: profile.mods.map((m) => ({
+          ...m,
+          github: { updateMode: 'auto', assetPattern: null, track: { major: 5, prerelease: false } }
+        }))
+      })
+      publish('BepInEx', 'BepInEx', 'v5.4.23.5', { 'a.zip': zipOf('BepInEx', '5.4.23.5') })
+      publish('BepInEx', 'BepInEx', 'v6.0.0', { 'a.zip': zipOf('BepInEx', '6.0.0') })
+      clock += 11 * 60_000
+      const found = await api.ghCheckUpdates('repo', pid)
+      expect(found.map((u) => u.latest)).toEqual(['v5.4.23.5'])
     })
 
     test('ghCheckUpdates skips a mod whose lookup fails', async () => {

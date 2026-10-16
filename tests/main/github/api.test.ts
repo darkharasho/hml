@@ -476,3 +476,33 @@ describe('isNewerTag', () => {
     expect(isNewerTag('same', 'same')).toBe(false)
   })
 })
+
+describe('fetchRelease with a track', () => {
+  const list = [
+    rawRelease({ tag_name: 'v6.0.0-pre.2', prerelease: true }),
+    rawRelease({ tag_name: 'v5.4.23.5' }),
+    rawRelease({ tag_name: 'v5.4.23.4' })
+  ]
+  const routes = (releases: unknown[] = list): Record<string, Reply> => ({
+    [`${API}/releases?per_page=30`]: { status: 200, body: releases }
+  })
+
+  it('a 5.x stable track picks the newest 5.x release', async () => {
+    const { fetch: f } = fakeFetch(routes())
+    const rel = await fetchRelease(base(f, { track: { major: 5, prerelease: false } }))
+    expect(rel.tag).toBe('v5.4.23.5')
+  })
+
+  it('a 6.x pre-release track picks the newest 6.x release', async () => {
+    const { fetch: f } = fakeFetch(routes())
+    const rel = await fetchRelease(base(f, { track: { major: 6, prerelease: true } }))
+    expect(rel.tag).toBe('v6.0.0-pre.2')
+  })
+
+  it('a 6.x stable-only track with only pre-releases throws', async () => {
+    const { fetch: f } = fakeFetch(routes())
+    await expect(
+      fetchRelease(base(f, { track: { major: 6, prerelease: false }, owner: 'o', repo: 'r' }))
+    ).rejects.toThrow('o/r has no 6.x release.')
+  })
+})

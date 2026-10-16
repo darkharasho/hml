@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { compareVersions } from '../../shared/version'
 import { GH_RATE_LIMIT_PREFIX, GH_REJECTED_TOKEN_PREFIX } from '../../shared/messages'
 import { readJson, writeJsonAtomic } from '../store/json'
+import type { GhTrack } from '../../shared/types'
 import type { GhReleaseAsset } from './assets'
 
 export interface GhRelease {
@@ -142,12 +143,24 @@ function normalizeRelease(r: Record<string, unknown>): GhRelease {
   }
 }
 
+/** The first number in a tag after an optional `v` (`v5.4.1` is 5), else null. */
+function tagMajor(tag: string): number | null {
+  const m = /^v?(\d+)/i.exec(tag)
+  return m ? Number(m[1]) : null
+}
+
 type Fetched = { status: 'ok'; body: unknown } | { status: 'notfound' }
 
 export async function fetchRelease(
-  opts: GhClientOpts & { owner: string; repo: string; tag?: string; maxAgeMs?: number }
+  opts: GhClientOpts & {
+    owner: string
+    repo: string
+    tag?: string
+    maxAgeMs?: number
+    track?: GhTrack
+  }
 ): Promise<GhRelease> {
-  const { owner, repo, tag, maxAgeMs } = opts
+  const { owner, repo, tag, maxAgeMs, track } = opts
   const now = opts.now ?? Date.now
   const slug = `${owner}/${repo}`
   const base = `${API_ROOT}/repos/${owner}/${repo}`
@@ -195,6 +208,24 @@ export async function fetchRelease(
     const got = await get(`${base}/releases/tags/${encodeURIComponent(tag)}`)
     if (got.status === 'notfound') throw new Error(`${slug} has no release ${tag}.`)
     return normalizeRelease(got.body as Record<string, unknown>)
+  }
+
+  if (track) {
+    const got = await get(`${base}/releases?per_page=30`)
+    if (got.status === 'notfound') {
+      throw new Error(
+        `Couldn't find github.com/${slug}. Check the URL; private repositories need a GitHub token in Settings.`
+      )
+    }
+    const all = Array.isArray(got.body) ? (got.body as Record<string, unknown>[]) : []
+    const found = all.find(
+      (r) =>
+        r.draft !== true &&
+        tagMajor(String(r.tag_name)) === track.major &&
+        (track.prerelease || r.prerelease !== true)
+    )
+    if (!found) throw new Error(`${slug} has no ${track.major}.x release.`)
+    return normalizeRelease(found)
   }
 
   const latest = await get(`${base}/releases/latest`)
