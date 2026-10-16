@@ -718,5 +718,54 @@ describe('custom game loaders, launches and manual installs', () => {
       expect(p2!.needsFolder).toBeUndefined()
       expect((await other.importShare(p2!.token, '')).game).toBe(mine.label)
     })
+
+    test('importing never renames or re-loaders a game that already owns the folder', async () => {
+      const api = createServices(deps)
+      const file = await exportFrom(
+        api,
+        (
+          await api.addCustomGame({
+            source: 'folder',
+            folder: gameFolder('My Game'),
+            displayName: 'My Game',
+            loaderChoice: 'bepinex6-mono'
+          })
+        ).label
+      )
+      const other = freshInstall(file)
+      const folder = gameFolder('Elsewhere')
+      const mine = await other.addCustomGame({
+        source: 'folder',
+        folder,
+        displayName: 'Elsewhere',
+        loaderChoice: 'none'
+      })
+      const p = await other.previewShare({ file: true })
+      expect(p!.needsFolder).toBe(true)
+      const r = await other.importShare(p!.token, '', folder)
+      expect(r.game).toBe(mine.label)
+      expect(await other.getGame(mine.label)).toMatchObject({
+        displayName: 'Elsewhere',
+        custom: { loaderChoice: 'none' }
+      })
+      expect((await other.listProfiles(mine.label)).map((x) => x.name)).toEqual(['Shared'])
+    })
+
+    test('importing a Steam game that is already stored leaves it as it is', async () => {
+      const api = createServices(deps)
+      await api.addCustomGame({ source: 'steam', steamAppId: '3314580', loaderChoice: 'none' })
+      await api.updateCustomGame('steam-3314580', { loaderChoice: 'bepinex6-mono' })
+      const file = await exportFrom(api, 'steam-3314580')
+      const other = freshInstall(file)
+      await other.addCustomGame({ source: 'steam', steamAppId: '3314580', loaderChoice: 'none' })
+      await other.updateCustomGame('steam-3314580', { displayName: 'Mine' })
+      const p = await other.previewShare({ file: true })
+      const r = await other.importShare(p!.token, '')
+      expect(r.game).toBe('steam-3314580')
+      expect(await other.getGame('steam-3314580')).toMatchObject({
+        displayName: 'Mine',
+        custom: { loaderChoice: 'none' }
+      })
+    })
   })
 })

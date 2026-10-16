@@ -856,6 +856,15 @@ export function createServices(
       )
       return found ? customGameDef(found) : undefined
     },
+    findCustomGameByFolder: async (folder) => {
+      const overrides = (await loadSettings(paths)).gamePathOverrides
+      const want = path.resolve(folder)
+      const found = (await customGames.list()).find((g) => {
+        const dir = overrides[g.label]
+        return dir !== undefined && path.resolve(dir) === want
+      })
+      return found ? customGameDef(found) : undefined
+    },
     isSteamAppInstalled: async (appId) => {
       const root = await getSteamRoot().catch(() => null)
       if (!root) return false

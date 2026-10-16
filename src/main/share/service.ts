@@ -49,6 +49,8 @@ export interface ShareContext {
   installers: ShareInstallers
   /** A stored folder game with this display name (case-insensitive). */
   findCustomGameByName(displayName: string): Promise<GameDef | undefined>
+  /** A stored custom game whose game folder is this one. */
+  findCustomGameByFolder(folder: string): Promise<GameDef | undefined>
   /** Whether Steam has this app installed on this PC. */
   isSteamAppInstalled(appId: string): Promise<boolean>
   /** The stored custom-game entry for a label, if it is one. */
@@ -153,6 +155,9 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       const plan = await customPlan(cg)
       if (plan.def) return plan.def.label
       if (cg.source === 'steam') {
+        // Already stored: used as-is, so the file can't change its name or loader.
+        const stored = cg.steamAppId ? await findGame(`steam-${cg.steamAppId}`) : undefined
+        if (stored) return stored.label
         return (
           await api.addCustomGame({
             source: 'steam',
@@ -162,6 +167,9 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         ).label
       }
       if (!folder) throw new Error('Choose the game folder to import this profile.')
+      // A folder that already belongs to a stored game keeps that game's name and loader.
+      const owner = await ctx.findCustomGameByFolder(folder)
+      if (owner) return owner.label
       return (
         await api.addCustomGame({
           source: 'folder',
