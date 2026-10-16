@@ -165,6 +165,51 @@ describe('services', () => {
     expect((await api.getSettings()).nexusDomainOverrides).toEqual({})
   })
 
+  test('a saveSettings during a slow nxSetDomain keeps both changes', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    let asked!: () => void
+    const reached = new Promise<void>((r) => (asked = r))
+    deps.fetch = (async (url: string) => {
+      if (url.includes('graphql')) {
+        asked()
+        await gate
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => ({
+            data: { game: { id: '1', name: 'Skyrim SE', domainName: 'skyrimspecialedition' } }
+          })
+        }
+      }
+      return { ok: true, status: 200, headers: new Headers(), json: async () => fixture }
+    }) as unknown as typeof fetch
+    const api = createServices(deps)
+    const slow = api.nxSetDomain('repo', 'skyrimspecialedition')
+    await reached
+    await api.saveSettings({ ...(await api.getSettings()), lastGame: 'repo' })
+    release()
+    await slow
+    const s = await api.getSettings()
+    expect(s.nexusDomainOverrides).toEqual({ repo: 'skyrimspecialedition' })
+    expect(s.lastGame).toBe('repo')
+  })
+
+  test('saveSettings keeps the path and domain overrides already on disk', async () => {
+    const api = createServices(deps)
+    await api.setGamePath('repo', gameDir)
+    await api.saveSettings({
+      ...(await api.getSettings()),
+      gamePathOverrides: {},
+      nexusDomainOverrides: {},
+      lastGame: 'repo'
+    })
+    const s = await api.getSettings()
+    expect(s.gamePathOverrides).toEqual({ repo: gameDir })
+    expect(s.lastGame).toBe('repo')
+  })
+
   test('deployment api: exact errors, warnings, deploy and remove', async () => {
     deps.fetch = (async (url: string) => {
       const json = url.includes('graphql')
@@ -722,7 +767,7 @@ describe('services', () => {
       evil: true
     } as never)
     expect(JSON.parse(readFileSync(deps.paths.settings, 'utf8'))).toEqual({
-      gamePathOverrides: { repo: '/a' },
+      gamePathOverrides: {},
       steamRootOverride: null,
       lastGame: null,
       lastProfile: {},
@@ -764,7 +809,7 @@ describe('services', () => {
         overrides[l] = path.join(tmp, `dir-${l}`)
         mkdirSync(overrides[l], { recursive: true })
       }
-      await api.saveSettings({ ...(await api.getSettings()), gamePathOverrides: overrides })
+      for (const [l, dir] of Object.entries(overrides)) await api.setGamePath(l, dir)
     }
 
     test('a non-installed exact match beats an installed substring match', async () => {

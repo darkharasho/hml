@@ -24,7 +24,7 @@ import {
   steamRootCandidates,
   type ExecFilePort
 } from './steam/steam'
-import { isDirectory, loadSettings, resolveGameDir, saveSettings } from './store/settings'
+import { isDirectory, loadSettings, resolveGameDir, updateSettings } from './store/settings'
 import {
   createProfile,
   deleteProfile,
@@ -328,11 +328,12 @@ export function createServices(
   async function setGamePath(label: string, dir: string | null): Promise<void> {
     const def = await requireGame(label)
     if (dir && def.loader === 'deploy') await assertNoOtherDeployment(def, dir)
-    const settings = await loadSettings(paths)
-    const overrides = { ...settings.gamePathOverrides }
-    if (dir) overrides[label] = dir
-    else delete overrides[label]
-    await saveSettings(paths, { ...settings, gamePathOverrides: overrides })
+    await updateSettings(paths, (settings) => {
+      const overrides = { ...settings.gamePathOverrides }
+      if (dir) overrides[label] = dir
+      else delete overrides[label]
+      return { ...settings, gamePathOverrides: overrides }
+    })
     invalidateSteamRoot()
   }
 
@@ -756,21 +757,24 @@ export function createServices(
 
     async nxSetDomain(game: string, domain: string | null): Promise<void> {
       await requireGame(game)
-      const settings = await loadSettings(paths)
-      const overrides = { ...settings.nexusDomainOverrides }
       const wanted = domain?.trim().toLowerCase() ?? ''
+      let found: Awaited<ReturnType<typeof gameByDomain>> = null
       if (wanted) {
-        const found = /^[a-z0-9_-]{1,64}$/.test(wanted)
-          ? await gameByDomain(nexusClient, wanted)
-          : null
+        // The network check comes first, outside the settings lock.
+        found = /^[a-z0-9_-]{1,64}$/.test(wanted) ? await gameByDomain(nexusClient, wanted) : null
         if (!found) throw new Error(`Nexus Mods has no game "${wanted}".`)
-        overrides[game] = found.domain
-        await nexus.rememberDomain(game, found.domain, found.id)
-      } else {
-        delete overrides[game]
-        await nexus.forgetDomain(game)
       }
-      await saveSettings(paths, { ...settings, nexusDomainOverrides: overrides })
+      await updateSettings(paths, async (settings) => {
+        const overrides = { ...settings.nexusDomainOverrides }
+        if (found) {
+          overrides[game] = found.domain
+          await nexus.rememberDomain(game, found.domain, found.id)
+        } else {
+          delete overrides[game]
+          await nexus.forgetDomain(game)
+        }
+        return { ...settings, nexusDomainOverrides: overrides }
+      })
     },
 
     async refreshCatalog(): Promise<void> {
@@ -976,7 +980,13 @@ export function createServices(
           )
         }
       }
-      await saveSettings(paths, s)
+      // Only the renderer-owned keys; the path and domain overrides have their own methods.
+      await updateSettings(paths, (cur) => ({
+        ...cur,
+        steamRootOverride: s.steamRootOverride,
+        lastGame: s.lastGame,
+        lastProfile: s.lastProfile
+      }))
       invalidateSteamRoot()
     },
 

@@ -51,6 +51,24 @@ export async function saveSettings(paths: AppPaths, s: Settings): Promise<void> 
   await writeJsonAtomic(paths.settings, normalizeSettings(s))
 }
 
+let settingsTail: Promise<unknown> = Promise.resolve()
+
+/**
+ * Read-modify-write of the settings file, one at a time, so concurrent changes to different
+ * keys all land. `fn` gets the current settings and returns the new ones; it must not wait on
+ * other queued work or the network.
+ */
+export function updateSettings(
+  paths: AppPaths,
+  fn: (current: Settings) => Settings | Promise<Settings>
+): Promise<void> {
+  const run = settingsTail.then(async () => {
+    await saveSettings(paths, await fn(await loadSettings(paths)))
+  })
+  settingsTail = run.catch(() => undefined)
+  return run
+}
+
 /** True when p exists and is a folder. */
 export async function isDirectory(p: string): Promise<boolean> {
   try {
