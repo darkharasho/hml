@@ -12,6 +12,7 @@ import {
   truncateSync,
   writeFileSync
 } from 'node:fs'
+import { promises as fsPromises } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
@@ -3066,6 +3067,44 @@ describe('share', () => {
     expect(readdirSync(outDir).sort()).toEqual(['blocked.hml', 'ok.hml'])
   })
 
+  test.each(['write', 'rename'] as const)(
+    'exportProfileFile keeps the old target and leaves no temp file when the %s fails partway',
+    async (stage) => {
+      const api = createServices(deps)
+      const profile = await api.createProfile('repo', 'Atomic Fail')
+      const outDir = path.join(tmp, 'atomic-fail')
+      mkdirSync(outDir, { recursive: true })
+      const target = path.join(outDir, 'keep.hml')
+      writeFileSync(target, 'OLD CONTENT')
+      const real = fsPromises.writeFile.bind(fsPromises)
+      const spies =
+        stage === 'write'
+          ? [
+              vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (file, data) => {
+                // Land a truncated file first, so a direct write to the target would corrupt it.
+                await real(file, String(data).slice(0, 3))
+                throw new Error('disk full')
+              })
+            ]
+          : [
+              vi.spyOn(fsPromises, 'rename').mockImplementation(async () => {
+                throw new Error('rename denied')
+              })
+            ]
+      try {
+        const svc = createServices({ ...deps, dialog: { ...dialog, saveFile: async () => target } })
+        await expect(svc.exportProfileFile('repo', profile.id)).rejects.toThrow(
+          stage === 'write' ? 'disk full' : 'rename denied'
+        )
+      } finally {
+        spies.forEach((s) => s.mockRestore())
+      }
+      expect(readFileSync(target, 'utf8')).toBe('OLD CONTENT')
+      expect(readdirSync(outDir).filter((f) => f.endsWith('.tmp'))).toEqual([])
+      expect(readdirSync(outDir)).toEqual(['keep.hml'])
+    }
+  )
+
   test('exportProfileFile writes a file readHmlFile reads back, and returns null on cancel', async () => {
     const api = createServices(deps)
     const profile = await api.createProfile('repo', 'My: Profile?')
@@ -3687,11 +3726,13 @@ describe('share import', () => {
     )
   })
 
+  const NEXUS_UNREACHABLE = "Couldn't reach Nexus Mods. Check your connection and try again."
+
   test('a resolveGame failure keeps the token, so the import can be retried', async () => {
     hml = makeHml([], { game: 'nexus-stardewvalley' })
     const p = await api.previewShare({ code: CODE })
     nexusDown = true
-    await expect(api.importShare(p!.token, '')).rejects.toThrow()
+    await expect(api.importShare(p!.token, '')).rejects.toThrow(NEXUS_UNREACHABLE)
     nexusDown = false
     const r = await api.importShare(p!.token, '')
     expect(r.game).toBe('nexus-stardewvalley')
@@ -3700,13 +3741,22 @@ describe('share import', () => {
     )
   })
 
-  test('a second concurrent import of one token is refused', async () => {
+  test('a second concurrent import of one token is refused by inFlight, not a spent token', async () => {
+    const EXPIRED = 'This import has expired. Open the code or file again.'
+    hml = makeHml([], { game: 'nexus-stardewvalley' })
     const p = await api.previewShare({ code: CODE })
+    // The first import claims the token, then fails resolving the game.
+    nexusDown = true
     const first = api.importShare(p!.token, '')
-    await expect(api.importShare(p!.token, '')).rejects.toThrow(
-      'This import has expired. Open the code or file again.'
-    )
-    await expect(first).resolves.toMatchObject({ game: 'repo' })
+    const firstSettled = expect(first).rejects.toThrow(NEXUS_UNREACHABLE)
+    await expect(api.importShare(p!.token, '')).rejects.toThrow(EXPIRED)
+    await firstSettled
+    // The failed first import released the token, so a retry works: the refusal above came
+    // from the in-flight guard.
+    nexusDown = false
+    await expect(api.importShare(p!.token, '')).resolves.toMatchObject({
+      game: 'nexus-stardewvalley'
+    })
   })
 
   test('a failing final read still returns the created profile with a warning', async () => {
@@ -3800,5 +3850,130 @@ describe('share import', () => {
 
   test('HML_METHODS lists the import methods', () => {
     expect(HML_METHODS).toEqual(expect.arrayContaining(['previewShare', 'importShare']))
+  })
+})
+
+describe('services launch, folders and domains', () => {
+  // A catalog with two extra games that share REPO's install folder: one on another mod loader
+  // and one without a Steam app id.
+  function withExtraGames(): ServiceDeps {
+    const base = fixture.games.repo
+    const extra = (label: string, loader: string, distributions: unknown[]): unknown => ({
+      ...base,
+      uuid: label,
+      label,
+      meta: { ...base.meta, displayName: label.toUpperCase() },
+      distributions,
+      r2modman: [{ ...base.r2modman[0], packageLoader: loader, distributions }]
+    })
+    const eco = {
+      ...fixture,
+      games: {
+        ...fixture.games,
+        othergame: extra('othergame', 'melonloader', base.distributions),
+        noapp: extra('noapp', 'bepinex', [])
+      }
+    }
+    const snapshotPath = path.join(tmp, 'eco-extra.json')
+    writeFileSync(snapshotPath, JSON.stringify(eco))
+    return {
+      ...deps,
+      snapshotPath,
+      fetch: (async () => ({ ok: true, json: async () => eco })) as unknown as typeof fetch
+    }
+  }
+
+  test('launching a game on an unsupported mod loader is refused', async () => {
+    const api = createServices(withExtraGames())
+    await expect(api.launch('othergame', null, 'vanilla')).rejects.toThrow(
+      'OTHERGAME uses a mod loader HML does not support yet.'
+    )
+    expect(spawned).toEqual([])
+  })
+
+  test('launching a game without a Steam app id is refused', async () => {
+    const api = createServices(withExtraGames())
+    await expect(api.launch('noapp', null, 'vanilla')).rejects.toThrow(
+      'NOAPP has no Steam app id, so HML cannot launch it.'
+    )
+    expect(spawned).toEqual([])
+  })
+
+  test('pickGamePath saves the chosen folder and returns null on cancel', async () => {
+    let chosen: string | null = null
+    const api = createServices({
+      ...deps,
+      dialog: { ...dialog, pickFolder: async () => chosen }
+    })
+    expect(await api.pickGamePath('repo')).toBeNull()
+    expect((await api.getSettings()).gamePathOverrides).toEqual({})
+    chosen = gameDir
+    expect(await api.pickGamePath('repo')).toBe(gameDir)
+    expect((await api.getSettings()).gamePathOverrides).toEqual({ repo: gameDir })
+  })
+
+  test('openProfileFolder opens the profile dir and reports a shell error', async () => {
+    let result = ''
+    const opened: string[] = []
+    const api = createServices({
+      ...deps,
+      shell: {
+        openPath: async (p) => (opened.push(p), result),
+        openExternal: async () => undefined
+      }
+    })
+    const profile = await api.createProfile('repo', 'Folder')
+    await api.openProfileFolder('repo', profile.id)
+    expect(opened).toEqual([deps.paths.profileDir('repo', profile.id)])
+    result = 'no file manager'
+    await expect(api.openProfileFolder('repo', profile.id)).rejects.toThrow(
+      'Could not open the profile folder: no file manager'
+    )
+  })
+
+  test('nxSetDomain rejects a malformed domain without a request', async () => {
+    const calls: string[] = []
+    const api = createServices({
+      ...deps,
+      fetch: (async (url: string) => {
+        calls.push(String(url))
+        return { ok: true, json: async () => fixture }
+      }) as unknown as typeof fetch
+    })
+    // Warm the catalog, whose load may fetch, so only the domain check is measured.
+    await api.getSettings()
+    await api.searchGames('')
+    const before = calls.length
+    await expect(api.nxSetDomain('repo', '../x')).rejects.toThrow('Nexus Mods has no game "../x".')
+    expect(calls.length).toBe(before)
+    expect((await api.getSettings()).nexusDomainOverrides).toEqual({})
+  })
+
+  test('the export save dialog runs outside the profile lock', async () => {
+    const zip = zipSync({
+      'manifest.json': strToU8(JSON.stringify({ name: 'Lockless', version_number: '1.0.0' })),
+      'Lockless.dll': strToU8('dll')
+    })
+    const file = path.join(tmp, 'Lockless.zip')
+    writeFileSync(file, zip)
+    let profileId = ''
+    const target = path.join(tmp, 'lockless.hml')
+    const api: ReturnType<typeof createServices> = createServices({
+      ...deps,
+      dialog: {
+        ...dialog,
+        // Needs the same profile's lock: it can only finish if the dialog holds none.
+        saveFile: async () => {
+          await api.setModEnabled('repo', profileId, 'Lockless', false)
+          return target
+        }
+      }
+    })
+    const profile = await api.createProfile('repo', 'Lock')
+    profileId = profile.id
+    await api.installFromPaths('repo', profile.id, [file])
+    expect(await api.exportProfileFile('repo', profile.id)).toBe(target)
+    const mods = (await api.listProfiles('repo')).find((p) => p.id === profile.id)!.mods
+    expect(mods.find((m) => m.id === 'Lockless')?.enabled).toBe(false)
   })
 })
