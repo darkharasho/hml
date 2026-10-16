@@ -540,22 +540,29 @@ export function createServices(
       requireInstallable(def)
       const idx = await loadIndex(def, false)
       const loaders = await loaderIds(def)
-      return serialize(game, profileId, async () => {
-        const profile = await getProfile(paths, game, profileId)
-        const installedNow = installedVersions(profile.mods, loaders)
-        const provided = providedPackages(profile.mods, loaders)
+      const resolve = (mods: InstalledMod[]): ReturnType<typeof resolveInstall> => {
+        const installedNow = installedVersions(mods, loaders)
+        const provided = providedPackages(mods, loaders)
         // Installing a provided package itself replaces the mod that stands in for it.
-        const tsCopy = profile.mods.some(
+        const tsCopy = mods.some(
           (m) => m.source.kind === 'thunderstore' && m.source.fullName === fullName
         )
         if (provided.has(fullName) && !tsCopy) installedNow.delete(fullName)
         provided.delete(fullName)
-        const { plan, skipped, missing } = resolveInstall(
-          idx.byName,
-          { fullName, version },
-          installedNow,
-          provided
-        )
+        return resolveInstall(idx.byName, { fullName, version }, installedNow, provided)
+      }
+      // Replacing installed files under a running game is refused, as for updates; installing
+      // packages the profile doesn't have yet is allowed. Checked outside the profile's queue.
+      const before = (await getProfile(paths, game, profileId)).mods
+      const replacesInstalled = resolve(before).plan.some(
+        (p) =>
+          findInstalledMod(before, p.fullName, loaders) !== undefined ||
+          before.some((m) => m.source.kind === 'local' && m.id === p.name)
+      )
+      if (replacesInstalled) await assertGameClosed(def)
+      return serialize(game, profileId, async () => {
+        const profile = await getProfile(paths, game, profileId)
+        const { plan, skipped, missing } = resolve(profile.mods)
         const satisfied = skipped.filter((s) => s !== fullName)
         const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
         const { installed, replaced } = await installPlan(def, profileId, plan)

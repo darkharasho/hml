@@ -1862,6 +1862,76 @@ describe('services', () => {
         expect(existsSync(path.join(pluginsDir(), 'owner-repo', 'Thing.dll'))).toBe(true)
       })
 
+      test('tsInstall refuses only when it would replace something installed', async () => {
+        const IDX = 'https://thunderstore.io/c/repo/api/v1/package-listing-index/'
+        const CHUNK = 'https://ts.test/chunk'
+        const dlUrl = (n: string, v: string): string => `https://ts.test/dl/${n}/${v}`
+        const rawPkg = (owner: string, name: string, v: string): Record<string, unknown> => ({
+          name,
+          full_name: `${owner}-${name}`,
+          owner,
+          package_url: `https://thunderstore.io/c/repo/p/${owner}/${name}/`,
+          date_updated: '2026-01-01T00:00:00Z',
+          rating_score: 1,
+          is_pinned: false,
+          is_deprecated: false,
+          has_nsfw_content: false,
+          categories: ['mods'],
+          versions: [
+            {
+              name,
+              full_name: `${owner}-${name}-${v}`,
+              description: '',
+              icon: 'x',
+              version_number: v,
+              dependencies: [],
+              download_url: dlUrl(`${owner}-${name}`, v),
+              downloads: 1,
+              date_created: '2026-01-01T00:00:00Z',
+              website_url: '',
+              is_active: true,
+              file_size: 1
+            }
+          ]
+        })
+        const blobs = new Map<string, Uint8Array>([
+          [
+            CHUNK,
+            gzipSync(
+              Buffer.from(
+                JSON.stringify([rawPkg('New', 'Fresh', '1.0.0'), rawPkg('Dep', 'Thing', '1.0.0')])
+              )
+            )
+          ],
+          [IDX, gzipSync(Buffer.from(JSON.stringify([CHUNK])))],
+          [dlUrl('New-Fresh', '1.0.0'), zipOf('Fresh', '1.0.0')],
+          [dlUrl('Dep-Thing', '1.0.0'), zipOf('Thing', '1.0.0')]
+        ])
+        const inner = ghFetch
+        ghFetch = (async (url: string, init?: never) => {
+          const b = blobs.get(url)
+          if (!b) return inner(url, init)
+          const buf = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
+          return { ok: true, status: 200, headers: new Headers(), arrayBuffer: async () => buf }
+        }) as unknown as typeof fetch
+        // owner/repo installs a mod whose manifest name is Thing, so it replaces Dep-Thing.
+        await setup()
+        publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+        api = winApi()
+        await api.tsInstall('repo', pid, 'Dep-Thing')
+        await api.ghInstall('repo', pid, 'owner/repo')
+        tasks = ['REPO.exe']
+        // Installing Dep-Thing again would replace the GitHub mod that provides it.
+        await expect(api.tsInstall('repo', pid, 'Dep-Thing')).rejects.toThrow(CLOSE)
+        // A package that isn't installed yet still installs.
+        const r = await api.tsInstall('repo', pid, 'New-Fresh')
+        expect(r.installed.map((m) => m.id)).toEqual(['New-Fresh'])
+        // A failing tasklist doesn't block.
+        tasks = 'fail'
+        const again = await api.tsInstall('repo', pid, 'Dep-Thing')
+        expect(again.replaced).toEqual(['owner-repo'])
+      })
+
       test('a failing tasklist does not block manual actions', async () => {
         await installOld()
         api = winApi()
