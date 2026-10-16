@@ -85,6 +85,8 @@ export interface HmlExportMod {
   enabled: boolean
   /** Display name only; optional when reading. */
   name?: string
+  /** Thunderstore packages the mod stands in for (InstalledMod.provides); optional when reading. */
+  provides?: string[]
 }
 
 /** The export.json inside a .hml profile file. */

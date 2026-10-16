@@ -15,6 +15,7 @@ import type {
 import { compareVersions } from '../../shared/version'
 import { getProfile, RESERVED } from '../profiles/profiles'
 import type { ServiceDeps } from '../services'
+import type { GhInstallOptions } from '../github/service'
 import { buildHmlFile, IMPORT_TOO_BIG, MAX_HML_BYTES, readHmlFile } from './hmlFile'
 import { downloadShare, uploadShare } from './client'
 
@@ -24,13 +25,19 @@ export type ShareInstallers = Pick<
   | 'tsGetPackage'
   | 'tsRefresh'
   | 'tsInstall'
-  | 'ghInstall'
   | 'nxInstall'
   | 'nxGetDomain'
   | 'setModEnabled'
   | 'createProfile'
   | 'addNexusGame'
->
+> & {
+  ghInstall(
+    game: string,
+    profileId: string,
+    url: string,
+    opts: GhInstallOptions
+  ): ReturnType<HmlApi['ghInstall']>
+}
 
 export interface ShareContext {
   deps: ServiceDeps
@@ -173,9 +180,10 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         case 'github': {
           const tag = s.tag.split('/').map(encodeURIComponent).join('/')
           const url = `https://github.com/${s.owner}/${s.repo}/releases/download/${tag}/${encodeURIComponent(s.asset)}`
+          const provides = await onThunderstore(game, entry.provides ?? [])
           let r
           try {
-            r = await api.ghInstall(game, profileId, url)
+            r = await api.ghInstall(game, profileId, url, { provides })
           } catch (e) {
             // A network failure or rate limit keeps GitHub's own message, which says what to do.
             const msg = errMsg(e)
@@ -219,6 +227,19 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       // Includes Nexus's "Add your Nexus Mods API key in Settings to download." and a 404.
       return unresolved(errMsg(e))
     }
+  }
+
+  /** The fullNames that are packages in the game's Thunderstore index; none if it can't load. */
+  async function onThunderstore(game: string, fullNames: string[]): Promise<string[]> {
+    const out: string[] = []
+    for (const fullName of new Set(fullNames)) {
+      try {
+        if (await api.tsGetPackage(game, fullName)) out.push(fullName)
+      } catch {
+        // No index (offline or no Thunderstore listing): nothing is recorded.
+      }
+    }
+    return out
   }
 
   async function tsModAt(

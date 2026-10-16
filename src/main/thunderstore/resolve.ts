@@ -38,23 +38,49 @@ function pickVersion(pkg: TsPackage, required: string): TsVersion | undefined {
   return top && compareVersions(top.version, required) >= 0 ? top : undefined
 }
 
+/** A dependency an installed GitHub mod stands in for, to record in that mod's `provides`. */
+export interface StandIn {
+  modId: string
+  fullName: string
+}
+
 interface Pass {
   req: Map<string, string>
   plan: PlannedPackage[]
   skipped: string[]
   missing: string[]
+  standIns: StandIn[]
+}
+
+/**
+ * Installed GitHub mods by manifest name, for names exactly one GitHub mod has (two are
+ * ambiguous and stand in for nothing).
+ */
+export function githubByName(mods: InstalledMod[]): Map<string, string> {
+  const out = new Map<string, string>()
+  const seen = new Set<string>()
+  for (const m of mods) {
+    if (m.source.kind !== 'github') continue
+    if (seen.has(m.name)) out.delete(m.name)
+    else out.set(m.name, m.id)
+    seen.add(m.name)
+  }
+  return out
 }
 
 /**
  * Resolves `target` and its dependencies against what is installed. A dependency in `provided`
- * (stood in for by another mod, see `providedPackages`) counts as satisfied at any version.
+ * (stood in for by another mod, see `providedPackages`) counts as satisfied at any version. So
+ * does one with no installed copy whose package name is in `ghByName` (see `githubByName`); it
+ * comes back in `standIns` so the caller can record it on that mod.
  */
 export function resolveInstall(
   index: Map<string, TsPackage>,
   target: { fullName: string; version?: string },
   installed: Map<string, string>,
-  provided: ReadonlySet<string> = new Set()
-): { plan: PlannedPackage[]; skipped: string[]; missing: string[] } {
+  provided: ReadonlySet<string> = new Set(),
+  ghByName: ReadonlyMap<string, string> = new Map()
+): { plan: PlannedPackage[]; skipped: string[]; missing: string[]; standIns: StandIn[] } {
   const targetPkg = index.get(target.fullName)
   if (!targetPkg) throw new Error(`${target.fullName} isn't on Thunderstore for this game.`)
   const targetVersion = target.version
@@ -70,6 +96,7 @@ export function resolveInstall(
     const plan: PlannedPackage[] = []
     const skipped = new Set<string>()
     const missing = new Set<string>()
+    const standIns: StandIn[] = []
     const visited = new Set<string>([target.fullName])
 
     const visit = (version: TsVersion): void => {
@@ -97,6 +124,13 @@ export function resolveInstall(
         const depPkg = index.get(fullName)
         if (!depPkg) {
           missing.add(dep)
+          continue
+        }
+        const standIn = have === undefined ? ghByName.get(depPkg.name) : undefined
+        if (standIn !== undefined) {
+          visited.add(fullName)
+          skipped.add(fullName)
+          standIns.push({ modId: standIn, fullName })
           continue
         }
         // No version meets the minimum: install the newest anyway, and still warn.
@@ -132,7 +166,7 @@ export function resolveInstall(
         downloadUrl: targetVersion.downloadUrl
       })
     }
-    return { req, plan, skipped: [...skipped], missing: [...missing] }
+    return { req, plan, skipped: [...skipped], missing: [...missing], standIns }
   }
 
   // Floors only ever rise (max over every pass), and each is a version string taken from
@@ -150,7 +184,7 @@ export function resolveInstall(
     floor = merged
     pass = walk(floor)
   }
-  return { plan: pass.plan, skipped: pass.skipped, missing: pass.missing }
+  return { plan: pass.plan, skipped: pass.skipped, missing: pass.missing, standIns: pass.standIns }
 }
 
 /**

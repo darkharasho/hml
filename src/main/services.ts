@@ -30,7 +30,8 @@ import {
   deleteProfile,
   getProfile,
   listProfiles,
-  renameProfile
+  renameProfile,
+  saveProfile
 } from './profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
 import { buildLaunchPlan } from './launch/launchPlan'
@@ -47,11 +48,13 @@ import { loadPackageIndex, type TsIndex } from './thunderstore/packageIndex'
 import { allCategories, searchPackages } from './thunderstore/search'
 import {
   findUpdates,
+  githubByName,
   installedVersions,
   mergePlans,
   providedPackages,
   resolveInstall,
-  type PlannedPackage
+  type PlannedPackage,
+  type StandIn
 } from './thunderstore/resolve'
 import { downloadPackage } from './thunderstore/download'
 import { parseAllowedExternalUrl } from './security'
@@ -546,6 +549,25 @@ export function createServices(
     return enabled
   }
 
+  /** Records on each GitHub mod the dependencies it stood in for, so later lookups agree. */
+  async function recordStandIns(
+    def: GameDef,
+    profileId: string,
+    standIns: StandIn[]
+  ): Promise<void> {
+    if (standIns.length === 0) return
+    const profile = await getProfile(paths, def.label, profileId)
+    await saveProfile(paths, {
+      ...profile,
+      mods: profile.mods.map((m) => {
+        const add = standIns.filter((s) => s.modId === m.id).map((s) => s.fullName)
+        return add.length > 0
+          ? { ...m, provides: [...new Set([...(m.provides ?? []), ...add])] }
+          : m
+      })
+    })
+  }
+
   async function loaderIds(def: GameDef): Promise<string[]> {
     return (await getCatalog()).modloaderPackages
       .filter((m) => m.loader === def.loader)
@@ -590,7 +612,13 @@ export function createServices(
         )
         if (provided.has(fullName) && !tsCopy) installedNow.delete(fullName)
         provided.delete(fullName)
-        return resolveInstall(idx.byName, { fullName, version }, installedNow, provided)
+        return resolveInstall(
+          idx.byName,
+          { fullName, version },
+          installedNow,
+          provided,
+          githubByName(mods)
+        )
       }
       // Replacing installed files under a running game is refused, as for updates; installing
       // packages the profile doesn't have yet is allowed. Checked outside the profile's queue.
@@ -603,7 +631,8 @@ export function createServices(
       if (replacesInstalled) await assertGameClosed(def)
       return serialize(game, profileId, async () => {
         const profile = await getProfile(paths, game, profileId)
-        const { plan, skipped, missing } = resolve(profile.mods)
+        const { plan, skipped, missing, standIns } = resolve(profile.mods)
+        await recordStandIns(def, profileId, standIns)
         const satisfied = skipped.filter((s) => s !== fullName)
         const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
         const { installed, replaced } = await installPlan(def, profileId, plan)
@@ -631,18 +660,28 @@ export function createServices(
         const targets = findUpdates(profile.mods, idx.byName).filter((u) => wanted.has(u.modId))
         const installedNow = installedVersions(profile.mods, loaders)
         const provided = providedPackages(profile.mods, loaders)
+        const ghByName = githubByName(profile.mods)
         const plans: PlannedPackage[][] = []
+        const standIns: StandIn[] = []
         const skipped = new Set<string>()
         const missing = new Set<string>()
         for (const t of targets) {
-          const r = resolveInstall(idx.byName, { fullName: t.fullName }, installedNow, provided)
+          const r = resolveInstall(
+            idx.byName,
+            { fullName: t.fullName },
+            installedNow,
+            provided,
+            ghByName
+          )
           plans.push(r.plan)
+          standIns.push(...r.standIns)
           r.skipped.forEach((s) => skipped.add(s))
           r.missing.forEach((m) => missing.add(m))
         }
         const plan = mergePlans(plans, idx.byName)
         const planned = new Set(plan.map((p) => p.fullName))
         const satisfied = [...skipped].filter((s) => !planned.has(s))
+        await recordStandIns(def, profileId, standIns)
         const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
         const { installed, replaced } = await installPlan(def, profileId, plan)
         return { installed, skipped: satisfied, missing: [...missing], replaced, enabled }
@@ -650,7 +689,7 @@ export function createServices(
     }
   }
 
-  const ghServices = createGithubServices({
+  const { ghInstallWith, ...ghServices } = createGithubServices({
     deps,
     getCatalog,
     requireGame,
@@ -703,7 +742,8 @@ export function createServices(
       tsGetPackage: tsServices.tsGetPackage,
       tsRefresh: tsServices.tsRefresh,
       tsInstall: tsServices.tsInstall,
-      ghInstall: ghServices.ghInstall,
+      ghInstall: (game, profileId, url, opts) =>
+        ghInstallWith(game, profileId, url, undefined, opts),
       nxInstall: nexusApi.nxInstall,
       nxGetDomain,
       setModEnabled: setModEnabledService,

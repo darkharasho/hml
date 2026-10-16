@@ -1278,6 +1278,35 @@ describe('services', () => {
         expect(readFileSync(path.join(dir, 'winhttp.dll'), 'utf8')).toBe('ts')
       })
 
+      test('a GitHub mod installed first stands in for a dependency with its manifest name', async () => {
+        const api = makeBoth()
+        const profile = await api.createProfile('repo', 'T')
+        ghPublish('lib', 'v1.5.0', zipOf('Lib', '1.5.0'))
+        await api.ghInstall('repo', profile.id, 'gh/lib')
+        const r = await api.tsInstall('repo', profile.id, 'Own-Mod')
+        expect(r.installed.map((m) => m.id)).toEqual(['Own-Mod'])
+        expect(r.skipped).toEqual(['Dep-Lib'])
+        const mods = await modsIn(api)
+        expect(mods.map((m) => m.id).sort()).toEqual(['Own-Mod', 'gh-lib'])
+        expect(mods.find((m) => m.id === 'gh-lib')!.provides).toEqual(['Dep-Lib'])
+        // Recorded, so a direct install of the package replaces the GitHub mod.
+        const d = await api.tsInstall('repo', profile.id, 'Dep-Lib')
+        expect(d.replaced).toEqual(['gh-lib'])
+      })
+
+      test('two GitHub mods with the manifest name are ambiguous: the dependency installs', async () => {
+        const api = makeBoth()
+        const profile = await api.createProfile('repo', 'T')
+        ghPublish('lib', 'v1.5.0', zipOf('Lib', '1.5.0'))
+        ghPublish('lib2', 'v1.5.0', zipOf('Lib', '1.5.0'))
+        await api.ghInstall('repo', profile.id, 'gh/lib')
+        await api.ghInstall('repo', profile.id, 'gh/lib2')
+        const r = await api.tsInstall('repo', profile.id, 'Own-Mod')
+        expect(r.installed.map((m) => m.id)).toEqual(['Dep-Lib', 'Own-Mod'])
+        const mods = await modsIn(api)
+        expect(mods.every((m) => m.provides === undefined)).toBe(true)
+      })
+
       test('two Thunderstore mods with the manifest name are ambiguous: none is replaced', async () => {
         packages = [rawPkg('Dep', 'Lib', ['1.0.0']), rawPkg('Alt', 'Lib', ['1.0.0'])]
         blobs.set(dl('Alt-Lib', '1.0.0'), zipOf('Lib', '1.0.0'))
@@ -3262,7 +3291,9 @@ describe('share import', () => {
   const thing2 = zipOf('Thing', '2.0.0')
   const ghReleases: Record<string, Record<string, Uint8Array>> = {
     'v1.0.0': { 'thing.zip': thing1 },
-    'v2.0.0': { 'thing.zip': thing2 }
+    'v2.0.0': { 'thing.zip': thing2 },
+    // A GitHub build of Dep-Lib: its manifest name is Lib.
+    'v3.0.0': { 'thing.zip': zipOf('Lib', '1.5.0') }
   }
   const ghJson = (tag: string): unknown => ({
     tag_name: tag,
@@ -3846,6 +3877,48 @@ describe('share import', () => {
       path.join(otherPaths.profileDir('repo', r.profile.id), 'BepInEx', 'config', 'sub', 'mod.cfg')
     )
     expect([...copied]).toEqual([...cfgBytes])
+  })
+
+  test('an imported GitHub mod keeps what it provides, limited to packages on Thunderstore', async () => {
+    const r = await importCode([
+      { ...gh('v1.0.0'), provides: ['Dep-Lib', 'Nope-Gone'] },
+      ts('Own-Mod', '1.0.0')
+    ])
+    expect(r.unresolved).toEqual([])
+    expect(r.warnings).toEqual([])
+    expect(r.profile.mods.map((m) => m.id).sort()).toEqual(['Own-Mod', 'owner-thing'])
+    expect(r.profile.mods.find((m) => m.id === 'owner-thing')!.provides).toEqual(['Dep-Lib'])
+  })
+
+  test('a GitHub stand-in before its Thunderstore dependent round-trips as one copy', async () => {
+    const shareFetch = (async (url: string, init?: RequestInit) => {
+      if (url === 'https://share.test/v1/profiles' && init?.method === 'POST') {
+        hml = new Uint8Array(init.body as Uint8Array)
+        return Response.json({ code: CODE }, { status: 201 })
+      }
+      return impFetch(url, init as { body?: string })
+    }) as unknown as typeof fetch
+    const src = createServices({ ...deps, fetch: shareFetch, now: () => clock })
+    const profile = await src.createProfile('repo', 'Stand-in')
+    await src.ghInstall(
+      'repo',
+      profile.id,
+      'https://github.com/owner/thing/releases/download/v3.0.0/thing.zip'
+    )
+    await src.tsInstall('repo', profile.id, 'Own-Mod', '1.0.0')
+    const original = (await src.listProfiles('repo')).find((p) => p.id === profile.id)!
+    expect(original.mods.map((m) => m.id)).toEqual(['owner-thing', 'Own-Mod'])
+    const shared = await src.shareProfile('repo', profile.id)
+
+    const otherPaths = makePaths(path.join(tmp, 'data-2'))
+    mkdirSync(otherPaths.root, { recursive: true })
+    writeFileSync(otherPaths.settings, JSON.stringify({ steamRootOverride: steamRoot }))
+    const dst = createServices({ ...deps, paths: otherPaths, fetch: shareFetch, now: () => clock })
+    const r = await dst.importShare((await dst.previewShare({ code: shared.code }))!.token, '')
+    expect(r.unresolved).toEqual([])
+    expect(r.warnings).toEqual([])
+    expect(r.profile.mods.map((m) => m.id)).toEqual(['owner-thing', 'Own-Mod'])
+    expect(r.profile.mods[0].provides).toEqual(['Dep-Lib'])
   })
 
   test('HML_METHODS lists the import methods', () => {

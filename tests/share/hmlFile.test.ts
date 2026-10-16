@@ -154,6 +154,30 @@ describe('hml files', () => {
     expect(out.export.mods[0].name).toBeUndefined()
   })
 
+  it('exports and reads what a mod provides; files without it still read', async () => {
+    const withProvides: ProfileManifest = {
+      ...profile,
+      mods: [{ ...profile.mods[1], provides: ['Dep-Lib'] }, profile.mods[0]]
+    }
+    const out = await readHmlFile(await buildHmlFile(withProvides, dir))
+    expect(out.export.mods[0].provides).toEqual(['Dep-Lib'])
+    expect('provides' in out.export.mods[1]).toBe(false)
+    const bad = JSON.stringify({
+      formatVersion: 1,
+      game: 'g',
+      profileName: 'p',
+      mods: [
+        {
+          source: { kind: 'local', fileName: 'f', sha256: 's' },
+          version: '1',
+          enabled: true,
+          provides: [1]
+        }
+      ]
+    })
+    await expect(readHmlFile(zipOf({ 'export.json': bad }))).rejects.toThrow(DAMAGED)
+  })
+
   it('rejects a missing export.json, a newer format and bad export.json', async () => {
     await expect(readHmlFile(zipOf({ 'a.txt': 'x' }))).rejects.toThrow(DAMAGED)
     await expect(

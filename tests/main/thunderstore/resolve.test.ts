@@ -4,6 +4,7 @@ import {
   findUpdates,
   installedVersions,
   mergePlans,
+  githubByName,
   providedPackages,
   parseDependency,
   resolveInstall
@@ -330,6 +331,52 @@ describe('provided packages', () => {
     const r = resolveInstall(i, { fullName: 'O-A' }, have, new Set(['O-Lib']))
     expect(names(r)).toEqual(['O-A@1.0.0'])
     expect(r.skipped).toEqual(['O-Lib'])
+  })
+})
+
+describe('GitHub stand-ins by manifest name', () => {
+  const gh = (id: string, name: string): InstalledMod => ({
+    ...mod(id, '2.0.0', {
+      kind: 'github',
+      owner: 'o',
+      repo: id,
+      tag: 'v2.0.0',
+      asset: 'a.zip',
+      sha256: ''
+    }),
+    name
+  })
+  const i = idx(pkg('O-A', { '1.0.0': ['O-Lib-9.0.0'] }), pkg('O-Lib', { '9.0.0': [] }))
+
+  it('githubByName keeps only names exactly one GitHub mod has', () => {
+    const m = githubByName([gh('a', 'Lib'), gh('b', 'Two'), gh('c', 'Two'), ts('O-Lib', '1.0.0')])
+    expect([...m]).toEqual([['Lib', 'a']])
+  })
+
+  it('a dependency with no installed copy is stood in for and reported', () => {
+    const r = resolveInstall(
+      i,
+      { fullName: 'O-A' },
+      new Map(),
+      new Set(),
+      githubByName([gh('a', 'Lib')])
+    )
+    expect(names(r)).toEqual(['O-A@1.0.0'])
+    expect(r.skipped).toEqual(['O-Lib'])
+    expect(r.standIns).toEqual([{ modId: 'a', fullName: 'O-Lib' }])
+  })
+
+  it('an installed (too old) Thunderstore copy is updated, not stood in for', () => {
+    const have = new Map([['O-Lib', '1.0.0']])
+    const r = resolveInstall(
+      i,
+      { fullName: 'O-A' },
+      have,
+      new Set(),
+      githubByName([gh('a', 'Lib')])
+    )
+    expect(names(r)).toEqual(['O-Lib@9.0.0', 'O-A@1.0.0'])
+    expect(r.standIns).toEqual([])
   })
 })
 

@@ -36,7 +36,8 @@ const exportSchema = z.object({
       source: sourceSchema,
       version: z.string(),
       enabled: z.boolean(),
-      name: z.string().optional()
+      name: z.string().optional(),
+      provides: z.array(z.string()).optional()
     })
   )
 })
@@ -82,7 +83,8 @@ export async function buildHmlFile(
       name: m.name,
       source: m.source,
       version: m.version,
-      enabled: m.enabled
+      enabled: m.enabled,
+      ...(m.provides && m.provides.length > 0 ? { provides: m.provides } : {})
     }))
   }
   const json = strToU8(JSON.stringify(exp, null, 2))

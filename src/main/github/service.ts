@@ -73,11 +73,24 @@ function looksLikeToken(t: string): boolean {
   return true
 }
 
+/** Options of an in-process GitHub install (not reachable over IPC). */
+export interface GhInstallOptions {
+  /** Thunderstore packages to record as provided by the installed mod (a share import). */
+  provides?: string[]
+}
+
 export function createGithubServices(ctx: GhContext): Pick<
   HmlApi,
   'ghInstall' | 'ghCheckUpdates' | 'ghUpdate' | 'ghSetUpdateMode' | 'ghSetToken' | 'ghTokenStatus'
 > & {
   ghAutoUpdateAll(): Promise<void>
+  ghInstallWith(
+    game: string,
+    profileId: string,
+    url: string,
+    asset: string | undefined,
+    opts: GhInstallOptions
+  ): ReturnType<HmlApi['ghInstall']>
 } {
   const { deps, serialize } = ctx
   const { paths } = deps
@@ -159,6 +172,7 @@ export function createGithubServices(ctx: GhContext): Pick<
       packageId: string
       config: (previous: InstalledMod | undefined) => GhModConfig
       onInstalling?: (name: string, version: string) => void
+      provides?: string[]
     }
   ): Promise<{ mod: InstalledMod; replaced: string[] }> {
     const { owner, repo, release, chosen, packageId } = o
@@ -186,6 +200,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     const provides = [
       ...new Set([
         ...(previous?.provides ?? []),
+        ...(o.provides ?? []),
         ...(tsCopy?.source.kind === 'thunderstore' ? [tsCopy.source.fullName] : [])
       ])
     ]
@@ -269,7 +284,8 @@ export function createGithubServices(ctx: GhContext): Pick<
     game: string,
     profileId: string,
     url: string,
-    assetArg?: string
+    assetArg?: string,
+    opts: GhInstallOptions = {}
   ): ReturnType<HmlApi['ghInstall']> {
     const ref = parseGithubUrl(String(url))
     if (!ref) {
@@ -322,6 +338,7 @@ export function createGithubServices(ctx: GhContext): Pick<
         chosen,
         packageId: prior?.id ?? `${owner}-${repo}`,
         onInstalling: (name, version) => progress(`Installing ${name} ${version}`, 2),
+        provides: opts.provides,
         config: (previous) => ({
           updateMode: ref.tag ? 'pinned' : (previous?.github?.updateMode ?? 'auto'),
           assetPattern:
@@ -537,7 +554,8 @@ export function createGithubServices(ctx: GhContext): Pick<
   return {
     ghSetToken: setToken,
     ghTokenStatus: tokenStatus,
-    ghInstall: install,
+    ghInstall: (game, profileId, url, asset) => install(game, profileId, url, asset),
+    ghInstallWith: install,
     ghCheckUpdates: checkUpdates,
     ghUpdate: update,
     ghSetUpdateMode: setUpdateMode,
