@@ -1,4 +1,11 @@
-import { Fragment, useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type ReactNode
+} from 'react'
 
 type Variant = 'primary' | 'ghost' | 'quiet' | 'danger'
 
@@ -172,12 +179,16 @@ export interface MenuItem {
 export function Menu({
   label,
   items,
-  className = ''
+  className = '',
+  position = 'relative'
 }: {
   label: string
   items: MenuItem[]
   className?: string
+  /** Tailwind position class for the trigger; an absolute one is still the dropdown's anchor. */
+  position?: string
 }): React.JSX.Element {
+  const [up, setUp] = useState(false)
   const hasChecks = items.some((i) => i.checked !== undefined)
   const ref = useRef<HTMLDetailsElement>(null)
   useEffect(() => {
@@ -195,7 +206,18 @@ export function Menu({
     }
   }, [])
   return (
-    <details ref={ref} className={`relative ${className}`}>
+    <details
+      ref={ref}
+      className={`${position} ${className}`}
+      onToggle={(e) => {
+        // Open upward when the trigger sits in the lower part of the viewport, so the last
+        // rows of a scrolling list don't clip the dropdown.
+        if (e.currentTarget.open) {
+          const r = e.currentTarget.getBoundingClientRect()
+          setUp(r.bottom > window.innerHeight * 0.6)
+        }
+      }}
+    >
       <summary
         aria-label={label}
         title={label}
@@ -205,7 +227,9 @@ export function Menu({
       </summary>
       <div
         role="menu"
-        className="absolute right-0 z-20 mt-1 min-w-40 overflow-hidden whitespace-nowrap rounded-lg border border-line bg-raised py-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)]"
+        className={`absolute right-0 z-20 min-w-40 overflow-hidden whitespace-nowrap rounded-lg border border-line bg-raised py-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)] ${
+          up ? 'bottom-full mb-1' : 'mt-1'
+        }`}
       >
         {items.map((item) => (
           <Fragment key={item.label}>

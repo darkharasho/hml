@@ -62,7 +62,8 @@ export function ProfileSidebar(): React.JSX.Element | null {
         {game.loader !== 'deploy' && (
           <Menu
             label={`Actions for ${game.displayName}`}
-            className="absolute! top-2 right-2"
+            position="absolute"
+            className="top-2 right-2"
             items={[{ label: 'Nexus domain…', onSelect: () => setDomainOpen(true) }]}
           />
         )}
@@ -139,7 +140,8 @@ export function ProfileSidebar(): React.JSX.Element | null {
               </button>
               <Menu
                 label={`Actions for ${p.name}`}
-                className="absolute! top-1 right-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 [&[open]]:opacity-100"
+                position="absolute"
+                className="top-1 right-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 [&[open]]:opacity-100"
                 items={[
                   { label: 'Share…', onSelect: () => setSharing(p) },
                   { label: 'Rename', onSelect: () => setRenaming(p.id) },
