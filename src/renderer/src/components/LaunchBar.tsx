@@ -50,6 +50,16 @@ const WARNINGS: Record<LaunchWarning, { label: string; detail: string; action: W
       "Native Linux games aren't supported for modded launch yet. Force Proton for this game in Steam (Properties → Compatibility). Vanilla launches still work.",
     action: null
   },
+  'loader-mismatch': {
+    label: 'Different BepInEx',
+    detail: 'This profile has a different BepInEx than the game is set to.',
+    action: null
+  },
+  'no-runner': {
+    label: 'No runner chosen',
+    detail: 'Choose how to run this game (Proton or Wine) from the game menu.',
+    action: null
+  },
   'flatpak-filesystem': {
     label: 'Flatpak Steam needs access',
     detail: 'Flatpak Steam cannot read HML profiles until you grant it access to the HML folder.',

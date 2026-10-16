@@ -789,7 +789,8 @@ describe('services', () => {
       steamRootOverride: null,
       lastGame: null,
       lastProfile: {},
-      nexusDomainOverrides: {}
+      nexusDomainOverrides: {},
+      manualLoaderKept: []
     })
   })
 

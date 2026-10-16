@@ -10,7 +10,8 @@ export function defaultSettings(): Settings {
     steamRootOverride: null,
     lastGame: null,
     lastProfile: {},
-    nexusDomainOverrides: {}
+    nexusDomainOverrides: {},
+    manualLoaderKept: []
   }
 }
 
@@ -39,7 +40,11 @@ export function normalizeSettings(stored: unknown): Settings {
         : defaults.steamRootOverride,
     lastGame: typeof stored.lastGame === 'string' ? stored.lastGame : defaults.lastGame,
     lastProfile: stringRecord(stored.lastProfile) ?? defaults.lastProfile,
-    nexusDomainOverrides: stringRecord(stored.nexusDomainOverrides) ?? defaults.nexusDomainOverrides
+    nexusDomainOverrides:
+      stringRecord(stored.nexusDomainOverrides) ?? defaults.nexusDomainOverrides,
+    manualLoaderKept: Array.isArray(stored.manualLoaderKept)
+      ? stored.manualLoaderKept.filter((x): x is string => typeof x === 'string')
+      : defaults.manualLoaderKept
   }
 }
 

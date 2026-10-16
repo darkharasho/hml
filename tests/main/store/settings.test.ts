@@ -3,7 +3,13 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { makePaths } from '../../../src/main/store/paths'
-import { loadSettings, saveSettings, resolveGameDir } from '../../../src/main/store/settings'
+import {
+  loadSettings,
+  saveSettings,
+  resolveGameDir,
+  defaultSettings,
+  normalizeSettings
+} from '../../../src/main/store/settings'
 import type { GameDef, Settings } from '../../../src/shared/types'
 
 let tmp: string
@@ -53,7 +59,8 @@ describe('settings store', () => {
       steamRootOverride: null,
       lastGame: null,
       lastProfile: {},
-      nexusDomainOverrides: {}
+      nexusDomainOverrides: {},
+      manualLoaderKept: []
     })
   })
 
@@ -64,7 +71,8 @@ describe('settings store', () => {
       steamRootOverride: '/opt/steam',
       lastGame: 'repo',
       lastProfile: { repo: 'default' },
-      nexusDomainOverrides: {}
+      nexusDomainOverrides: {},
+      manualLoaderKept: []
     }
     await saveSettings(paths, s)
     expect(await loadSettings(paths)).toEqual(s)
@@ -86,7 +94,8 @@ describe('settings store', () => {
       steamRootOverride: null,
       lastGame: 'repo',
       lastProfile: {},
-      nexusDomainOverrides: {}
+      nexusDomainOverrides: {},
+      manualLoaderKept: []
     })
   })
 
@@ -98,7 +107,8 @@ describe('settings store', () => {
       steamRootOverride: null,
       lastGame: null,
       lastProfile: {},
-      nexusDomainOverrides: {}
+      nexusDomainOverrides: {},
+      manualLoaderKept: []
     })
   })
 })
@@ -109,7 +119,8 @@ describe('resolveGameDir', () => {
     steamRootOverride: null,
     lastGame: null,
     lastProfile: {},
-    nexusDomainOverrides: {}
+    nexusDomainOverrides: {},
+    manualLoaderKept: []
   }
 
   test('override beats steam detection', async () => {
@@ -158,5 +169,18 @@ describe('resolveGameDir', () => {
     expect(await resolveGameDir(game(), empty, root)).toBeNull()
     expect(await resolveGameDir(game({ steamAppId: null }), empty, root)).toBeNull()
     expect(await resolveGameDir(game(), empty, null)).toBeNull()
+  })
+})
+
+describe('manualLoaderKept', () => {
+  test('defaultSettings has no kept manual loaders', () => {
+    expect(defaultSettings().manualLoaderKept).toEqual([])
+  })
+
+  test('normalizeSettings keeps string entries of manualLoaderKept and drops the rest', () => {
+    expect(
+      normalizeSettings({ manualLoaderKept: ['steam-1', 5, null, 'repo'] }).manualLoaderKept
+    ).toEqual(['steam-1', 'repo'])
+    expect(normalizeSettings({ manualLoaderKept: 'x' }).manualLoaderKept).toEqual([])
   })
 })

@@ -10,6 +10,7 @@ export interface AppPaths {
   nxKey: string
   nxGames: string
   nxAddedGames: string
+  customGames: string
   tsIndexCache(label: string): string
   /** Parent of every per-game dir. */
   gamesDir: string
@@ -18,6 +19,8 @@ export interface AppPaths {
   profileDir(label: string, id: string): string
   deployment(label: string): string
   deployBackup(label: string): string
+  winePrefix(label: string): string
+  loaderBackup(label: string, stamp: string): string
 }
 
 export function makePaths(root: string): AppPaths {
@@ -34,12 +37,15 @@ export function makePaths(root: string): AppPaths {
     nxKey: path.join(root, 'secrets', 'nexus-key.bin'),
     nxGames: path.join(root, 'cache', 'nexus-games.json'),
     nxAddedGames: path.join(root, 'nexus-added-games.json'),
+    customGames: path.join(root, 'custom-games.json'),
     tsIndexCache: (label) => path.join(root, 'cache', 'thunderstore', `${label}.json`),
     gamesDir,
     gameDir,
     profilesDir,
     profileDir: (label, id) => path.join(profilesDir(label), id),
     deployment: (label) => path.join(gameDir(label), 'deployment.json'),
-    deployBackup: (label) => path.join(gameDir(label), 'deploy-backup')
+    deployBackup: (label) => path.join(gameDir(label), 'deploy-backup'),
+    winePrefix: (label) => path.join(root, 'prefixes', label),
+    loaderBackup: (label, stamp) => path.join(root, 'backups', label, stamp)
   }
 }

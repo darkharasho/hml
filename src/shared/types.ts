@@ -6,6 +6,35 @@ export interface InstallRule {
   isDefaultLocation: boolean
 }
 
+export type LoaderChoice = 'bepinex5' | 'bepinex6-mono' | 'bepinex6-il2cpp' | 'none'
+export type Runner = { kind: 'proton'; name: string; path: string } | { kind: 'wine' }
+export interface CustomGameInfo {
+  source: 'steam' | 'folder'
+  loaderChoice: LoaderChoice
+  /** Folder games on Linux: how HML starts the exe. null = none chosen/found. */
+  runner?: Runner | null
+  /** False only for an installed Steam game shown in search that isn't added yet. */
+  added: boolean
+}
+export interface GameDetection {
+  exeName: string | null
+  dataFolderName: string
+  engine: 'unity-mono' | 'unity-il2cpp' | 'unknown'
+  /** No Windows .exe in the folder (a native Linux build). */
+  nativeLinux: boolean
+  suggested: LoaderChoice
+}
+export interface GhTrack {
+  major: number
+  prerelease: boolean
+}
+export interface HmlCustomGame {
+  source: 'steam' | 'folder'
+  displayName: string
+  steamAppId: string | null
+  loaderChoice: LoaderChoice
+}
+
 export interface GameDef {
   label: string
   displayName: string
@@ -23,6 +52,7 @@ export interface GameDef {
   nexusModCount?: number
   /** Deploy games: the game-relative folder mods deploy into (e.g. `Data`). Unset is the game folder. */
   deployRoot?: string
+  custom?: CustomGameInfo
 }
 
 export interface ModloaderPackage {
@@ -43,6 +73,8 @@ export interface Settings {
   lastGame: string | null
   lastProfile: Record<string, string>
   nexusDomainOverrides: Record<string, string>
+  /** Game labels whose manual loader install the user chose to keep. */
+  manualLoaderKept: string[]
 }
 
 export type ModSource =
@@ -95,6 +127,7 @@ export interface HmlExport {
   game: string
   profileName: string
   mods: HmlExportMod[]
+  customGame?: HmlCustomGame
 }
 
 export interface SharePreview {
@@ -104,6 +137,7 @@ export interface SharePreview {
   profileName: string
   mods: { name: string; version: string; kind: ModSource['kind'] }[]
   configFiles: number
+  needsFolder?: boolean
 }
 
 export interface UnresolvedMod {
@@ -133,6 +167,8 @@ export type LaunchWarning =
   | 'steam-not-found'
   | 'flatpak-filesystem'
   | 'native-linux-unsupported'
+  | 'loader-mismatch'
+  | 'no-runner'
 export type DoorstopVersion = 3 | 4
 
 export interface TsVersion {
@@ -195,6 +231,7 @@ export interface GhModConfig {
   updateMode: GhUpdateMode
   /** Saved when the user picked the asset; `{version}` stands for version-like parts. */
   assetPattern: string | null
+  track?: GhTrack
 }
 export interface GhAsset {
   name: string
