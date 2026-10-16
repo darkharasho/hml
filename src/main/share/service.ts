@@ -88,8 +88,8 @@ function nexusDomainOf(game: string): string | null {
 
 /** Replaces characters that are unsafe in file names on Windows or Linux. */
 export function safeFileName(name: string): string {
-  // eslint-disable-next-line no-control-regex
   const cleaned = name
+    // eslint-disable-next-line no-control-regex
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
     .trim()
     .replace(/[. ]+$/, '')
