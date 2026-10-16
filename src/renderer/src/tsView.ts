@@ -88,7 +88,7 @@ export function installToast(
 ): { kind: 'success' | 'info'; message: string } {
   if (alreadyName !== undefined && r.installed.length === 0)
     return { kind: 'info', message: `${alreadyName} is already installed` }
-  const replaced = r.replaced && r.replaced.length > 0 ? ' — replaced local copy' : ''
+  const replaced = r.replaced && r.replaced.length > 0 ? ` — replaced ${r.replaced.join(', ')}` : ''
   const missing = r.missing.length > 0 ? ` — missing dependencies: ${r.missing.join(', ')}` : ''
   return { kind: missing ? 'info' : 'success', message: `${done}${replaced}${missing}` }
 }

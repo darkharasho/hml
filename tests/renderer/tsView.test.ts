@@ -193,14 +193,14 @@ describe('installToast', () => {
       message: 'X is already installed'
     })
   })
-  it('mentions a replaced local copy and missing dependencies', () => {
-    expect(installToast('Installed X', r({ replaced: ['X'] }))).toEqual({
+  it('names what it replaced and the missing dependencies', () => {
+    expect(installToast('Installed X', r({ replaced: ['X', 'gh-x'] }))).toEqual({
       kind: 'success',
-      message: 'Installed X — replaced local copy'
+      message: 'Installed X — replaced X, gh-x'
     })
     expect(installToast('Installed X', r({ replaced: ['X'], missing: ['A-B-1.0.0'] }))).toEqual({
       kind: 'info',
-      message: 'Installed X — replaced local copy — missing dependencies: A-B-1.0.0'
+      message: 'Installed X — replaced X — missing dependencies: A-B-1.0.0'
     })
   })
 })
