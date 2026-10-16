@@ -3000,10 +3000,11 @@ describe('services', () => {
     test('opens the normalized href', async () => {
       expect(await run('HTTPS://THUNDERSTORE.IO/x')).toEqual(['https://thunderstore.io/x'])
     })
-    test('policy: explicit ports on allowed hosts are accepted', async () => {
-      expect(await run('https://thunderstore.io:8443/')).toEqual(['https://thunderstore.io:8443/'])
-    })
-    test.each(['javascript:alert(1)', 'https://thunderstore.io./'])('rejects %s', async (u) => {
+    test.each([
+      'javascript:alert(1)',
+      'https://thunderstore.io./',
+      'https://thunderstore.io:8443/'
+    ])('rejects %s', async (u) => {
       await expect(run(u)).rejects.toThrow(
         'HML only opens Thunderstore, GitHub and Nexus Mods links.'
       )
