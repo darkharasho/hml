@@ -3921,6 +3921,28 @@ describe('share import', () => {
     expect(r.profile.mods[0].provides).toEqual(['Dep-Lib'])
   })
 
+  test('an import on Windows is not refused while the game runs (the new profile has no locked files)', async () => {
+    api = createServices({
+      ...deps,
+      platform: 'win32',
+      fetch: impFetch,
+      now: () => clock,
+      execFile: async (file) => {
+        if (file !== 'tasklist') throw new Error(`${file} is not available in tests`)
+        return { stdout: '"REPO.exe","1","Console","1","1 K"' }
+      }
+    })
+    ownModDeps = ['Dep-Lib-1.5.0']
+    // Own-Mod moves Dep-Lib to 1.5.0 and the export's 1.0.0 is put back: both replace a mod.
+    const r = await importCode([ts('Dep-Lib', '1.0.0'), ts('Own-Mod', '2.0.0')])
+    expect(r.unresolved).toEqual([])
+    expect(r.warnings).toEqual([])
+    expect(r.profile.mods.map((m) => `${m.id}@${m.version}`).sort()).toEqual([
+      'Dep-Lib@1.0.0',
+      'Own-Mod@2.0.0'
+    ])
+  })
+
   test('HML_METHODS lists the import methods', () => {
     expect(HML_METHODS).toEqual(expect.arrayContaining(['previewShare', 'importShare']))
   })

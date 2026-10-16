@@ -574,6 +574,60 @@ export function createServices(
       .map((m) => m.packageId)
   }
 
+  /**
+   * Installs a Thunderstore package with its dependencies. With `guard`, replacing installed files
+   * under a running game is refused; a share import installs into its new profile without it.
+   */
+  async function tsInstallChecked(
+    game: string,
+    profileId: string,
+    fullName: string,
+    version: string | undefined,
+    guard: boolean
+  ): ReturnType<HmlApi['tsInstall']> {
+    const def = await requireGame(game)
+    requireInstallable(def)
+    const idx = await loadIndex(def, false)
+    const loaders = await loaderIds(def)
+    const resolve = (mods: InstalledMod[]): ReturnType<typeof resolveInstall> => {
+      const installedNow = installedVersions(mods, loaders)
+      const provided = providedPackages(mods, loaders)
+      // Installing a provided package itself replaces the mod that stands in for it.
+      const tsCopy = mods.some(
+        (m) => m.source.kind === 'thunderstore' && m.source.fullName === fullName
+      )
+      if (provided.has(fullName) && !tsCopy) installedNow.delete(fullName)
+      provided.delete(fullName)
+      return resolveInstall(
+        idx.byName,
+        { fullName, version },
+        installedNow,
+        provided,
+        githubByName(mods)
+      )
+    }
+    // Replacing installed files under a running game is refused, as for updates; installing
+    // packages the profile doesn't have yet is allowed. Checked outside the profile's queue.
+    if (guard) {
+      const before = (await getProfile(paths, game, profileId)).mods
+      const replacesInstalled = resolve(before).plan.some(
+        (p) =>
+          findInstalledMod(before, p.fullName, loaders) !== undefined ||
+          before.some((m) => m.source.kind === 'local' && m.id === p.name)
+      )
+      if (replacesInstalled) await assertGameClosed(def)
+    }
+    return serialize(game, profileId, async () => {
+      const profile = await getProfile(paths, game, profileId)
+      const { plan, skipped, missing, standIns } = resolve(profile.mods)
+      await recordStandIns(def, profileId, standIns)
+      const satisfied = skipped.filter((s) => s !== fullName)
+      const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
+      const { installed, replaced } = await installPlan(def, profileId, plan)
+      return { installed, skipped, missing, replaced, enabled }
+    })
+  }
+
   const tsServices: Pick<
     HmlApi,
     'tsSearch' | 'tsRefresh' | 'tsGetPackage' | 'tsInstall' | 'tsCheckUpdates' | 'tsUpdate'
@@ -598,47 +652,8 @@ export function createServices(
       return idx.byName.get(fullName) ?? null
     },
 
-    async tsInstall(game, profileId, fullName, version) {
-      const def = await requireGame(game)
-      requireInstallable(def)
-      const idx = await loadIndex(def, false)
-      const loaders = await loaderIds(def)
-      const resolve = (mods: InstalledMod[]): ReturnType<typeof resolveInstall> => {
-        const installedNow = installedVersions(mods, loaders)
-        const provided = providedPackages(mods, loaders)
-        // Installing a provided package itself replaces the mod that stands in for it.
-        const tsCopy = mods.some(
-          (m) => m.source.kind === 'thunderstore' && m.source.fullName === fullName
-        )
-        if (provided.has(fullName) && !tsCopy) installedNow.delete(fullName)
-        provided.delete(fullName)
-        return resolveInstall(
-          idx.byName,
-          { fullName, version },
-          installedNow,
-          provided,
-          githubByName(mods)
-        )
-      }
-      // Replacing installed files under a running game is refused, as for updates; installing
-      // packages the profile doesn't have yet is allowed. Checked outside the profile's queue.
-      const before = (await getProfile(paths, game, profileId)).mods
-      const replacesInstalled = resolve(before).plan.some(
-        (p) =>
-          findInstalledMod(before, p.fullName, loaders) !== undefined ||
-          before.some((m) => m.source.kind === 'local' && m.id === p.name)
-      )
-      if (replacesInstalled) await assertGameClosed(def)
-      return serialize(game, profileId, async () => {
-        const profile = await getProfile(paths, game, profileId)
-        const { plan, skipped, missing, standIns } = resolve(profile.mods)
-        await recordStandIns(def, profileId, standIns)
-        const satisfied = skipped.filter((s) => s !== fullName)
-        const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
-        const { installed, replaced } = await installPlan(def, profileId, plan)
-        return { installed, skipped, missing, replaced, enabled }
-      })
-    },
+    tsInstall: (game, profileId, fullName, version) =>
+      tsInstallChecked(game, profileId, fullName, version, true),
 
     async tsCheckUpdates(game, profileId) {
       const def = await requireGame(game)
@@ -741,7 +756,9 @@ export function createServices(
     installers: {
       tsGetPackage: tsServices.tsGetPackage,
       tsRefresh: tsServices.tsRefresh,
-      tsInstall: tsServices.tsInstall,
+      // The import's profile is new, so nothing in it can be locked by the running game.
+      tsInstall: (game, profileId, fullName, version) =>
+        tsInstallChecked(game, profileId, fullName, version, false),
       ghInstall: (game, profileId, url, opts) =>
         ghInstallWith(game, profileId, url, undefined, opts),
       nxInstall: nexusApi.nxInstall,
