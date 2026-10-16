@@ -349,6 +349,27 @@ describe('services', () => {
     expect(await api.getDeployment('nexus-bbb')).toMatchObject({ files: 1 })
   })
 
+  test('a deploy game whose folder is gone or is a file shows as not found', async () => {
+    deps.fetch = nexusFetch
+    const api = createServices(deps)
+    const label = 'nexus-aaa'
+    await api.addNexusGame('aaa')
+    const profile = await api.createProfile(label, 'p')
+    const dir = path.join(tmp, 'aaa')
+    mkdirSync(dir)
+    await api.setGamePath(label, dir)
+    const installDir = async (): Promise<string | null | undefined> =>
+      (await api.searchGames('aaa')).find((g) => g.label === label)?.installDir
+    expect(await installDir()).toBe(dir)
+    expect(await api.getLaunchWarnings(label, profile.id)).toEqual([])
+    rmSync(dir, { recursive: true })
+    expect(await installDir()).toBeNull()
+    expect(await api.getLaunchWarnings(label, profile.id)).toEqual(['game-not-found'])
+    writeFileSync(dir, 'a file')
+    expect(await installDir()).toBeNull()
+    expect(await api.getLaunchWarnings(label, profile.id)).toEqual(['game-not-found'])
+  })
+
   test('installFromFile installs selected zip as local source with sha256', async () => {
     const api = createServices(deps)
     const profile = await api.createProfile('repo', 'Test')

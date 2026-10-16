@@ -23,7 +23,7 @@ import {
   steamRootCandidates,
   type ExecFilePort
 } from './steam/steam'
-import { loadSettings, resolveGameDir, saveSettings } from './store/settings'
+import { isDirectory, loadSettings, resolveGameDir, saveSettings } from './store/settings'
 import {
   createProfile,
   deleteProfile,
@@ -174,6 +174,12 @@ export function createServices(
     return added.length ? { ...base, games: [...base.games, ...added] } : base
   }
 
+  /** A deploy game's folder: the override, when it is an existing folder. */
+  const deployFolder = async (g: GameDef, settings: Settings): Promise<string | null> => {
+    const dir = settings.gamePathOverrides[g.label]
+    return dir && (await isDirectory(dir)) ? dir : null
+  }
+
   const summarize = (
     g: GameDef,
     catalog: Catalog,
@@ -181,11 +187,11 @@ export function createServices(
     steamRoot: string | null
   ): Promise<GameSummary> =>
     g.loader === 'deploy'
-      ? Promise.resolve({
+      ? deployFolder(g, settings).then((installDir) => ({
           ...g,
           loaderPackageIds: [],
-          installDir: settings.gamePathOverrides[g.label] ?? null
-        })
+          installDir
+        }))
       : resolveGameDir(g, settings, steamRoot)
           .catch(() => null)
           .then((installDir) => ({
@@ -792,7 +798,7 @@ export function createServices(
       const def = await requireGame(game)
       await getProfile(paths, game, profileId)
       if (def.loader === 'deploy') {
-        const dir = (await loadSettings(paths)).gamePathOverrides[def.label] ?? null
+        const dir = await deployFolder(def, await loadSettings(paths))
         return launchWarnings({
           platform,
           game: def,

@@ -51,7 +51,8 @@ export async function saveSettings(paths: AppPaths, s: Settings): Promise<void> 
   await writeJsonAtomic(paths.settings, normalizeSettings(s))
 }
 
-async function isDirectory(p: string): Promise<boolean> {
+/** True when p exists and is a folder. */
+export async function isDirectory(p: string): Promise<boolean> {
   try {
     return (await fs.stat(p)).isDirectory()
   } catch {
