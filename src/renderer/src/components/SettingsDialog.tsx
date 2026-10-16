@@ -10,33 +10,15 @@ export function SettingsDialog(): React.JSX.Element | null {
   const setOpen = useStore((s) => s.setSettingsOpen)
   const settings = useStore((s) => s.settings)
   if (!open || !settings) return null
-  // Keyed by the saved values so the form resets whenever they change underneath it.
-  return (
-    <SettingsForm
-      key={`${settings.steamRootOverride}`}
-      initialSteam={settings.steamRootOverride ?? ''}
-      onClose={() => setOpen(false)}
-    />
-  )
+  return <SettingsForm onClose={() => setOpen(false)} />
 }
 
-function SettingsForm({
-  initialSteam,
-  onClose
-}: {
-  initialSteam: string
-  onClose(): void
-}): React.JSX.Element {
+function SettingsForm({ onClose }: { onClose(): void }): React.JSX.Element {
   const game = useStore((s) => s.currentGame)
-  const override = useStore((s) => (game ? s.settings?.gamePathOverrides[game.label] : undefined))
-  const busy = useStore((s) => s.busy)
-  const saveSteamPath = useStore((s) => s.saveSteamPath)
-  const setGamePath = useStore((s) => s.setGamePath)
-  const pickGamePath = useStore((s) => s.pickGamePath)
-  const [steam, setSteam] = useState(initialSteam)
-  const [gameDir, setGameDir] = useState(override ?? '')
-  const steamDirty = steam.trim() !== initialSteam
-  const gameDirty = gameDir.trim() !== (override ?? '')
+  const steamOverride = useStore((s) => s.settings?.steamRootOverride ?? null)
+  const gameOverride = useStore((s) =>
+    game ? (s.settings?.gamePathOverrides[game.label] ?? null) : null
+  )
 
   return (
     <Modal
@@ -50,50 +32,15 @@ function SettingsForm({
       }
     >
       <div className="flex flex-col gap-6">
-        <Field
-          label="Steam folder"
-          hint="Leave empty to detect Steam automatically, including Flatpak installs."
-          value={steam}
-          onChange={setSteam}
-          placeholder="Detected automatically"
-        >
-          <Button
-            variant={steamDirty ? 'primary' : 'ghost'}
-            disabled={busy || !steamDirty}
-            onClick={() => void saveSteamPath(steam.trim() || null)}
-          >
-            Save
-          </Button>
-        </Field>
+        {/* Each field is keyed by its own saved value, so saving one never resets the other. */}
+        <SteamField key={`steam:${steamOverride}`} initial={steamOverride ?? ''} />
 
         {game && (
-          <Field
-            label={`${game.displayName} folder`}
-            hint={
-              game.installDir
-                ? `Using ${game.installDir}`
-                : game.loader === 'deploy'
-                  ? 'Set the folder that contains the game. Deploy mods copies them into it.'
-                  : 'Not found in your Steam libraries. Set the folder that contains the game.'
-            }
-            value={gameDir}
-            onChange={setGameDir}
-            placeholder={game.loader === 'deploy' ? 'Game folder' : 'Detected from Steam'}
-          >
-            <Button
-              disabled={busy}
-              onClick={() => void pickGamePath(game.label).then((dir) => dir && setGameDir(dir))}
-            >
-              Browse…
-            </Button>
-            <Button
-              variant={gameDirty ? 'primary' : 'ghost'}
-              disabled={busy || !gameDirty}
-              onClick={() => void setGamePath(gameDir.trim() || null)}
-            >
-              Save
-            </Button>
-          </Field>
+          <GameDirField
+            key={`${game.label}:${gameOverride}`}
+            game={game}
+            initial={gameOverride ?? ''}
+          />
         )}
 
         <GithubTokenField />
@@ -101,6 +48,73 @@ function SettingsForm({
         <NexusSection />
       </div>
     </Modal>
+  )
+}
+
+function SteamField({ initial }: { initial: string }): React.JSX.Element {
+  const busy = useStore((s) => s.busy)
+  const saveSteamPath = useStore((s) => s.saveSteamPath)
+  const [steam, setSteam] = useState(initial)
+  const dirty = steam.trim() !== initial
+  return (
+    <Field
+      label="Steam folder"
+      hint="Leave empty to detect Steam automatically, including Flatpak installs."
+      value={steam}
+      onChange={setSteam}
+      placeholder="Detected automatically"
+    >
+      <Button
+        variant={dirty ? 'primary' : 'ghost'}
+        disabled={busy || !dirty}
+        onClick={() => void saveSteamPath(steam.trim() || null)}
+      >
+        Save
+      </Button>
+    </Field>
+  )
+}
+
+function GameDirField({
+  game,
+  initial
+}: {
+  game: NonNullable<ReturnType<typeof useStore.getState>['currentGame']>
+  initial: string
+}): React.JSX.Element {
+  const busy = useStore((s) => s.busy)
+  const setGamePath = useStore((s) => s.setGamePath)
+  const pickGamePath = useStore((s) => s.pickGamePath)
+  const [gameDir, setGameDir] = useState(initial)
+  const dirty = gameDir.trim() !== initial
+  return (
+    <Field
+      label={`${game.displayName} folder`}
+      hint={
+        game.installDir
+          ? `Using ${game.installDir}`
+          : game.loader === 'deploy'
+            ? 'Set the folder that contains the game. Deploy mods copies them into it.'
+            : 'Not found in your Steam libraries. Set the folder that contains the game.'
+      }
+      value={gameDir}
+      onChange={setGameDir}
+      placeholder={game.loader === 'deploy' ? 'Game folder' : 'Detected from Steam'}
+    >
+      <Button
+        disabled={busy}
+        onClick={() => void pickGamePath(game.label).then((dir) => dir && setGameDir(dir))}
+      >
+        Browse…
+      </Button>
+      <Button
+        variant={dirty ? 'primary' : 'ghost'}
+        disabled={busy || !dirty}
+        onClick={() => void setGamePath(gameDir.trim() || null)}
+      >
+        Save
+      </Button>
+    </Field>
   )
 }
 
