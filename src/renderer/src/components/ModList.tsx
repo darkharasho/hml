@@ -24,6 +24,7 @@ export function ModList(): React.JSX.Element | null {
   const busy = useStore((s) => s.busy)
   const installFromFile = useStore((s) => s.installFromFile)
   const installFromPaths = useStore((s) => s.installFromPaths)
+  const toast = useStore((s) => s.toast)
   const openProfileFolder = useStore((s) => s.openProfileFolder)
   const game = useStore((s) => s.currentGame)
   const updates = useStore((s) => s.updates)
@@ -54,7 +55,17 @@ export function ModList(): React.JSX.Element | null {
     e.preventDefault()
     depth.current = 0
     setDragging(false)
-    const paths = Array.from(e.dataTransfer.files, pathForFile).filter(Boolean)
+    const paths: string[] = []
+    let unreadable = false
+    for (const f of Array.from(e.dataTransfer.files)) {
+      try {
+        const path = pathForFile(f)
+        if (path) paths.push(path)
+      } catch {
+        unreadable = true
+      }
+    }
+    if (unreadable) toast('error', "Couldn't read a dropped file. Use Install from file instead.")
     void installFromPaths(paths)
   }
 
