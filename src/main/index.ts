@@ -1,6 +1,7 @@
 import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { isAllowedNavigation, isSafeExternalUrl } from './security'
 import { registerIpc } from './ipc'
 import icon from '../../resources/icon.png?asset'
 
@@ -25,8 +26,13 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isSafeExternalUrl(details.url)) shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+
+  const devUrl = is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedNavigation(url, devUrl)) event.preventDefault()
   })
 
   // HMR for renderer base on electron-vite cli.
