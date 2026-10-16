@@ -57,6 +57,7 @@ import { createGithubServices, unsupportedLoaderMessage } from './github/service
 import { deployProfile, deploymentStatus, removeDeployment } from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
 import { createNexusServices } from './nexus/service'
+import { createShareServices } from './share/service'
 import { gameByDomain } from './nexus/api'
 import { parseNxm, type HandlerPort } from './nexus/nxm'
 import { findInstalledMod } from '../shared/modIdentity'
@@ -67,6 +68,12 @@ export interface DialogPort {
     filters: { name: string; extensions: string[] }[]
   }): Promise<string[]>
   pickFolder(title: string): Promise<string | null>
+  /** Resolves to the chosen path, or null when cancelled. */
+  saveFile(opts: {
+    title: string
+    defaultPath: string
+    filters: { name: string; extensions: string[] }[]
+  }): Promise<string | null>
 }
 export interface ShellPort {
   /** Resolves to an error message, or '' on success (Electron's shell.openPath). */
@@ -98,6 +105,8 @@ export interface ServiceDeps {
   os: { type: string; release: string; arch: string }
   /** Registers and reports HML as the operating system's `nxm://` handler. */
   nxmHandler: HandlerPort
+  /** Base URL of the share-code Worker. */
+  shareBaseUrl: string
 }
 
 interface LoadedIndex extends TsIndex {
@@ -535,6 +544,8 @@ export function createServices(
     serialize
   })
 
+  const shareApi = createShareServices({ deps, requireGame, serialize })
+
   /** Handles an `nxm://` link end to end. Never throws: the outcome is an event. */
   async function handleNxm(raw: string): Promise<void> {
     try {
@@ -561,6 +572,7 @@ export function createServices(
     ...tsServices,
     ...ghServices,
     ...nexusApi,
+    ...shareApi,
     handleNxm,
     nxRegisterHandler: () => deps.nxmHandler.register(),
     async searchGames(query: string): Promise<GameSummary[]> {

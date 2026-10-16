@@ -93,6 +93,10 @@ export interface HmlApi {
   ): Promise<NxInstallResult>
   nxCheckUpdates(game: string, profileId: string): Promise<NxUpdate[]>
   nxUpdate(game: string, profileId: string, modIds: string[]): Promise<NxInstallResult[]>
+  /** Saves the profile as a `<name>.hml` file chosen in a save dialog; null when cancelled. */
+  exportProfileFile(game: string, profileId: string): Promise<string | null>
+  /** Uploads the profile and returns its share code plus how many local mods won't resolve for others. */
+  shareProfile(game: string, profileId: string): Promise<{ code: string; localMods: number }>
   /** Copies the profile's enabled mods into the game folder (deploy games), replacing any current deployment. */
   deployProfile(game: string, profileId: string): Promise<DeploymentStatus>
   /** Restores the game folder to how it was before the deployment. */
@@ -145,6 +149,8 @@ const METHOD_TABLE = {
   nxInstall: true,
   nxCheckUpdates: true,
   nxUpdate: true,
+  exportProfileFile: true,
+  shareProfile: true,
   deployProfile: true,
   removeDeployment: true,
   getDeployment: true,

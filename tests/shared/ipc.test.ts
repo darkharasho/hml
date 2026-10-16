@@ -60,3 +60,6 @@ test('HML_METHODS lists the nexus methods', () => {
   )
   expect(HML_METHODS).not.toContain('installFromNxm')
 })
+test('HML_METHODS lists the share methods', () => {
+  expect(HML_METHODS).toEqual(expect.arrayContaining(['exportProfileFile', 'shareProfile']))
+})

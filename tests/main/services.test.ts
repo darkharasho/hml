@@ -20,6 +20,8 @@ import { loadCatalog } from '../../src/main/catalog/catalog'
 import { createNexusServices } from '../../src/main/nexus/service'
 import { createNexusGames } from '../../src/main/nexus/games'
 import { createGithubServices } from '../../src/main/github/service'
+import { saveProfile } from '../../src/main/profiles/profiles'
+import { readHmlFile } from '../../src/main/share/hmlFile'
 import { HML_METHODS } from '../../src/shared/ipc'
 import type { HmlEvent, TsQuery } from '../../src/shared/types'
 
@@ -43,6 +45,7 @@ let tmp: string
 let steamRoot: string
 let gameDir: string
 let picked: string[]
+let saveTarget: string | null
 let spawned: { cmd: string; args: string[] }[]
 let execCalls: { file: string; args: string[] }[]
 let deps: ServiceDeps
@@ -50,7 +53,8 @@ let emitted: HmlEvent[]
 
 const dialog: DialogPort = {
   pickFiles: async () => picked,
-  pickFolder: async () => null
+  pickFolder: async () => null,
+  saveFile: async () => saveTarget
 }
 
 beforeEach(() => {
@@ -64,6 +68,7 @@ beforeEach(() => {
     '"AppState"\n{\n"installdir" "REPO"\n}\n'
   )
   picked = []
+  saveTarget = null
   spawned = []
   execCalls = []
   const paths = makePaths(path.join(tmp, 'data'))
@@ -76,6 +81,7 @@ beforeEach(() => {
     os: { type: 'Linux', release: '6', arch: 'x64' },
     emit: (e) => emitted.push(e),
     nxmHandler: { status: async () => 'not-registered', register: async () => undefined },
+    shareBaseUrl: 'https://share.test',
     fetch: (async () => ({ ok: true, json: async () => fixture })) as unknown as typeof fetch,
     snapshotPath: path.join(__dirname, '../fixtures/ecosystem-min.json'),
     platform: 'linux',
@@ -2198,5 +2204,110 @@ describe('services', () => {
       await expect(api.openExternal(u)).rejects.toThrow(MSG)
       expect(opened).toEqual([])
     })
+  })
+})
+
+describe('share', () => {
+  const fixtureResponse = { ok: true, json: async () => fixture }
+  test('exportProfileFile writes a file readHmlFile reads back, and returns null on cancel', async () => {
+    const api = createServices(deps)
+    const profile = await api.createProfile('repo', 'My: Profile?')
+    const cfg = path.join(deps.paths.profileDir('repo', profile.id), 'BepInEx', 'config')
+    mkdirSync(cfg, { recursive: true })
+    writeFileSync(path.join(cfg, 'a.cfg'), 'x=1')
+    let defaultPath = ''
+    const dlg = (opts: { defaultPath: string }): Promise<string | null> => {
+      defaultPath = opts.defaultPath
+      return Promise.resolve(saveTarget)
+    }
+    const a2 = createServices({ ...deps, dialog: { ...dialog, saveFile: dlg } })
+
+    expect(await a2.exportProfileFile('repo', profile.id)).toBeNull()
+
+    saveTarget = path.join(tmp, 'out.hml')
+    expect(await a2.exportProfileFile('repo', profile.id)).toBe(saveTarget)
+    expect(defaultPath).toBe('My_ Profile_.hml')
+    const read = await readHmlFile(new Uint8Array(readFileSync(saveTarget)))
+    expect(read.export.profileName).toBe('My: Profile?')
+    expect([...read.configs.keys()]).toEqual(['BepInEx/config/a.cfg'])
+  })
+
+  test('shareProfile uploads only the zip, with no credentials or absolute paths', async () => {
+    const calls: { url: string; init: RequestInit }[] = []
+    const api = createServices({
+      ...deps,
+      fetch: (async (url: string, init: RequestInit) => {
+        if (!url.startsWith('https://share.test')) return fixtureResponse
+        calls.push({ url, init })
+        return { ok: true, status: 200, json: async () => ({ code: '0123456789' }) }
+      }) as unknown as typeof fetch
+    })
+    const profile = await api.createProfile('repo', 'Shared')
+    const manifest = { ...profile }
+    manifest.mods = [
+      {
+        id: 'local-1',
+        name: 'Mine',
+        version: '1.0.0',
+        enabled: true,
+        files: [],
+        disableable: [],
+        installedAt: '2026-01-01T00:00:00Z',
+        source: { kind: 'local', fileName: 'mine.dll', sha256: 'ab' }
+      },
+      {
+        id: 'ts-1',
+        name: 'Other',
+        version: '1.0.0',
+        enabled: true,
+        files: [],
+        disableable: [],
+        installedAt: '2026-01-01T00:00:00Z',
+        source: { kind: 'thunderstore', fullName: 'A-B' }
+      }
+    ]
+    await saveProfile(deps.paths, manifest)
+
+    const res = await api.shareProfile('repo', profile.id)
+    expect(res).toEqual({ code: '0123456789', localMods: 1 })
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe('https://share.test/v1/profiles')
+    expect(calls[0].init.method).toBe('POST')
+    const headers = Object.keys(calls[0].init.headers as Record<string, string>).map((h) =>
+      h.toLowerCase()
+    )
+    expect(headers).not.toContain('apikey')
+    expect(headers).not.toContain('authorization')
+    const body = Buffer.from(calls[0].init.body as Uint8Array)
+    expect(body.includes(Buffer.from(tmp))).toBe(false)
+    const read = await readHmlFile(new Uint8Array(body))
+    expect(JSON.stringify(read.export)).not.toContain(tmp)
+  })
+
+  test('shareProfile does not hold the profile lock during the upload', async () => {
+    let release!: () => void
+    let uploading!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const started = new Promise<void>((r) => (uploading = r))
+    const api = createServices({
+      ...deps,
+      fetch: (async (url: string) => {
+        if (!url.startsWith('https://share.test')) return fixtureResponse
+        uploading()
+        await gate
+        return { ok: true, status: 200, json: async () => ({ code: '0123456789' }) }
+      }) as unknown as typeof fetch
+    })
+    const profile = await api.createProfile('repo', 'Lock')
+    const pending = api.shareProfile('repo', profile.id)
+    await started
+    // A serialized operation on the same profile settles while the upload is still pending.
+    await api.setModEnabled('repo', profile.id, 'nope', true).catch(() => undefined)
+    release()
+    await expect(pending).resolves.toMatchObject({ code: '0123456789' })
+  })
+
+  test('HML_METHODS lists export and share', () => {
+    expect(HML_METHODS).toEqual(expect.arrayContaining(['exportProfileFile', 'shareProfile']))
   })
 })

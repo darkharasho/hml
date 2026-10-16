@@ -174,12 +174,18 @@ if (hasLock)
           const opts = { title, properties: ['openDirectory' as const] }
           const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
           return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+        },
+        async saveFile(opts) {
+          const win = BrowserWindow.getFocusedWindow()
+          const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+          return r.canceled || !r.filePath ? null : r.filePath
         }
       },
       shell,
       spawn,
       execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false }),
-      nxmHandler
+      nxmHandler,
+      shareBaseUrl: process.env.HML_SHARE_URL ?? 'https://hml-share.project96.workers.dev'
     })
     registerIpc(services)
 
