@@ -121,7 +121,10 @@ describe('uploadShare', () => {
 })
 
 describe('unread bodies', () => {
-  const withBody = (status: number, headers: Record<string, string> = {}): {
+  const withBody = (
+    status: number,
+    headers: Record<string, string> = {}
+  ): {
     f: typeof fetch
     cancelled: () => boolean
   } => {
