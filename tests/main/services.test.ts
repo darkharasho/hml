@@ -1563,13 +1563,101 @@ describe('services', () => {
         getCatalog: () => catalog,
         requireGame: async (label) => (await catalog).games.find((g) => g.label === label)!,
         serialize: (_g, _p, fn) => fn(),
-        isGameRunning: (label) => running.has(label)
+        isGameRunning: async (def) => running.has(def.label)
       })
       await gh.ghAutoUpdateAll()
       expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
       running.clear()
       await gh.ghAutoUpdateAll()
       expect((await modsOf())[0].source).toMatchObject({ tag: 'v2.0.0' })
+    })
+
+    describe('a running game on Windows', () => {
+      const CLOSE = 'Close R.E.P.O. before changing its mods.'
+      let tasks: string[] | 'fail'
+      let tasklistCalls: number
+      const winApi = (platform: NodeJS.Platform = 'win32'): ReturnType<typeof createServices> =>
+        createServices({
+          ...deps,
+          platform,
+          fetch: ghFetch,
+          now: () => clock,
+          execFile: async (file) => {
+            if (file !== 'tasklist') throw new Error(`${file} is not available in tests`)
+            tasklistCalls++
+            if (tasks === 'fail') throw new Error('tasklist failed')
+            return { stdout: tasks.map((t) => `"${t}","1","Console","1","1 K"`).join('\r\n') }
+          }
+        })
+      const installOld = async (): Promise<void> => {
+        await setup()
+        publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+        await api.ghInstall('repo', pid, 'owner/repo')
+        publish('owner', 'repo', 'v2.0.0', { 'a.zip': zipOf('Thing', '2.0.0') })
+      }
+      beforeEach(() => {
+        tasks = ['explorer.exe']
+        tasklistCalls = 0
+      })
+
+      test('auto-update skips the game while REPO.exe runs, and runs once it is gone', async () => {
+        await installOld()
+        api = winApi()
+        tasks = ['explorer.exe', 'REPO.exe']
+        await api.ghAutoUpdateAll()
+        expect(tasklistCalls).toBe(1)
+        expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
+        tasks = ['explorer.exe']
+        await api.ghAutoUpdateAll()
+        expect((await modsOf())[0].source).toMatchObject({ tag: 'v2.0.0' })
+      })
+
+      test('auto-update skips the game silently when tasklist fails', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        try {
+          await installOld()
+          api = winApi()
+          tasks = 'fail'
+          await api.ghAutoUpdateAll()
+          expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
+          expect(warn).not.toHaveBeenCalled()
+        } finally {
+          warn.mockRestore()
+        }
+      })
+
+      test('manual update, uninstall and Thunderstore/Nexus updates refuse while it runs', async () => {
+        await installOld()
+        api = winApi()
+        tasks = ['REPO.exe']
+        await expect(api.ghUpdate('repo', pid, ['owner-repo'])).rejects.toThrow(CLOSE)
+        await expect(api.uninstallMod('repo', pid, 'owner-repo')).rejects.toThrow(CLOSE)
+        await expect(api.tsUpdate('repo', pid, ['owner-repo'])).rejects.toThrow(CLOSE)
+        await expect(api.nxUpdate('repo', pid, ['owner-repo'])).rejects.toThrow(CLOSE)
+        const [m] = await modsOf()
+        expect(m.source).toMatchObject({ tag: 'v1.0.0' })
+        expect(existsSync(path.join(pluginsDir(), 'owner-repo', 'Thing.dll'))).toBe(true)
+      })
+
+      test('a failing tasklist does not block manual actions', async () => {
+        await installOld()
+        api = winApi()
+        tasks = 'fail'
+        const [u] = await api.ghUpdate('repo', pid, ['owner-repo'])
+        expect(u.source).toMatchObject({ tag: 'v2.0.0' })
+        await api.uninstallMod('repo', pid, 'owner-repo')
+        expect(await modsOf()).toEqual([])
+      })
+
+      test('linux is exempt: nothing is checked and everything runs', async () => {
+        await installOld()
+        api = winApi('linux')
+        tasks = ['REPO.exe']
+        await api.ghAutoUpdateAll()
+        expect((await modsOf())[0].source).toMatchObject({ tag: 'v2.0.0' })
+        await api.uninstallMod('repo', pid, 'owner-repo')
+        expect(tasklistCalls).toBe(0)
+      })
     })
 
     test('ghCheckUpdates skips a mod whose lookup fails', async () => {

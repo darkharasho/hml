@@ -33,6 +33,7 @@ import {
 } from './profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
 import { buildLaunchPlan } from './launch/launchPlan'
+import { isGameRunning } from './launch/processes'
 import {
   detectDoorstopVersion,
   findPreloader,
@@ -239,6 +240,16 @@ export function createServices(
       if (tails.get(key) === tail) tails.delete(key)
     })
     return run
+  }
+
+  /**
+   * Refuses to change a game's mods while it runs on Windows, which locks the files it has open.
+   * When tasklist fails the game counts as closed, so a flaky check doesn't lock the user out.
+   */
+  async function assertGameClosed(def: GameDef): Promise<void> {
+    if (await isGameRunning(deps.platform, deps.execFile, def.exeNames, false)) {
+      throw new Error(`Close ${def.displayName} before changing its mods.`)
+    }
   }
 
   const DEPLOY_KEY = '__deploy__'
@@ -545,6 +556,7 @@ export function createServices(
     async tsUpdate(game, profileId, modIds) {
       const def = await requireGame(game)
       requireInstallable(def)
+      await assertGameClosed(def)
       const idx = await loadIndex(def, false)
       const loaders = await loaderIds(def)
       return serialize(game, profileId, async () => {
@@ -576,9 +588,8 @@ export function createServices(
     getCatalog,
     requireGame,
     serialize,
-    // HML launches through Steam (`steam -applaunch`), which hands off to the running Steam client
-    // and exits, so HML never holds the game's process and can't tell whether it's running.
-    isGameRunning: () => false
+    // Fails closed: when tasklist fails, this round of auto-update skips the game.
+    isGameRunning: (def) => isGameRunning(deps.platform, deps.execFile, def.exeNames)
   })
 
   const { installFromNxm, loggedInUserId, ...nexusApi } = createNexusServices({
@@ -662,6 +673,14 @@ export function createServices(
     ...nexusApi,
     ...shareApi,
     handleNxm,
+    async ghUpdate(game, profileId, modIds) {
+      await assertGameClosed(await requireGame(game))
+      return ghServices.ghUpdate(game, profileId, modIds)
+    },
+    async nxUpdate(game, profileId, modIds) {
+      await assertGameClosed(await requireGame(game))
+      return nexusApi.nxUpdate(game, profileId, modIds)
+    },
     nxRegisterHandler: () => deps.nxmHandler.register(),
     async searchGames(query: string): Promise<GameSummary[]> {
       const catalog = await getCatalog()
@@ -759,6 +778,7 @@ export function createServices(
 
     async uninstallMod(game, profileId, modId): Promise<void> {
       const def = await requireGame(game)
+      await assertGameClosed(def)
       return serialize(game, profileId, () => uninstallMod(paths, def, profileId, modId))
     },
 
@@ -770,6 +790,7 @@ export function createServices(
       if (!(await isDirectory(gameDir))) {
         throw new Error(`The game folder ${path.resolve(gameDir)} doesn't exist.`)
       }
+      await assertGameClosed(def)
       for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
         // Removing another profile's deployment copies files back into that profile, so it runs
         // under that profile's lock as its own step. Two profile locks are never held at once.
@@ -792,7 +813,9 @@ export function createServices(
     // Remove and status work from the deployment manifest, which records the folder deployed
     // to, so they don't need the folder setting (it may have been cleared since).
     async removeDeployment(game) {
-      await removeDeploymentLocked(await requireDeployGame(game))
+      const def = await requireDeployGame(game)
+      await assertGameClosed(def)
+      await removeDeploymentLocked(def)
     },
 
     async getDeployment(game) {

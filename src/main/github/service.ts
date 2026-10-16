@@ -31,8 +31,8 @@ export interface GhContext {
   getCatalog(): Promise<Catalog>
   requireGame(label: string): Promise<GameDef>
   serialize<T>(game: string, profileId: string, fn: () => Promise<T>): Promise<T>
-  /** True while a game HML launched is still running; the background auto-update skips it. */
-  isGameRunning(gameLabel: string): boolean
+  /** True while the game runs (or can't be told); the background auto-update skips it. */
+  isGameRunning(def: GameDef): Promise<boolean>
 }
 
 export const unsupportedLoaderMessage = (def: GameDef): string =>
@@ -445,7 +445,7 @@ export function createGithubServices(ctx: GhContext): Pick<
         if (!d.isDirectory()) continue
         const def = catalog.games.find((g) => g.label === d.name)
         // Replacing files under a running game can leave a mod half-removed (Windows locks DLLs).
-        if (!def?.supported || ctx.isGameRunning(def.label)) continue
+        if (!def?.supported || (await ctx.isGameRunning(def))) continue
         try {
           for (const profile of await listProfiles(paths, def.label)) {
             try {
