@@ -4,6 +4,7 @@ import { unzipSync } from 'fflate'
 import type {
   Catalog,
   GameDef,
+  GhModConfig,
   InstalledMod,
   ModSource,
   ModloaderPackage
@@ -144,6 +145,8 @@ export async function installZip(
      * treated as the previous version: their files are replaced and their records dropped.
      */
     replaces?: string[]
+    /** Recorded on the new mod in the same save (github-source mods). */
+    github?: GhModConfig
   } = {}
 ): Promise<InstalledMod> {
   const profile = await getProfile(paths, game.label, profileId)
@@ -224,7 +227,8 @@ export async function installZip(
       enabled,
       files,
       disableable,
-      installedAt: new Date().toISOString()
+      installedAt: new Date().toISOString(),
+      ...(opts.github ? { github: opts.github } : {})
     }
     const current = await getProfile(paths, game.label, profileId)
     await saveProfile(paths, {

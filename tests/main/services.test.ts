@@ -1,6 +1,14 @@
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
@@ -959,8 +967,9 @@ describe('services', () => {
       const list = await modsOf()
       expect(list).toHaveLength(1)
       expect(list[0].github?.updateMode).toBe('notify')
-      expect(existsSync(path.join(pluginsDir(), 'Owner-Repo', 'Thing.dll'))).toBe(true)
-      expect(existsSync(path.join(pluginsDir(), 'owner-repo'))).toBe(false)
+      expect(list[0].id).toBe('owner-repo')
+      expect(existsSync(path.join(pluginsDir(), 'owner-repo', 'Thing.dll'))).toBe(true)
+      expect(existsSync(path.join(pluginsDir(), 'Owner-Repo'))).toBe(false)
     })
 
     test('a local mod with the manifest name is replaced', async () => {
@@ -1089,6 +1098,113 @@ describe('services', () => {
           }
         ])
         expect(warn).toHaveBeenCalledTimes(1)
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
+    test('pinned mods are skipped by ghUpdate and ghAutoUpdateAll', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      await api.ghInstall('repo', pid, 'https://github.com/owner/repo/releases/tag/v1.0.0')
+      publish('owner', 'repo', 'v2.0.0', { 'a.zip': zipOf('Thing', '2.0.0') })
+      expect(await api.ghUpdate('repo', pid, ['owner-repo'])).toEqual([])
+      emitted.length = 0
+      await api.ghAutoUpdateAll()
+      expect(emitted.filter((e) => e.type === 'github-updated')).toEqual([])
+      expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
+    })
+
+    test('ghUpdate asks the user to reinstall when no file matches the saved pattern', async () => {
+      await setup()
+      const bare = (n: string): Uint8Array => zipSync({ [n]: strToU8('x') })
+      publish('owner', 'repo', 'v1.0.0', { 'mod-1.0.0.zip': bare('a.dll') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      publish('owner', 'repo', 'v2.0.0', { 'one.zip': bare('b.dll'), 'two.zip': bare('c.dll') })
+      await expect(api.ghUpdate('repo', pid, ['owner-repo'])).rejects.toThrow(
+        'owner/repo: owner/repo v2.0.0 has several files and none matches the one you picked before. Reinstall it from its GitHub link to choose again.'
+      )
+      expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
+    })
+
+    test('ghCheckUpdates skips a mod whose lookup fails', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      publish('ok', 'fine', 'v1.0.0', { 'a.zip': zipOf('Fine', '1.0.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      await api.ghInstall('repo', pid, 'ok/fine')
+      publish('owner', 'repo', 'v1.1.0', { 'a.zip': zipOf('Thing', '1.1.0') })
+      publish('ok', 'fine', 'v1.1.0', { 'a.zip': zipOf('Fine', '1.1.0') })
+      repos.get('owner/repo')!.down = 500
+      clock += 11 * 60_000
+      const found = await api.ghCheckUpdates('repo', pid)
+      expect(found.map((u) => u.modId)).toEqual(['ok-fine'])
+    })
+
+    test('the token goes to api.github.com only, not to the asset download host', async () => {
+      await setup()
+      const seen: { url: string; auth: string | undefined }[] = []
+      const inner = ghFetch
+      const spy = (async (url: string, init?: { headers?: Record<string, string> }) => {
+        seen.push({ url, auth: init?.headers?.Authorization })
+        const m =
+          /^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/releases\/assets\/(\d+)$/.exec(url)
+        if (m) {
+          // the asset API endpoint redirects to the download host; serve the file directly
+          const rel = repos.get(slug(m[1], m[2]))!.releases[0]
+          const data = Object.values(rel.files)[Number(m[3]) - 1]
+          const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+          return { ok: true, status: 200, arrayBuffer: async () => buf } as never
+        }
+        return inner(url, init as never)
+      }) as unknown as typeof fetch
+      mkdirSync(path.dirname(deps.paths.ghToken), { recursive: true })
+      writeFileSync(deps.paths.ghToken, 'ghp_secret')
+      api = createServices({ ...deps, fetch: spy, now: () => clock })
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      const apiCalls = seen.filter((s) => new URL(s.url).host === 'api.github.com')
+      expect(apiCalls.length).toBeGreaterThan(0)
+      expect(apiCalls.every((s) => s.auth === 'Bearer ghp_secret')).toBe(true)
+      expect(seen.some((s) => s.url.includes('/releases/assets/') && s.auth)).toBe(true)
+      expect(
+        seen.filter((s) => new URL(s.url).host !== 'api.github.com').every((s) => !s.auth)
+      ).toBe(true)
+
+      // without a token the download goes straight to github.com, unauthenticated
+      rmSync(deps.paths.ghToken)
+      seen.length = 0
+      publish('other', 'thing', 'v1.0.0', { 'a.zip': zipOf('Other', '1.0.0') })
+      await api.ghInstall('repo', pid, 'other/thing')
+      const dl = seen.filter((s) => new URL(s.url).host === 'github.com')
+      expect(dl.length).toBeGreaterThan(0)
+      expect(seen.every((s) => !s.auth)).toBe(true)
+    })
+
+    test('ghAutoUpdateAll resolves even when listing profiles or the catalog fails', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      try {
+        await setup()
+        const profilesDir = deps.paths.profilesDir('repo')
+        chmodSync(profilesDir, 0o000) // listProfiles fails with EACCES
+        try {
+          await expect(api.ghAutoUpdateAll()).resolves.toBeUndefined()
+        } finally {
+          chmodSync(profilesDir, 0o755)
+        }
+        expect(warn).toHaveBeenCalledTimes(1)
+        const broken = createServices({
+          ...deps,
+          paths: makePaths(path.join(tmp, 'fresh')),
+          fetch: (async () => {
+            throw new Error('offline')
+          }) as never,
+          snapshotPath: path.join(tmp, 'missing.json')
+        })
+        await expect(broken.ghAutoUpdateAll()).resolves.toBeUndefined()
+        expect(warn.mock.calls.map((c) => String(c[0]))).toContainEqual(
+          expect.stringContaining('GitHub auto-update failed')
+        )
       } finally {
         warn.mockRestore()
       }

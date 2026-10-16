@@ -152,7 +152,7 @@ export function createGithubServices(ctx: GhContext): Pick<
         m.id !== packageId
     )
     const previous = mods.find((m) => m.id === packageId) ?? sameRepoMods[0]
-    const installed = await installZip(
+    const mod = await installZip(
       paths,
       def,
       catalog,
@@ -169,15 +169,10 @@ export function createGithubServices(ctx: GhContext): Pick<
       {
         packageId,
         version,
-        replaces: [...local, ...sameRepoMods].map((m) => m.id).filter((id) => id !== packageId)
+        replaces: [...local, ...sameRepoMods].map((m) => m.id).filter((id) => id !== packageId),
+        github: o.config(previous)
       }
     )
-    const mod: InstalledMod = { ...installed, github: o.config(previous) }
-    const profile = await getProfile(paths, def.label, profileId)
-    await saveProfile(paths, {
-      ...profile,
-      mods: profile.mods.map((m) => (m.id === mod.id ? mod : m))
-    })
     return { mod, replaced: local.map((m) => m.id) }
   }
 
@@ -276,7 +271,7 @@ export function createGithubServices(ctx: GhContext): Pick<
         repo,
         release,
         chosen,
-        packageId: `${owner}-${repo}`,
+        packageId: prior?.id ?? `${owner}-${repo}`,
         onInstalling: (name, version) => progress(`Installing ${name} ${version}`, 2),
         config: (previous) => ({
           updateMode: ref.tag ? 'pinned' : (previous?.github?.updateMode ?? 'auto'),
@@ -396,21 +391,29 @@ export function createGithubServices(ctx: GhContext): Pick<
   }
 
   async function runAutoUpdate(): Promise<void> {
-    const catalog = await ctx.getCatalog()
-    const dirs = await fs.readdir(paths.gamesDir, { withFileTypes: true }).catch(() => [])
-    const token = await loadToken(paths, deps.secrets)
-    const latestOf = memoLookup(token)
-    for (const d of dirs) {
-      if (!d.isDirectory()) continue
-      const def = catalog.games.find((g) => g.label === d.name)
-      if (!def?.supported) continue
-      for (const profile of await listProfiles(paths, def.label)) {
+    try {
+      const catalog = await ctx.getCatalog()
+      const dirs = await fs.readdir(paths.gamesDir, { withFileTypes: true }).catch(() => [])
+      const token = await loadToken(paths, deps.secrets)
+      const latestOf = memoLookup(token)
+      for (const d of dirs) {
+        if (!d.isDirectory()) continue
+        const def = catalog.games.find((g) => g.label === d.name)
+        if (!def?.supported) continue
         try {
-          await autoUpdateProfile(def, catalog, profile.id, token, latestOf)
+          for (const profile of await listProfiles(paths, def.label)) {
+            try {
+              await autoUpdateProfile(def, catalog, profile.id, token, latestOf)
+            } catch (e) {
+              console.warn(`GitHub auto-update of ${def.label}/${profile.id} failed: ${errMsg(e)}`)
+            }
+          }
         } catch (e) {
-          console.warn(`GitHub auto-update of ${def.label}/${profile.id} failed: ${errMsg(e)}`)
+          console.warn(`GitHub auto-update of ${def.label} failed: ${errMsg(e)}`)
         }
       }
+    } catch (e) {
+      console.warn(`GitHub auto-update failed: ${errMsg(e)}`)
     }
   }
 
