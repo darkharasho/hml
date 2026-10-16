@@ -6,6 +6,7 @@ import { strToU8, zipSync } from 'fflate'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { createServices, type ServiceDeps } from '../../../src/main/services'
 import { makePaths } from '../../../src/main/store/paths'
+import type { HmlEvent } from '../../../src/shared/types'
 
 const fixture = JSON.parse(
   readFileSync(path.join(__dirname, '../../fixtures/ecosystem-min.json'), 'utf8')
@@ -16,6 +17,75 @@ let steamRoot: string
 let deps: ServiceDeps
 let wineWorks: boolean
 let picked: string | null
+let spawned: { cmd: string; args: string[] }[]
+let emitted: HmlEvent[]
+
+const LOADER_ZIP = zipSync({
+  'BepInEx/core/BepInEx.Preloader.dll': strToU8('preloader'),
+  'winhttp.dll': strToU8('dll'),
+  'doorstop_config.ini': strToU8('[UnityDoorstop]\nenabled=true\n')
+})
+const GH = 'https://github.com/BepInEx/BepInEx'
+let assetId = 0
+const release = (tag: string, prerelease: boolean, names: string[]): Record<string, unknown> => ({
+  tag_name: tag,
+  name: tag,
+  prerelease,
+  draft: false,
+  published_at: '2026-01-01T00:00:00Z',
+  html_url: `${GH}/releases/tag/${tag}`,
+  assets: names.map((name) => ({
+    id: ++assetId,
+    name,
+    size: LOADER_ZIP.length,
+    browser_download_url: `${GH}/releases/download/${tag}/${name}`,
+    url: `https://api.github.com/repos/BepInEx/BepInEx/releases/assets/${assetId}`
+  }))
+})
+const RELEASES = [
+  release('v6.0.0-pre.2', true, [
+    'BepInEx-Unity.Mono-win-x64-6.0.0-pre.2.zip',
+    'BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip',
+    'BepInEx-Unity.Mono-linux-x64-6.0.0-pre.2.zip'
+  ]),
+  release('v5.4.23.5', false, [
+    'BepInEx_win_x64_5.4.23.5.zip',
+    'BepInEx_win_x86_5.4.23.5.zip',
+    'BepInEx_linux_x64_5.4.23.5.zip'
+  ])
+]
+
+/** Serves BepInEx's GitHub releases (and the catalog for anything else). */
+function serveBepInEx(opts: { releases?: unknown[]; zipFails?: boolean } = {}): void {
+  deps.fetch = (async (url: string) => {
+    const u = new URL(url)
+    if (u.host === 'api.github.com' && u.pathname === '/repos/BepInEx/BepInEx/releases') {
+      return new Response(JSON.stringify(opts.releases ?? RELEASES), { status: 200 })
+    }
+    if (u.host === 'github.com' && u.pathname.startsWith('/BepInEx/BepInEx/releases/download/')) {
+      if (opts.zipFails) throw new Error('offline')
+      return new Response(LOADER_ZIP, { status: 200 })
+    }
+    return { ok: true, json: async () => fixture }
+  }) as unknown as typeof fetch
+}
+
+/** A Windows Unity game folder outside Steam. */
+function gameFolder(name: string): string {
+  const dir = path.join(tmp, name)
+  mkdirSync(path.join(dir, 'Trash_Data', 'Managed'), { recursive: true })
+  writeFileSync(path.join(dir, 'Trash_Data', 'Managed', 'Assembly-CSharp.dll'), '')
+  writeFileSync(path.join(dir, 'Trash.exe'), '')
+  writeFileSync(path.join(dir, 'UnityPlayer.dll'), '')
+  return dir
+}
+
+function addProton(): string {
+  const proton = path.join(steamRoot, 'steamapps', 'common', 'Proton 9.0')
+  mkdirSync(proton, { recursive: true })
+  writeFileSync(path.join(proton, 'proton'), '')
+  return proton
+}
 
 function manifest(appId: string, name: string, installdir: string, exe: boolean): string {
   const apps = path.join(steamRoot, 'steamapps')
@@ -41,6 +111,8 @@ beforeEach(() => {
   manifest('3314580', 'Trash Day', 'Trash Day', true)
   wineWorks = false
   picked = null
+  spawned = []
+  emitted = []
   const paths = makePaths(path.join(tmp, 'data'))
   mkdirSync(paths.root, { recursive: true })
   writeFileSync(paths.settings, JSON.stringify({ steamRootOverride: steamRoot }))
@@ -48,7 +120,7 @@ beforeEach(() => {
     paths,
     appVersion: '1.0.0',
     os: { type: 'Linux', release: '6', arch: 'x64' },
-    emit: () => undefined,
+    emit: (e) => emitted.push(e),
     nxmHandler: { status: async () => 'not-registered', register: async () => undefined },
     shareBaseUrl: 'https://share.test',
     fetch: (async () => ({ ok: true, json: async () => fixture })) as unknown as typeof fetch,
@@ -70,9 +142,11 @@ beforeEach(() => {
       if (file === 'wine' && wineWorks) return { stdout: 'wine-9' }
       throw new Error('not available in tests')
     },
-    spawn: (() => {
+    spawn: ((cmd: string, args: string[]) => {
+      spawned.push({ cmd, args })
       const child = new EventEmitter() as EventEmitter & { unref(): void }
       child.unref = () => undefined
+      process.nextTick(() => child.emit('spawn'))
       return child
     }) as unknown as ServiceDeps['spawn']
   }
@@ -353,5 +427,197 @@ describe('custom game services', () => {
     await expect(
       api.addCustomGame({ source: 'steam', steamAppId: '3241660', loaderChoice: 'none' })
     ).rejects.toThrow("R.E.P.O. is already in HML's game list.")
+  })
+})
+
+describe('custom game loaders, launches and manual installs', () => {
+  const label = 'steam-3314580'
+  const trashDir = (): string => path.join(steamRoot, 'steamapps', 'common', 'Trash Day')
+  const addTrash = (
+    api: ReturnType<typeof createServices>,
+    loaderChoice: 'bepinex5' | 'bepinex6-mono' | 'none'
+  ): Promise<unknown> => api.addCustomGame({ source: 'steam', steamAppId: '3314580', loaderChoice })
+
+  test('creating a profile for a BepInEx custom game installs BepInEx 5 from GitHub', async () => {
+    serveBepInEx()
+    const api = createServices(deps)
+    await addTrash(api, 'bepinex5')
+    const profile = await api.createProfile(label, 'p')
+    const { mods } = (await api.listProfiles(label)).find((p) => p.id === profile.id)!
+    expect(mods).toHaveLength(1)
+    expect(mods[0].source).toMatchObject({
+      kind: 'github',
+      owner: 'BepInEx',
+      asset: 'BepInEx_win_x64_5.4.23.5.zip'
+    })
+    expect(mods[0].github?.track).toEqual({ major: 5, prerelease: false })
+    expect(
+      existsSync(
+        path.join(deps.paths.profileDir(label, profile.id), 'BepInEx/core/BepInEx.Preloader.dll')
+      )
+    ).toBe(true)
+  })
+
+  test('a failed loader download still creates the profile and reports it', async () => {
+    serveBepInEx({ zipFails: true })
+    const api = createServices(deps)
+    await addTrash(api, 'bepinex5')
+    const profile = await api.createProfile(label, 'p')
+    expect((await api.listProfiles(label)).map((p) => p.id)).toEqual([profile.id])
+    expect(
+      emitted.some((e) => e.type === 'progress' && e.message.startsWith("Couldn't install BepInEx"))
+    ).toBe(true)
+    expect(await api.getLaunchWarnings(label, profile.id)).toContain('no-bepinex')
+  })
+
+  test('installLoader switches a profile to the newly chosen loader', async () => {
+    serveBepInEx()
+    const api = createServices(deps)
+    await addTrash(api, 'bepinex5')
+    const profile = await api.createProfile(label, 'p')
+    expect(await api.getLaunchWarnings(label, profile.id)).not.toContain('loader-mismatch')
+    await api.updateCustomGame(label, { loaderChoice: 'bepinex6-mono' })
+    expect(await api.getLaunchWarnings(label, profile.id)).toContain('loader-mismatch')
+    const mod = await api.installLoader(label, profile.id)
+    expect(mod.source).toMatchObject({ asset: 'BepInEx-Unity.Mono-win-x64-6.0.0-pre.2.zip' })
+    const { mods } = (await api.listProfiles(label))[0]
+    expect(mods.filter((m) => m.source.kind === 'github')).toHaveLength(1)
+    expect(mods[0].source).toMatchObject({ asset: 'BepInEx-Unity.Mono-win-x64-6.0.0-pre.2.zip' })
+    expect(await api.getLaunchWarnings(label, profile.id)).not.toContain('loader-mismatch')
+    // Already the chosen loader: nothing is reinstalled.
+    expect((await api.installLoader(label, profile.id)).installedAt).toBe(mod.installedAt)
+  })
+
+  test('installLoader with no matching release file changes nothing', async () => {
+    serveBepInEx()
+    const api = createServices(deps)
+    await addTrash(api, 'bepinex6-mono')
+    const profile = await api.createProfile(label, 'p')
+    const before = (await api.listProfiles(label))[0].mods
+    expect(before).toHaveLength(1)
+    await api.updateCustomGame(label, { loaderChoice: 'bepinex5' })
+    serveBepInEx({
+      releases: [RELEASES[0], release('v5.4.23.5', false, ['BepInEx_linux_x64_5.4.23.5.zip'])]
+    })
+    await expect(api.installLoader(label, profile.id)).rejects.toThrow(
+      'BepInEx/BepInEx v5.4.23.5 has no file like BepInEx_win_x64_{version}.zip.'
+    )
+    expect((await api.listProfiles(label))[0].mods).toEqual(before)
+    expect(
+      existsSync(
+        path.join(deps.paths.profileDir(label, profile.id), 'BepInEx/core/BepInEx.Preloader.dll')
+      )
+    ).toBe(true)
+  })
+
+  test('installLoader refuses a game without BepInEx', async () => {
+    const api = createServices(deps)
+    await addTrash(api, 'none')
+    const profile = await api.createProfile(label, 'p')
+    await expect(api.installLoader(label, profile.id)).rejects.toThrow(
+      "Trash Day doesn't use BepInEx."
+    )
+  })
+
+  test('modded launch of a custom Steam game uses Steam with doorstop arguments', async () => {
+    serveBepInEx()
+    const api = createServices(deps)
+    await addTrash(api, 'bepinex5')
+    const profile = await api.createProfile(label, 'p')
+    await api.launch(label, profile.id, 'modded')
+    expect(spawned).toHaveLength(1)
+    expect(spawned[0].args).toEqual(
+      expect.arrayContaining(['-applaunch', '3314580', '--doorstop-enable', 'true'])
+    )
+  })
+
+  test('a no-loader Steam game launches through Steam without doorstop arguments', async () => {
+    const api = createServices(deps)
+    await addTrash(api, 'none')
+    const profile = await api.createProfile(label, 'p')
+    await api.launch(label, profile.id, 'modded')
+    await api.launch(label, null, 'vanilla')
+    expect(spawned).toEqual([
+      { cmd: 'steam', args: ['-applaunch', '3314580'] },
+      { cmd: 'steam', args: ['-applaunch', '3314580'] }
+    ])
+  })
+
+  test('a folder game on Linux launches through its Proton runner', async () => {
+    serveBepInEx()
+    addProton()
+    const folder = gameFolder('Trash')
+    const api = createServices(deps)
+    const game = await api.addCustomGame({
+      source: 'folder',
+      folder,
+      displayName: 'Trash',
+      loaderChoice: 'bepinex5'
+    })
+    const profile = await api.createProfile(game.label, 'p')
+    const warnings = await api.getLaunchWarnings(game.label, profile.id)
+    expect(warnings).not.toContain('steam-not-found')
+    expect(warnings).not.toContain('proton-launch-options')
+    expect(warnings).not.toContain('native-linux-unsupported')
+    expect(warnings).not.toContain('no-runner')
+    expect(warnings).not.toContain('no-bepinex')
+    await api.launch(game.label, profile.id, 'modded')
+    expect(spawned).toHaveLength(1)
+    expect(spawned[0].cmd.endsWith('/proton')).toBe(true)
+    expect(spawned[0].args.slice(0, 2)).toEqual(['run', path.join(folder, 'Trash.exe')])
+    expect(spawned[0].args).toContain('--doorstop-enable')
+    expect(existsSync(deps.paths.winePrefix(game.label))).toBe(true)
+  })
+
+  test('a folder game on Linux without a runner warns and refuses to launch', async () => {
+    const folder = gameFolder('Trash')
+    const api = createServices(deps)
+    const game = await api.addCustomGame({
+      source: 'folder',
+      folder,
+      displayName: 'Trash',
+      loaderChoice: 'none'
+    })
+    const profile = await api.createProfile(game.label, 'p')
+    expect(await api.getLaunchWarnings(game.label, profile.id)).toContain('no-runner')
+    await expect(api.launch(game.label, profile.id, 'modded')).rejects.toThrow(
+      'Choose how to run this game (Proton or Wine) from the game menu.'
+    )
+    expect(spawned).toEqual([])
+    rmSync(folder, { recursive: true })
+    expect(await api.getLaunchWarnings(game.label, profile.id)).toContain('game-not-found')
+  })
+
+  test('getManualLoader finds a hand install and remembers Keep', async () => {
+    const api = createServices(deps)
+    await addTrash(api, 'bepinex5')
+    expect(await api.getManualLoader(label)).toBeNull()
+    mkdirSync(path.join(trashDir(), 'BepInEx', 'plugins'), { recursive: true })
+    writeFileSync(path.join(trashDir(), 'winhttp.dll'), '')
+    expect(await api.getManualLoader(label)).toEqual({
+      entries: ['BepInEx', 'winhttp.dll'],
+      kept: false
+    })
+    await api.keepManualLoader(label)
+    await api.keepManualLoader(label)
+    expect(await api.getManualLoader(label)).toMatchObject({ kept: true })
+    expect((await api.getSettings()).manualLoaderKept).toEqual([label])
+  })
+
+  test('removeManualLoader backs up the hand install and clears Keep', async () => {
+    const api = createServices(deps)
+    await addTrash(api, 'bepinex5')
+    await expect(api.removeManualLoader(label)).rejects.toThrow(
+      'There is no manual BepInEx install in the game folder.'
+    )
+    mkdirSync(path.join(trashDir(), 'BepInEx', 'plugins'), { recursive: true })
+    writeFileSync(path.join(trashDir(), 'BepInEx', 'plugins', 'Mine.dll'), 'mine')
+    await api.keepManualLoader(label)
+    const backup = await api.removeManualLoader(label)
+    expect(backup.startsWith(path.join(deps.paths.root, 'backups', label) + path.sep)).toBe(true)
+    expect(readFileSync(path.join(backup, 'BepInEx', 'plugins', 'Mine.dll'), 'utf8')).toBe('mine')
+    expect(existsSync(path.join(trashDir(), 'BepInEx'))).toBe(false)
+    expect((await api.getSettings()).manualLoaderKept).toEqual([])
+    expect(await api.getManualLoader(label)).toBeNull()
   })
 })

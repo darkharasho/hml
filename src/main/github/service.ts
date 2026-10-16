@@ -92,6 +92,11 @@ export interface GhInstallOptions {
   track?: GhTrack
   /** Pick the one asset matching this pattern (`{version}` allowed); saved in the config. */
   assetPattern?: string
+  /**
+   * Called once the asset is downloaded, outside the profile's queue, just before installing; a
+   * failed lookup or download never reaches it.
+   */
+  beforeInstall?: () => Promise<void>
 }
 
 export function createGithubServices(ctx: GhContext): Pick<
@@ -407,6 +412,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     ) {
       await opts.beforeReplacing(def)
     }
+    await opts.beforeInstall?.()
     return serialize(game, profileId, async () => {
       const { mod, replaced } = await installChosen(def, catalog, profileId, {
         owner,

@@ -134,6 +134,14 @@ export interface HmlApi {
   removeCustomGame(label: string): Promise<void>
   /** Proton builds and Wine that can start a Windows game on Linux; empty on Windows. */
   listRunners(): Promise<Runner[]>
+  /** Installs (or switches to) the game's chosen BepInEx in the profile from BepInEx's GitHub releases. */
+  installLoader(game: string, profileId: string): Promise<InstalledMod>
+  /** A hand-installed BepInEx in the game folder; null when there is none. */
+  getManualLoader(game: string): Promise<{ entries: string[]; kept: boolean } | null>
+  /** Moves it to HML's backup folder; returns that folder. */
+  removeManualLoader(game: string): Promise<string>
+  /** Remembers "Keep" for this game. */
+  keepManualLoader(game: string): Promise<void>
 }
 
 // `satisfies` makes the compiler reject a missing or unknown method name.
@@ -193,7 +201,11 @@ const METHOD_TABLE = {
   addCustomGame: true,
   updateCustomGame: true,
   removeCustomGame: true,
-  listRunners: true
+  listRunners: true,
+  installLoader: true,
+  getManualLoader: true,
+  removeManualLoader: true,
+  keepManualLoader: true
 } satisfies Record<keyof HmlApi, true>
 
 export const HML_METHODS = Object.keys(METHOD_TABLE) as (keyof HmlApi)[]

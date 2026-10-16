@@ -6,18 +6,24 @@ import type {
   CustomGameUpdate,
   GameDef,
   GameDetection,
+  InstalledMod,
   LoaderChoice,
   Runner
 } from '../../shared/types'
 import type { GameSummary, HmlApi } from '../../shared/ipc'
 import type { ServiceDeps } from '../services'
 import type { NexusGames } from '../nexus/games'
+import type { GhInstallOptions } from '../github/service'
 import { deployedProfileId } from '../deploy/deploy'
+import { uninstallMod } from '../install/installer'
+import { getProfile } from '../profiles/profiles'
 import { defaultRunner, findProtonVersions, wineAvailable } from '../launch/runners'
 import { findAppInstall, listLibraries } from '../steam/steam'
 import { listInstalledApps } from '../steam/installedApps'
-import { loadSettings, updateSettings } from '../store/settings'
+import { loadSettings, resolveGameDir, updateSettings } from '../store/settings'
 import { detectGameFolder } from './detect'
+import { findLoaderMod, loaderMatches, loaderSpec, type LoaderSpec } from './loaders'
+import { backupStamp, findManualLoader, moveToBackup } from './manualInstall'
 import {
   customGameDef,
   folderLabel,
@@ -34,6 +40,17 @@ export interface CustomGameContext {
   getSteamRoot(): Promise<string | null>
   summarize(def: GameDef): Promise<GameSummary>
   nexus: NexusGames
+  requireGame(label: string): Promise<GameDef>
+  serialize<T>(game: string, profileId: string, fn: () => Promise<T>): Promise<T>
+  assertGameClosed(def: GameDef): Promise<void>
+  /** The internal GitHub install (services.ts). */
+  ghInstallWith(
+    game: string,
+    profileId: string,
+    url: string,
+    asset: string | undefined,
+    opts: GhInstallOptions
+  ): ReturnType<HmlApi['ghInstall']>
 }
 
 type CustomApi = Pick<
@@ -44,6 +61,10 @@ type CustomApi = Pick<
   | 'updateCustomGame'
   | 'removeCustomGame'
   | 'listRunners'
+  | 'installLoader'
+  | 'getManualLoader'
+  | 'removeManualLoader'
+  | 'keepManualLoader'
 >
 
 const CHOICES: LoaderChoice[] = ['bepinex5', 'bepinex6-mono', 'bepinex6-il2cpp', 'none']
@@ -51,6 +72,18 @@ const CHOICES: LoaderChoice[] = ['bepinex5', 'bepinex6-mono', 'bepinex6-il2cpp',
 function checkChoice(choice: unknown): LoaderChoice {
   if (!CHOICES.includes(choice as LoaderChoice)) throw new Error('Unknown loader choice.')
   return choice as LoaderChoice
+}
+
+/** The BepInEx build a custom game is set to; null for catalog games and "No loader". */
+export function customLoaderSpec(def: GameDef): LoaderSpec | null {
+  return def.custom && def.loader === 'bepinex' ? loaderSpec(def.custom.loaderChoice) : null
+}
+
+/** True when a custom BepInEx game's profile has a loader other than the one the game is set to. */
+export function loaderMismatch(def: GameDef, mods: InstalledMod[]): boolean {
+  const spec = customLoaderSpec(def)
+  const mod = spec ? findLoaderMod(mods) : undefined
+  return spec !== null && mod !== undefined && !loaderMatches(mod, spec)
 }
 
 async function isDir(p: string): Promise<boolean> {
@@ -264,6 +297,80 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
     await nexus.forgetDomain(label)
   }
 
+  async function installLoader(game: string, profileId: string): Promise<InstalledMod> {
+    const def = await ctx.requireGame(game)
+    const spec = customLoaderSpec(def)
+    if (!spec) throw new Error(`${def.displayName} doesn't use BepInEx.`)
+    await ctx.assertGameClosed(def)
+    const current = findLoaderMod((await getProfile(paths, game, profileId)).mods)
+    if (current && loaderMatches(current, spec)) return current
+    const result = await ctx.ghInstallWith(
+      game,
+      profileId,
+      `https://github.com/${spec.owner}/${spec.repo}`,
+      undefined,
+      {
+        track: spec.track,
+        assetPattern: spec.assetPattern,
+        // The old loader goes only once the new one is downloaded, under the profile's lock, which
+        // is released before the install takes it again.
+        beforeInstall: () =>
+          ctx.serialize(game, profileId, async () => {
+            const old = findLoaderMod((await getProfile(paths, game, profileId)).mods)
+            if (old && !loaderMatches(old, spec)) await uninstallMod(paths, def, profileId, old.id)
+          })
+      }
+    )
+    if (result.kind !== 'installed') throw new Error(`Couldn't pick a ${spec.label} file.`)
+    return result.mod
+  }
+
+  /** A BepInEx game's folder, or null when it can't be found. */
+  async function bepinexGameDir(def: GameDef): Promise<string | null> {
+    if (def.loader !== 'bepinex') return null
+    const root = await ctx.getSteamRoot().catch(() => null)
+    return resolveGameDir(def, await loadSettings(paths), root).catch(() => null)
+  }
+
+  async function getManualLoader(
+    game: string
+  ): Promise<{ entries: string[]; kept: boolean } | null> {
+    const def = await ctx.requireGame(game)
+    const gameDir = await bepinexGameDir(def)
+    const entries = gameDir ? await findManualLoader(gameDir) : null
+    if (!entries) return null
+    return { entries, kept: (await loadSettings(paths)).manualLoaderKept.includes(def.label) }
+  }
+
+  async function removeManualLoader(game: string): Promise<string> {
+    const def = await ctx.requireGame(game)
+    await ctx.assertGameClosed(def)
+    const gameDir = await bepinexGameDir(def)
+    const entries = gameDir ? await findManualLoader(gameDir) : null
+    if (!gameDir || !entries)
+      throw new Error('There is no manual BepInEx install in the game folder.')
+    const now = deps.now ?? Date.now
+    const backup = await moveToBackup(
+      gameDir,
+      entries,
+      paths.loaderBackup(def.label, backupStamp(new Date(now())))
+    )
+    await updateSettings(paths, (s) => ({
+      ...s,
+      manualLoaderKept: s.manualLoaderKept.filter((l) => l !== def.label)
+    }))
+    return backup
+  }
+
+  async function keepManualLoader(game: string): Promise<void> {
+    const def = await ctx.requireGame(game)
+    await updateSettings(paths, (s) =>
+      s.manualLoaderKept.includes(def.label)
+        ? s
+        : { ...s, manualLoaderKept: [...s.manualLoaderKept, def.label] }
+    )
+  }
+
   async function steamCandidates(
     query: string,
     catalog: Catalog,
@@ -312,6 +419,10 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
     updateCustomGame,
     removeCustomGame,
     listRunners,
+    installLoader,
+    getManualLoader,
+    removeManualLoader,
+    keepManualLoader,
     steamCandidates
   }
 }

@@ -1,7 +1,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { DoorstopVersion, GameDef, LaunchWarning } from '../../shared/types'
+import type { DoorstopVersion, GameDef, LaunchWarning, Runner } from '../../shared/types'
 import { isFlatpakSteam, readLaunchOptions } from '../steam/steam'
 import type { LaunchPlan } from './launchPlan'
 
@@ -59,13 +59,29 @@ export async function launchWarnings(input: {
   steamRoot: string
   /** True when a Flatpak override already lets Steam read HML's folder (see flatpakGrantsAccess). */
   flatpakAccessGranted?: boolean
+  /** A folder game HML starts itself (no Steam), with its runner on Linux. */
+  direct?: { runner: Runner | null }
+  /** The profile's BepInEx isn't the one the game is set to. */
+  loaderMismatch?: boolean
 }): Promise<LaunchWarning[]> {
+  if (input.direct) {
+    // None of the Steam checks apply; the runner runs the .exe on Linux.
+    const warnings: LaunchWarning[] = []
+    if (input.gameDir === null) warnings.push('game-not-found')
+    if (input.game.loader === 'bepinex') {
+      if ((await findPreloader(input.profileDir)) === null) warnings.push('no-bepinex')
+      if (input.loaderMismatch) warnings.push('loader-mismatch')
+    }
+    if (input.platform === 'linux' && input.direct.runner === null) warnings.push('no-runner')
+    return warnings
+  }
   // HML doesn't launch deploy games, so none of the launch checks apply.
   if (input.game.loader === 'deploy') return input.gameDir === null ? ['game-not-found'] : []
   const warnings: LaunchWarning[] = []
   if (input.gameDir === null) warnings.push('game-not-found')
   if (input.game.loader !== 'bepinex') warnings.push('loader-unsupported')
   if ((await findPreloader(input.profileDir)) === null) warnings.push('no-bepinex')
+  if (input.loaderMismatch) warnings.push('loader-mismatch')
   if (input.gameDir !== null) {
     const proton = await isProtonGame(input.platform, input.gameDir, input.game.exeNames)
     if (input.platform === 'linux' && !proton) warnings.push('native-linux-unsupported')

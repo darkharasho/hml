@@ -35,7 +35,7 @@ import {
   saveProfile
 } from './profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
-import { buildLaunchPlan } from './launch/launchPlan'
+import { buildDirectLaunchPlan, buildLaunchPlan, buildSteamPlainPlan } from './launch/launchPlan'
 import { isGameRunning } from './launch/processes'
 import {
   detectDoorstopVersion,
@@ -70,7 +70,7 @@ import {
 } from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
 import { createCustomGames, customGameDef } from './custom/customGames'
-import { createCustomGameServices } from './custom/service'
+import { createCustomGameServices, customLoaderSpec, loaderMismatch } from './custom/service'
 import { createNexusServices } from './nexus/service'
 import { createShareServices } from './share/service'
 import { gameByDomain } from './nexus/api'
@@ -774,8 +774,74 @@ export function createServices(
     getSteamRoot,
     summarize: async (def) =>
       summarize(def, await getCatalog(), await loadSettings(paths), await getSteamRoot()),
-    nexus
+    nexus,
+    requireGame,
+    serialize,
+    assertGameClosed,
+    ghInstallWith
   })
+
+  /** A folder-added custom game, which HML starts itself (no Steam). */
+  const isFolderGame = (def: GameDef): boolean => def.custom?.source === 'folder'
+
+  /** Starts a folder game's exe directly (Windows) or through its runner (Linux). */
+  async function launchFolderGame(
+    def: GameDef,
+    profileId: string | null,
+    mode: LaunchMode
+  ): Promise<void> {
+    const bepinex = def.loader === 'bepinex'
+    if (bepinex && mode === 'modded' && !profileId) {
+      throw new Error('Select a profile to launch with mods.')
+    }
+    const gameDir = await deployFolder(def, await loadSettings(paths))
+    if (!gameDir) {
+      throw new Error(`${def.displayName} was not found. Choose its install folder first.`)
+    }
+    const exeName = def.exeNames[0]
+    if (!exeName) {
+      throw new Error(
+        `HML couldn't tell which program starts ${def.displayName}. Remove the game and add it again.`
+      )
+    }
+    const profileDir = profileId ? paths.profileDir(def.label, profileId) : paths.gameDir(def.label)
+    if (profileId) await getProfile(paths, def.label, profileId)
+    const modded = mode === 'modded'
+    const plan = buildDirectLaunchPlan({
+      platform,
+      mode,
+      gameDir,
+      exeName,
+      runner: def.custom?.runner ?? null,
+      prefixDir: paths.winePrefix(def.label),
+      steamRoot: platform === 'linux' ? await getSteamRoot().catch(() => null) : null,
+      loader: bepinex
+        ? {
+            profileDir,
+            preloaderRelPath: (modded && (await findPreloader(profileDir))) || DEFAULT_PRELOADER,
+            doorstop: await detectDoorstopVersion(modded ? profileDir : gameDir)
+          }
+        : null
+    })
+    await launch(plan, profileDir, gameDir, deps.spawn)
+  }
+
+  /** Starts a custom Steam game without a loader: a plain Steam launch, whatever the mode. */
+  async function launchSteamPlain(def: GameDef & { steamAppId: string }): Promise<void> {
+    const steamRoot = await getSteamRoot()
+    if (!steamRoot) throw new Error('Steam was not found. Set the Steam folder in settings.')
+    const gameDir = await deployFolder(def, await loadSettings(paths))
+    if (!gameDir) {
+      throw new Error(`${def.displayName} was not found. Choose its install folder first.`)
+    }
+    const plan = buildSteamPlainPlan({
+      platform,
+      steamRoot,
+      steamAppId: def.steamAppId,
+      flatpak: isFlatpakSteam(steamRoot)
+    })
+    await launch(plan, paths.gameDir(def.label), gameDir, deps.spawn)
+  }
 
   const shareApi = createShareServices({
     deps,
@@ -916,7 +982,25 @@ export function createServices(
     },
 
     listProfiles: (game) => listProfiles(paths, game),
-    createProfile: (game, name) => createProfile(paths, game, name),
+    async createProfile(game, name) {
+      const profile = await createProfile(paths, game, name)
+      // Only custom games are looked up, so creating a catalog game's profile fetches nothing.
+      const stored = await customGames.get(game)
+      if (stored && customLoaderSpec(customGameDef(stored))) {
+        try {
+          await customApi.installLoader(game, profile.id)
+        } catch (e) {
+          // The profile stays; its launch warnings offer the install again.
+          deps.emit({
+            type: 'progress',
+            message: `Couldn't install BepInEx: ${errMsg(e)}`,
+            done: 1,
+            total: 1
+          })
+        }
+      }
+      return profile
+    },
     renameProfile: (game, id, name) =>
       serialize(game, id, () => renameProfile(paths, game, id, name)),
     deleteProfile: (game, id) => serialize(game, id, () => deleteProfile(paths, game, id)),
@@ -995,7 +1079,19 @@ export function createServices(
 
     async getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]> {
       const def = await requireGame(game)
-      await getProfile(paths, game, profileId)
+      const { mods } = await getProfile(paths, game, profileId)
+      const mismatch = loaderMismatch(def, mods)
+      if (isFolderGame(def)) {
+        return launchWarnings({
+          platform,
+          game: def,
+          gameDir: await deployFolder(def, await loadSettings(paths)),
+          profileDir: paths.profileDir(game, profileId),
+          steamRoot: '',
+          direct: { runner: def.custom?.runner ?? null },
+          loaderMismatch: mismatch
+        })
+      }
       if (def.loader === 'deploy') {
         const dir = await deployFolder(def, await loadSettings(paths))
         return launchWarnings({
@@ -1016,7 +1112,8 @@ export function createServices(
         profileDir: paths.profileDir(game, profileId),
         steamRoot,
         flatpakAccessGranted:
-          platform === 'linux' && isFlatpakSteam(steamRoot) ? await flatpakAccess() : false
+          platform === 'linux' && isFlatpakSteam(steamRoot) ? await flatpakAccess() : false,
+        loaderMismatch: mismatch
       })
     },
 
@@ -1025,6 +1122,10 @@ export function createServices(
         throw new Error(`Unknown launch mode: ${String(mode)}`)
       }
       const def = await requireGame(game)
+      if (isFolderGame(def)) return launchFolderGame(def, profileId, mode)
+      if (def.loader === 'deploy' && def.custom?.source === 'steam' && def.steamAppId) {
+        return launchSteamPlain({ ...def, steamAppId: def.steamAppId })
+      }
       if (def.loader === 'deploy') {
         throw new Error(
           `HML doesn't launch ${def.displayName}. Deploy mods, then start the game as usual.`
