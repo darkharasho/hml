@@ -1835,6 +1835,25 @@ describe('services', () => {
         expect((await modsOf())[0].source).toMatchObject({ tag: 'v2.0.0' })
       })
 
+      test('while the game runs, notify-mode releases are still announced', async () => {
+        await installOld()
+        publish('n', 'note', 'v1.0.0', { 'a.zip': zipOf('Note', '1.0.0') })
+        await api.ghInstall('repo', pid, 'n/note')
+        await api.ghSetUpdateMode('repo', pid, 'n-note', 'notify')
+        publish('n', 'note', 'v2.0.0', { 'a.zip': zipOf('Note', '2.0.0') })
+        api = winApi()
+        tasks = ['REPO.exe']
+        emitted.length = 0
+        await api.ghAutoUpdateAll()
+        expect(emitted.filter((e) => e.type === 'github-updates-available')).toEqual([
+          { type: 'github-updates-available', game: 'repo', profileId: pid, count: 1 }
+        ])
+        expect(emitted.filter((e) => e.type === 'github-updated')).toEqual([])
+        expect((await modsOf()).find((m) => m.id === 'owner-repo')!.source).toMatchObject({
+          tag: 'v1.0.0'
+        })
+      })
+
       test('auto-update skips the game silently when tasklist fails', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
         try {

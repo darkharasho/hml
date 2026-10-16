@@ -436,7 +436,9 @@ export function createGithubServices(ctx: GhContext): Pick<
     catalog: Catalog,
     profileId: string,
     token: string | null,
-    latestOf: (owner: string, repo: string) => Promise<GhRelease>
+    latestOf: (owner: string, repo: string) => Promise<GhRelease>,
+    /** False while the game runs: notify-mode lookups still happen, installs don't. */
+    installs: boolean
   ): Promise<void> {
     const { mods } = await getProfile(paths, def.label, profileId)
     const done: { name: string; tag: string }[] = []
@@ -454,7 +456,7 @@ export function createGithubServices(ctx: GhContext): Pick<
         }
         continue
       }
-      if (!autoAllows(configOf(m).updateMode)) continue
+      if (!installs || !autoAllows(configOf(m).updateMode)) continue
       try {
         const latest = await latestOf(m.source.owner, m.source.repo)
         if (!needsUpdate(m, latest)) continue
@@ -489,12 +491,14 @@ export function createGithubServices(ctx: GhContext): Pick<
       for (const d of dirs) {
         if (!d.isDirectory()) continue
         const def = catalog.games.find((g) => g.label === d.name)
-        // Replacing files under a running game can leave a mod half-removed (Windows locks DLLs).
-        if (!def?.supported || (await ctx.isGameRunning(def))) continue
+        if (!def?.supported) continue
+        // Replacing files under a running game can leave a mod half-removed (Windows locks DLLs),
+        // so only the read-only notify-mode lookups run then.
+        const installs = !(await ctx.isGameRunning(def))
         try {
           for (const profile of await listProfiles(paths, def.label)) {
             try {
-              await autoUpdateProfile(def, catalog, profile.id, token, latestOf)
+              await autoUpdateProfile(def, catalog, profile.id, token, latestOf, installs)
             } catch (e) {
               console.warn(`GitHub auto-update of ${def.label}/${profile.id} failed: ${errMsg(e)}`)
             }
