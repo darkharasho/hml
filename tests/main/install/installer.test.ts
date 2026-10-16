@@ -313,4 +313,10 @@ describe('installer', () => {
       'esp'
     )
   })
+
+  test('accepts a ZipEntries object instead of bytes', async () => {
+    const entries = readZipEntries(modZip('1.0.0'))
+    const mod = await installZip(paths, game, catalog, pid, entries, src, { packageId: 'A-Mod' })
+    expect(mod.files).toContain('BepInEx/plugins/A-Mod/Mod.dll')
+  })
 })

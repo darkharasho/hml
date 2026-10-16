@@ -1,6 +1,5 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { unzipSync } from 'fflate'
 import type {
   Catalog,
   GameDef,
@@ -14,24 +13,9 @@ import { getProfile, saveProfile } from '../profiles/profiles'
 import { planDeploy, planInstall, UnsafeEntryError } from './planInstall'
 import { loaderAlias } from '../../shared/modIdentity'
 import { readArchive } from './archive'
+import { readZipEntries, type ZipEntries } from './zipEntries'
 
-export interface ZipEntries {
-  names: string[]
-  read(name: string): Uint8Array
-}
-
-export function readZipEntries(data: Uint8Array): ZipEntries {
-  const files = unzipSync(data)
-  const names = Object.keys(files).filter((n) => !n.endsWith('/'))
-  return {
-    names,
-    read(name) {
-      const f = files[name]
-      if (!f) throw new Error(`No such zip entry: ${name}`)
-      return f
-    }
-  }
-}
+export { readZipEntries, type ZipEntries }
 
 export function detectPackageMeta(
   zip: ZipEntries,

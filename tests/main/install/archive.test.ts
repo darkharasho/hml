@@ -109,3 +109,29 @@ describe('readArchive', () => {
     )
   })
 })
+
+describe('7z limits', () => {
+  test.skipIf(!have7z || process.platform === 'win32')(
+    'refuses an archive that declares too much data',
+    async () => {
+      const { data, cleanup } = make7z((src) => writeFileSync(path.join(src, 'a.txt'), 'abc'))
+      try {
+        const mod = await import('../../../src/main/install/archive')
+        expect(mod.MAX_EXTRACTED_BYTES).toBe(4 * 1024 ** 3)
+        // A fake 7za reporting an oversized listing.
+        const dir = mkdtempSync(path.join(tmpdir(), 'hml-fake-'))
+        const fake = path.join(dir, 'fake7za.sh')
+        writeFileSync(fake, '#!/bin/sh\necho "Size = 5000000000"\n', { mode: 0o755 })
+        try {
+          await expect(mod.readArchive(data, { sevenZip: fake })).rejects.toThrow(
+            'This archive is too large to extract.'
+          )
+        } finally {
+          rmSync(dir, { recursive: true, force: true })
+        }
+      } finally {
+        cleanup()
+      }
+    }
+  )
+})

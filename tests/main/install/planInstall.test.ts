@@ -205,6 +205,10 @@ describe('planDeploy', () => {
     expect(plan.files.map((f) => f.to)).toEqual(['Data/a.esp', 'b.txt'])
     expect(plan.files.every((f) => f.disableable)).toBe(true)
   })
+  test('keeps a lone game-layout folder', () => {
+    expect(to(['Data/a.esp'])).toEqual(['Data/a.esp'])
+    expect(to(['BepInEx/plugins/A.dll'])).toEqual(['BepInEx/plugins/A.dll'])
+  })
   test('rejects unsafe entries', () => {
     expect(() => planDeploy(['../x'])).toThrow(UnsafeEntryError)
   })

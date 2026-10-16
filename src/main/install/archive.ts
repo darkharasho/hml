@@ -5,9 +5,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { path7za } from '7zip-bin'
-import { readZipEntries, type ZipEntries } from './installer'
+import { readZipEntries, type ZipEntries } from './zipEntries'
 
 const execFileAsync = promisify(execFile)
+
+export const MAX_EXTRACTED_BYTES = 4 * 1024 ** 3
+const TIMEOUT_MS = 5 * 60 * 1000
+const TOO_LARGE = 'This archive is too large to extract.'
 
 export type ArchiveKind = 'zip' | '7z' | 'rar' | 'unknown'
 
@@ -25,15 +29,40 @@ export function archiveKind(data: Uint8Array): ArchiveKind {
 
 const defaultSevenZip = (): string => path7za.replace('app.asar', 'app.asar.unpacked')
 
-async function walk(root: string, dir: string, out: string[]): Promise<void> {
+async function walk(
+  root: string,
+  dir: string,
+  out: string[],
+  total: { bytes: number }
+): Promise<void> {
   for (const entry of await fs.readdir(dir)) {
     const abs = path.join(dir, entry)
     const st = await fs.lstat(abs)
     if (st.isSymbolicLink()) continue
     const real = await fs.realpath(abs)
     if (real !== root && !real.startsWith(root + path.sep)) continue
-    if (st.isDirectory()) await walk(root, abs, out)
-    else if (st.isFile()) out.push(abs)
+    if (st.isDirectory()) await walk(root, abs, out, total)
+    else if (st.isFile()) {
+      total.bytes += st.size
+      if (total.bytes > MAX_EXTRACTED_BYTES) throw new Error(TOO_LARGE)
+      out.push(abs)
+    }
+  }
+}
+
+async function run7z(sevenZip: string, args: string[]): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(sevenZip, args, {
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: TIMEOUT_MS
+    })
+    return stdout
+  } catch (e) {
+    const err = e as { stderr?: string; stdout?: string; message?: string; killed?: boolean }
+    if (err.killed) throw new Error("Couldn't open the 7z archive: timed out", { cause: e })
+    const text = (err.stderr || err.stdout || err.message || '').trim()
+    const line = text.split(/\r?\n/).find((l) => l.trim() !== '') ?? 'unknown error'
+    throw new Error(`Couldn't open the 7z archive: ${line.trim()}`, { cause: e })
   }
 }
 
@@ -45,20 +74,15 @@ async function read7z(data: Uint8Array, sevenZip: string, tmpDir: string): Promi
     // Some installs (npm, unpacked asar) drop the exec bit on the bundled binary.
     if (process.platform !== 'win32') await fs.chmod(sevenZip, 0o755).catch(() => undefined)
     await fs.writeFile(archive, data)
-    try {
-      await execFileAsync(sevenZip, ['x', '-y', '-bd', `-o${outDir}`, archive], {
-        maxBuffer: 16 * 1024 * 1024
-      })
-    } catch (e) {
-      const err = e as { stderr?: string; stdout?: string; message?: string }
-      const text = (err.stderr || err.stdout || err.message || '').trim()
-      const line = text.split(/\r?\n/).find((l) => l.trim() !== '') ?? 'unknown error'
-      throw new Error(`Couldn't open the 7z archive: ${line.trim()}`, { cause: e })
-    }
+    const listing = await run7z(sevenZip, ['l', '-slt', '-bd', archive])
+    let declared = 0
+    for (const m of listing.matchAll(/^Size = (\d+)\s*$/gm)) declared += Number(m[1])
+    if (declared > MAX_EXTRACTED_BYTES) throw new Error(TOO_LARGE)
+    await run7z(sevenZip, ['x', '-y', '-bd', '-bso0', '-bsp0', `-o${outDir}`, archive])
     await fs.mkdir(outDir, { recursive: true })
     const root = await fs.realpath(outDir)
     const abs: string[] = []
-    await walk(root, root, abs)
+    await walk(root, root, abs, { bytes: 0 })
     const files = new Map<string, Uint8Array>()
     for (const a of abs) {
       const rel = path.relative(root, a).split(path.sep).join('/')
