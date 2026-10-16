@@ -9,19 +9,28 @@ import type {
   LaunchMode,
   LaunchWarning,
   ModUpdate,
+  NxInstallResult,
   ProfileManifest,
   Settings
 } from '../../shared/types'
 import { api, errorMessage } from './api'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
+import { NX_NO_KEY, openWebsiteToast } from './nxView'
 import { displayName, installToast, progressLabel } from './tsView'
 
 export type ToastKind = 'error' | 'success' | 'info'
+export interface ToastAction {
+  label: string
+  run(): void
+}
 export interface Toast {
   id: number
   kind: ToastKind
   message: string
+  action?: ToastAction
 }
+/** Which catalogue the Online tab browses. */
+export type OnlineSource = 'thunderstore' | 'nexus'
 
 interface State {
   ready: boolean
@@ -45,6 +54,10 @@ interface State {
   ghInstalling: number
   /** GitHub account of a token saved in this session; null when unknown or removed. */
   ghLogin: string | null
+  /** Nexus mod ids being installed. */
+  nxInstalling: number[]
+  /** The Online tab's last source per game label. */
+  onlineSource: Record<string, OnlineSource>
   /** Latest progress line from the main process while a Thunderstore or GitHub install runs. */
   progress: string | null
   toasts: Toast[]
@@ -70,6 +83,14 @@ interface State {
   ghSetUpdateMode(modId: string, mode: GhUpdateMode): Promise<void>
   /** Saves a token, or removes it with null. Resolves false when that failed. */
   ghSetToken(token: string | null): Promise<boolean>
+  /**
+   * Installs a Nexus mod's newest main file, or the given file. Resolves 'needs-key' when it
+   * failed for want of an API key, so a dialog (above the toasts) can offer Settings itself.
+   */
+  nxInstall(mod: { modId: number; name: string }, fileId?: number): Promise<'needs-key' | 'done'>
+  /** Saves a Nexus Mods API key, or removes it with null. Resolves false when that failed. */
+  nxSetKey(key: string | null): Promise<boolean>
+  setOnlineSource(game: string, source: OnlineSource): void
   /** Runs every Thunderstore and GitHub update for the current profile. */
   updateAll(): Promise<void>
   checkUpdates(): Promise<void>
@@ -79,7 +100,7 @@ interface State {
   setGamePath(dir: string | null): Promise<void>
   pickGamePath(label: string): Promise<string | null>
   setSettingsOpen(open: boolean): void
-  toast(kind: ToastKind, message: string): void
+  toast(kind: ToastKind, message: string, action?: ToastAction): void
   dismissToast(id: number): void
 }
 
@@ -254,6 +275,8 @@ export const useStore = create<State>()((set, get) => {
     ghUpdating: [],
     ghInstalling: 0,
     ghLogin: null,
+    nxInstalling: [],
+    onlineSource: {},
     progress: null,
     toasts: [],
     settingsOpen: false,
@@ -509,6 +532,71 @@ export const useStore = create<State>()((set, get) => {
       return true
     },
 
+    async nxInstall(mod, fileId) {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile || get().nxInstalling.includes(mod.modId)) return 'done'
+      set((s) => ({ nxInstalling: [...s.nxInstalling, mod.modId] }))
+      let result: NxInstallResult
+      try {
+        result = await tracked(async () => {
+          try {
+            return await api.nxInstall(currentGame.label, currentProfile, mod.modId, fileId)
+          } finally {
+            await reloadProfiles()
+          }
+        })
+      } catch (e) {
+        const message = errorMessage(e)
+        get().toast(
+          'error',
+          message,
+          message === NX_NO_KEY
+            ? { label: 'Settings', run: () => get().setSettingsOpen(true) }
+            : undefined
+        )
+        return message === NX_NO_KEY ? 'needs-key' : 'done'
+      } finally {
+        set((s) => ({ nxInstalling: s.nxInstalling.filter((id) => id !== mod.modId) }))
+      }
+      if (result.kind === 'installed') {
+        get().toast('success', `Installed ${result.mod.name} ${result.mod.version}`)
+        await refreshWarnings()
+        await get().checkUpdates()
+        return 'done'
+      }
+      // Free accounts finish on the file page; the nxm:// link brings the download back.
+      try {
+        await api.openExternal(result.url)
+      } catch (e) {
+        fail(e)
+        return 'done'
+      }
+      const handler = await api.nxStatus().then(
+        (s) => s.handler,
+        () => 'not-registered' as const
+      )
+      get().toast('info', openWebsiteToast(handler))
+      return 'done'
+    },
+
+    async nxSetKey(key) {
+      const result = await busy(() => api.nxSetKey(key))
+      if (result === failed) return false
+      get().toast(
+        'success',
+        !key
+          ? 'Removed Nexus Mods API key'
+          : result
+            ? `Saved Nexus Mods API key for ${result.name}`
+            : 'Saved Nexus Mods API key'
+      )
+      return true
+    },
+
+    setOnlineSource(game, source) {
+      set((s) => ({ onlineSource: { ...s.onlineSource, [game]: source } }))
+    },
+
     async updateAll() {
       const { updates, ghUpdates } = get()
       await Promise.all([get().tsUpdate(updates), get().ghUpdate(ghUpdates)])
@@ -591,9 +679,9 @@ export const useStore = create<State>()((set, get) => {
       set({ settingsOpen: open })
     },
 
-    toast(kind, message) {
+    toast(kind, message, action) {
       const id = ++toastSeq
-      set({ toasts: [...get().toasts, { id, kind, message }] })
+      set({ toasts: [...get().toasts, { id, kind, message, action }] })
       setTimeout(() => get().dismissToast(id), kind === 'error' ? 8000 : 4000)
     },
 

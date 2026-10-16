@@ -23,6 +23,18 @@ export function Toasts(): React.JSX.Element {
         >
           <span className={`w-1 self-stretch ${ACCENT[t.kind]}`} />
           <p className="flex-1 py-0.5 text-sm text-fg select-text">{t.message}</p>
+          {t.action && (
+            <button
+              type="button"
+              onClick={() => {
+                t.action?.run()
+                dismiss(t.id)
+              }}
+              className="h-6 shrink-0 rounded px-2 text-sm font-medium text-ember hover:bg-line/60"
+            >
+              {t.action.label}
+            </button>
+          )}
           <button
             type="button"
             aria-label="Dismiss"

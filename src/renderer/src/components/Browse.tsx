@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { TsPackage, TsQuery, TsSearchResult, TsSort } from '../../../shared/types'
 import { api, errorMessage } from '../api'
-import { useCurrentProfile, useStore } from '../store'
+import { useCurrentProfile, useStore, type OnlineSource } from '../store'
 import {
   compactCount,
   displayName,
@@ -9,6 +9,7 @@ import {
   relativeTime,
   UNSUPPORTED_LOADER
 } from '../tsView'
+import { NexusBrowse } from './NexusBrowse'
 import { DeprecatedBadge, PackageDetail, PackageIcon, ProgressLine } from './PackageDetail'
 import { Button, Icon } from './ui'
 
@@ -30,7 +31,69 @@ interface Page extends Omit<TsSearchResult, 'items'> {
   items: TsPackage[]
 }
 
+const SOURCES: { value: OnlineSource; label: string }[] = [
+  { value: 'thunderstore', label: 'Thunderstore' },
+  { value: 'nexus', label: 'Nexus Mods' }
+]
+
+/**
+ * The Online tab. Games with a Thunderstore listing get a Thunderstore | Nexus Mods switch;
+ * Nexus-only games browse Nexus Mods directly.
+ */
 export function Browse({ game }: { game: string }): React.JSX.Element {
+  const hasListing = useStore((s) => !!s.currentGame?.packageIndex)
+  const chosen = useStore((s) => s.onlineSource[game])
+  const setSource = useStore((s) => s.setOnlineSource)
+  const source: OnlineSource = hasListing ? (chosen ?? 'thunderstore') : 'nexus'
+  // Each source mounts on first visit and then stays mounted, so its search survives switching.
+  const [opened, setOpened] = useState<OnlineSource[]>([source])
+  if (!opened.includes(source)) setOpened([...opened, source])
+
+  const switcher = hasListing ? (
+    <div
+      role="group"
+      aria-label="Mod source"
+      className="flex h-9 rounded-md border border-line bg-panel p-0.5"
+    >
+      {SOURCES.map((s) => (
+        <button
+          key={s.value}
+          type="button"
+          aria-pressed={source === s.value}
+          onClick={() => setSource(game, s.value)}
+          className={`rounded px-3 text-sm transition-colors ${
+            source === s.value ? 'bg-raised font-medium text-fg' : 'text-muted hover:text-fg'
+          }`}
+        >
+          {s.label}
+        </button>
+      ))}
+    </div>
+  ) : null
+
+  return (
+    <>
+      {hasListing && opened.includes('thunderstore') && (
+        <div className={source === 'thunderstore' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+          <ThunderstoreBrowse game={game} leading={switcher} />
+        </div>
+      )}
+      {opened.includes('nexus') && (
+        <div className={source === 'nexus' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+          <NexusBrowse game={game} leading={switcher} />
+        </div>
+      )}
+    </>
+  )
+}
+
+function ThunderstoreBrowse({
+  game,
+  leading
+}: {
+  game: string
+  leading: ReactNode
+}): React.JSX.Element {
   const [text, setText] = useState('')
   const [debounced, setDebounced] = useState('')
   const [sort, setSort] = useState<TsSort>('top')
@@ -124,6 +187,7 @@ export function Browse({ game }: { game: string }): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-2 px-6 pt-3">
+        {leading}
         <label className="relative min-w-56 flex-1">
           <span className="sr-only">Search Thunderstore</span>
           <Icon
