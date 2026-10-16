@@ -22,7 +22,8 @@ interface AddedGame {
 
 export interface NexusGames {
   domainFor(game: GameDef, settings: Settings): Promise<{ domain: string; gameId: number } | null>
-  cachedDomain(game: GameDef, settings: Settings): Promise<string | null>
+  /** `cache` is a preloaded domain cache, to avoid rereading the file per game. */
+  cachedDomain(game: GameDef, settings: Settings, cache?: Cache): Promise<string | null>
   searchExtra(query: string, catalog: Catalog, settings: Settings): Promise<GameDef[]>
   addGame(domain: string): Promise<GameDef>
   addedGames(): Promise<GameDef[]>
@@ -133,9 +134,15 @@ export function createNexusGames(ctx: {
     return match ? { domain: match.domain, gameId: match.id } : null
   }
 
-  async function cachedDomain(game: GameDef, settings: Settings): Promise<string | null> {
+  async function cachedDomain(
+    game: GameDef,
+    settings: Settings,
+    preloaded?: Cache
+  ): Promise<string | null> {
     if (isDeploy(game)) return deployDomain(game)
-    return overrideFor(game, settings) ?? (await readCache())[game.label]?.domain ?? null
+    return (
+      overrideFor(game, settings) ?? (preloaded ?? (await readCache()))[game.label]?.domain ?? null
+    )
   }
 
   async function addedGames(): Promise<GameDef[]> {
@@ -172,8 +179,9 @@ export function createNexusGames(ctx: {
       return []
     }
     const taken = new Set<string>()
+    const cache = await readCache()
     for (const g of catalog.games) {
-      const d = await cachedDomain(g, settings)
+      const d = await cachedDomain(g, settings, cache)
       if (d) taken.add(d)
     }
     return found

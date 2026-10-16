@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createNexusGames, nexusGameDef } from '../../../src/main/nexus/games'
 import { makePaths, type AppPaths } from '../../../src/main/store/paths'
 import { defaultSettings } from '../../../src/main/store/settings'
@@ -151,6 +151,19 @@ describe('searchExtra', () => {
     expect(out[0].loader).toBe('deploy')
     expect(out[0].supported).toBe(true)
     expect(out[0].nexusModCount).toBe(9)
+  })
+
+  it('reads the domain cache once however many catalog games there are', async () => {
+    await fs.mkdir(path.dirname(paths.nxGames), { recursive: true })
+    await fs.writeFile(paths.nxGames, JSON.stringify({}))
+    const games = ['a', 'b', 'c', 'd'].map((label) => ({ ...repo, label }))
+    const read = vi.spyOn(fs, 'readFile')
+    try {
+      await make().searchExtra('sky', emptyCatalog(games), defaultSettings())
+      expect(read.mock.calls.filter(([f]) => f === paths.nxGames)).toHaveLength(1)
+    } finally {
+      read.mockRestore()
+    }
   })
 
   it('makes no request for short queries and swallows failures', async () => {
