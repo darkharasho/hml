@@ -283,6 +283,23 @@ describe('installer', () => {
     expect(z.names).toEqual(['wrap/manifest.json'])
     expect(detectPackageMeta(z, 'fb')).toEqual({ name: 'M', version: '1.2.3' })
     expect(detectPackageMeta(readZipEntries(zipSync({ 'a.dll': strToU8('x') })), 'fb')).toBeNull()
+    const meta = (files: Record<string, Uint8Array>): ReturnType<typeof detectPackageMeta> =>
+      detectPackageMeta(readZipEntries(zipSync(files)), 'fb')
+    // A root manifest wins over a nested one.
+    expect(
+      meta({
+        'manifest.json': manifest('Root', '1.0.0'),
+        'Lib/manifest.json': manifest('Lib', '2.0.0')
+      })
+    ).toEqual({ name: 'Root', version: '1.0.0' })
+    // A nested manifest of a bundled library is not the package's own.
+    expect(
+      meta({ 'Mod.dll': strToU8('x'), 'Lib/manifest.json': manifest('Lib', '2.0.0') })
+    ).toBeNull()
+    // A wrapped zip holds everything under one folder.
+    expect(
+      meta({ 'Wrap/Mod.dll': strToU8('x'), 'Wrap/manifest.json': manifest('Wrap', '3.0.0') })
+    ).toEqual({ name: 'Wrap', version: '3.0.0' })
   })
 
   test('falls back to zip filename and 0.0.0', async () => {

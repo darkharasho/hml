@@ -21,11 +21,24 @@ export function detectPackageMeta(
   zip: ZipEntries,
   fallbackName: string
 ): { name: string; version: string } | null {
-  const candidates = zip.names.filter((n) => {
-    const segs = n.replace(/\\/g, '/').split('/')
-    return segs[segs.length - 1].toLowerCase() === 'manifest.json' && segs.length <= 2
+  const norm = (n: string): string => n.replace(/\\/g, '/')
+  const isManifest = (segs: string[]): boolean =>
+    segs[segs.length - 1].toLowerCase() === 'manifest.json'
+  // A root manifest is the package's own. A nested one counts only in a wrapped zip, where
+  // every entry sits under the same folder; otherwise it belongs to something bundled inside.
+  const root = zip.names.filter((n) => {
+    const segs = norm(n).split('/')
+    return segs.length === 1 && isManifest(segs)
   })
-  const entry = candidates.sort((a, b) => a.length - b.length)[0]
+  const wrapped = zip.names.filter((n) => {
+    const segs = norm(n).split('/')
+    return (
+      segs.length === 2 &&
+      isManifest(segs) &&
+      zip.names.every((o) => norm(o).startsWith(`${segs[0]}/`))
+    )
+  })
+  const entry = [...root, ...wrapped][0]
   if (!entry) return null
   try {
     let text = new TextDecoder('utf-8').decode(zip.read(entry))
