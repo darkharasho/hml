@@ -196,23 +196,28 @@ describe('installer', () => {
     }
   )
 
-  test('write failure rolls back and rethrows', async () => {
-    // A file where a directory is needed makes a later write fail.
-    mkdirSync(path.join(profDir, 'BepInEx/config'), { recursive: true })
-    writeFileSync(path.join(profDir, 'BepInEx/plugins'), 'blocker')
+  test('write failure rolls back files written so far and rethrows', async () => {
+    // plugins/ is written first; a regular file blocks the patchers destination dir.
+    mkdirSync(path.join(profDir, 'BepInEx/patchers'), { recursive: true })
+    writeFileSync(path.join(profDir, 'BepInEx/patchers/A-Mod'), 'blocker')
     const before = snapshot(profDir)
+    const zip = zipSync({ 'plugins/A.dll': strToU8('a'), 'patchers/P.dll': strToU8('p') })
     await expect(
-      installZip(
-        paths,
-        game,
-        catalog,
-        pid,
-        zipSync({ 'a.cfg.txt': strToU8('x'), 'Mod.dll': strToU8('d') }),
-        src,
-        { packageId: 'A-Mod' }
-      )
+      installZip(paths, game, catalog, pid, zip, src, { packageId: 'A-Mod' })
     ).rejects.toThrow()
+    expect(existsSync(path.join(profDir, 'BepInEx/plugins/A-Mod/A.dll'))).toBe(false)
     expect(snapshot(profDir)).toEqual(before)
+    expect((await getProfile(paths, 'repo', pid)).mods).toHaveLength(0)
+  })
+
+  test('upgrade keeps config ownership so uninstall removes it', async () => {
+    await installZip(paths, game, catalog, pid, modZip('1'), src, { packageId: 'A-Mod' })
+    const mod = await installZip(paths, game, catalog, pid, modZip('2'), src, {
+      packageId: 'A-Mod'
+    })
+    expect(mod.files).toContain('BepInEx/config/mod.cfg')
+    await uninstallMod(paths, game, pid, 'A-Mod')
+    expect(existsSync(path.join(profDir, 'BepInEx/config/mod.cfg'))).toBe(false)
   })
 
   test('manifest with BOM parses', () => {
@@ -242,5 +247,6 @@ describe('installer', () => {
     const zip = zipSync({ 'plugins/A.dll': strToU8('1'), 'A.dll': strToU8('2') })
     const mod = await installZip(paths, game, catalog, pid, zip, src, { packageId: 'A-Mod' })
     expect(mod.files.filter((f) => f.endsWith('A.dll'))).toHaveLength(1)
+    expect(readFileSync(path.join(profDir, 'BepInEx/plugins/A-Mod/A.dll'), 'utf8')).toBe('2')
   })
 })

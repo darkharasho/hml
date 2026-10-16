@@ -162,11 +162,13 @@ export async function installZip(
 
   // Everything validated; only now touch the profile.
   const previous = profile.mods.find((m) => m.id === packageId)
+  let keptOwned: string[] = []
   if (previous) {
     // Upgrade: keep user config (non-disableable files) of regular mods; loader
     // packages are all non-disableable and must be replaced wholesale.
     const keep = loaderPackage ? new Set<string>() : new Set(previous.files)
     for (const d of previous.disableable) keep.delete(d)
+    keptOwned = [...keep]
     await removeFiles(
       root,
       previous.files.filter((f) => !keep.has(f))
@@ -184,13 +186,20 @@ export async function installZip(
   try {
     for (const [to, f] of byTo) {
       const abs = path.resolve(root, to)
-      if (!f.disableable && (await exists(abs))) continue // keep user config
+      if (!f.disableable && (await exists(abs))) {
+        // Keep user config; it stays owned only if a previous version owned it.
+        if (keptOwned.includes(to)) files.push(to)
+        continue
+      }
       const target = f.disableable && !enabled ? abs + '.old' : abs
       await fs.mkdir(path.dirname(target), { recursive: true })
       written.push(target)
       await fs.writeFile(target, zip.read(f.from))
       files.push(to)
       if (f.disableable) disableable.push(to)
+    }
+    for (const k of keptOwned) {
+      if (!files.includes(k) && (await exists(path.resolve(root, k)))) files.push(k)
     }
     const mod: InstalledMod = {
       id: packageId,
