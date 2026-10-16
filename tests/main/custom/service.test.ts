@@ -321,4 +321,37 @@ describe('custom game services', () => {
     deps.platform = 'win32'
     expect(await createServices(deps).listRunners()).toEqual([])
   })
+
+  test('BepInEx is refused for a native Linux folder, on add and on a loader switch', async () => {
+    const folder = path.join(tmp, 'Native Folder')
+    mkdirSync(folder)
+    const api = createServices(deps)
+    await expect(
+      api.addCustomGame({
+        source: 'folder',
+        folder,
+        displayName: 'Native',
+        loaderChoice: 'bepinex5'
+      })
+    ).rejects.toThrow('BepInEx needs the Windows version of Native.')
+    const added = await api.addCustomGame({
+      source: 'folder',
+      folder,
+      displayName: 'Native',
+      loaderChoice: 'none'
+    })
+    await expect(
+      api.updateCustomGame(added.label, { loaderChoice: 'bepinex6-mono' })
+    ).rejects.toThrow('BepInEx needs the Windows version of Native.')
+    expect((await api.getGame(added.label))?.custom?.loaderChoice).toBe('none')
+    await expect(api.updateCustomGame(added.label, { loaderChoice: 'none' })).resolves.toBeTruthy()
+  })
+
+  test('a catalog game cannot be added from Steam', async () => {
+    manifest('3241660', 'Trash Repo', 'TrashRepo', true)
+    const api = createServices(deps)
+    await expect(
+      api.addCustomGame({ source: 'steam', steamAppId: '3241660', loaderChoice: 'none' })
+    ).rejects.toThrow("R.E.P.O. is already in HML's game list.")
+  })
 })

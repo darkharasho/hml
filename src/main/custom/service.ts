@@ -135,6 +135,8 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
   ): Promise<StoredCustomGame> {
     const appId = String(input.steamAppId)
     const given = input.displayName?.trim()
+    const inCatalog = (await ctx.getBaseCatalog()).games.find((g) => g.steamAppId === appId)
+    if (inCatalog) throw new Error(`${inCatalog.displayName} is already in HML's game list.`)
     const folder = /^\d+$/.test(appId) ? await steamFolder(appId) : null
     if (!folder) throw new Error(`${given || appId} isn't installed through Steam.`)
     const displayName = given || (await installedName(appId)) || appId
@@ -177,6 +179,10 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
         ])
       )
     const detection = await detectGameFolder(folder)
+    const name = input.displayName?.trim() || path.basename(folder)
+    if (input.loaderChoice !== 'none' && detection.nativeLinux) {
+      throw new Error(`BepInEx needs the Windows version of ${name}.`)
+    }
     let runner: Runner | null = null
     if (deps.platform !== 'win32') {
       runner =
@@ -213,7 +219,15 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
     const game = await customGames.get(label)
     if (!game) throw new Error(`Unknown game: ${label}`)
     const next: StoredCustomGame = { ...game }
-    if (patch.loaderChoice !== undefined) next.loaderChoice = checkChoice(patch.loaderChoice)
+    if (patch.loaderChoice !== undefined) {
+      next.loaderChoice = checkChoice(patch.loaderChoice)
+      if (next.loaderChoice !== 'none') {
+        const { detection } = await detectCustomGame(label)
+        if (detection.nativeLinux) {
+          throw new Error(`BepInEx needs the Windows version of ${game.displayName}.`)
+        }
+      }
+    }
     if (patch.displayName !== undefined) {
       const name = patch.displayName.trim()
       if (!name) throw new Error('The game needs a name.')
