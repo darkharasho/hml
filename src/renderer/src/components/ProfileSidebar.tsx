@@ -3,6 +3,8 @@ import type { ProfileManifest } from '../../../shared/types'
 import { api, errorMessage } from '../api'
 import { useStore } from '../store'
 import { GameCover } from './GameCover'
+import { ImportDialog } from './ImportDialog'
+import { ShareDialog } from './ShareDialog'
 import { Button, ConfirmDialog, Icon, Menu, Modal } from './ui'
 
 export function ProfileSidebar(): React.JSX.Element | null {
@@ -20,6 +22,8 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<ProfileManifest | null>(null)
   const [domainOpen, setDomainOpen] = useState(false)
+  const [sharing, setSharing] = useState<ProfileManifest | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
 
   if (!game) return null
 
@@ -66,15 +70,25 @@ export function ProfileSidebar(): React.JSX.Element | null {
 
       <div className="flex items-center justify-between px-4 pt-4 pb-2">
         <h2 className="text-sm font-semibold text-muted">Profiles</h2>
-        <button
-          type="button"
-          aria-label="New profile"
-          title="New profile"
-          onClick={() => setCreating(true)}
-          className="grid size-7 place-items-center rounded-md text-muted hover:bg-raised hover:text-fg"
-        >
-          <Icon name="plus" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            title="Import a shared profile"
+            onClick={() => setImportOpen(true)}
+            className="h-7 rounded-md px-2 text-xs font-medium text-muted hover:bg-raised hover:text-fg"
+          >
+            Import
+          </button>
+          <button
+            type="button"
+            aria-label="New profile"
+            title="New profile"
+            onClick={() => setCreating(true)}
+            className="grid size-7 place-items-center rounded-md text-muted hover:bg-raised hover:text-fg"
+          >
+            <Icon name="plus" />
+          </button>
+        </div>
       </div>
 
       <ul className="flex-1 overflow-y-auto px-2 pb-2">
@@ -125,8 +139,9 @@ export function ProfileSidebar(): React.JSX.Element | null {
               </button>
               <Menu
                 label={`Actions for ${p.name}`}
-                className="absolute top-1 right-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 [&[open]]:opacity-100"
+                className="absolute! top-1 right-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 [&[open]]:opacity-100"
                 items={[
+                  { label: 'Share…', onSelect: () => setSharing(p) },
                   { label: 'Rename', onSelect: () => setRenaming(p.id) },
                   {
                     label: 'Open folder',
@@ -162,6 +177,10 @@ export function ProfileSidebar(): React.JSX.Element | null {
           onClose={() => setDeleting(null)}
         />
       )}
+      {sharing && (
+        <ShareDialog game={game.label} profile={sharing} onClose={() => setSharing(null)} />
+      )}
+      {importOpen && <ImportDialog onClose={() => setImportOpen(false)} />}
       {domainOpen && <NexusDomainDialog game={game.label} onClose={() => setDomainOpen(false)} />}
     </aside>
   )

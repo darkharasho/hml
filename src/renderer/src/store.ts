@@ -78,6 +78,8 @@ interface State {
   createProfile(name: string): Promise<void>
   renameProfile(id: string, name: string): Promise<void>
   deleteProfile(id: string): Promise<void>
+  /** Switches to a game's profile (after an import) and reloads its list. */
+  openImportedProfile(game: string, profileId: string): Promise<void>
   openProfileFolder(): Promise<void>
   installFromFile(): Promise<void>
   installFromPaths(paths: string[]): Promise<void>
@@ -437,6 +439,22 @@ export const useStore = create<State>()((set, get) => {
       })
       if (ok !== failed && get().currentGame?.label === game.label && get().currentProfile === id)
         await get().selectProfile(get().profiles[0].id)
+    },
+
+    async openImportedProfile(game, profileId) {
+      try {
+        // Remembered first, so selectGame lands on this profile instead of the last one used.
+        await persist((s) => ({ ...s, lastProfile: { ...s.lastProfile, [game]: profileId } }))
+        if (get().currentGame?.label === game) {
+          await reloadProfiles()
+          return await get().selectProfile(profileId)
+        }
+        const match = (await api.searchGames(game)).find((g) => g.label === game)
+        if (!match) throw new Error(`HML couldn't find the game ${game}.`)
+        await get().selectGame(match)
+      } catch (e) {
+        fail(e)
+      }
     },
 
     async openProfileFolder() {
