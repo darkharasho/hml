@@ -13,11 +13,13 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     void useStore.getState().init()
+    const offEvents = window.hmlEvents.on((e) => useStore.getState().handleEvent(e))
     // Files dropped outside the mod list must not navigate the window to file://.
     const block = (e: DragEvent): void => e.preventDefault()
     window.addEventListener('dragover', block)
     window.addEventListener('drop', block)
     return () => {
+      offEvents()
       window.removeEventListener('dragover', block)
       window.removeEventListener('drop', block)
     }

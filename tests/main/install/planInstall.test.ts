@@ -10,7 +10,8 @@ const eco = JSON.parse(
 const rules: InstallRule[] = eco.games.repo.r2modman[0].installRules
 const packageId = 'Author-Mod'
 
-const plan = (entries: string[]): ReturnType<typeof planInstall>['files'] => planInstall(entries, { packageId, rules }).files
+const plan = (entries: string[]): ReturnType<typeof planInstall>['files'] =>
+  planInstall(entries, { packageId, rules }).files
 
 describe('planInstall', () => {
   test('root files go to default plugins subdir', () => {
@@ -44,7 +45,11 @@ describe('planInstall', () => {
 
   test('strips single wrapper folder', () => {
     expect(plan(['MyMod-1.2.0/manifest.json', 'MyMod-1.2.0/Mod.dll'])).toEqual([
-      { from: 'MyMod-1.2.0/manifest.json', to: 'BepInEx/plugins/Author-Mod/manifest.json', disableable: true },
+      {
+        from: 'MyMod-1.2.0/manifest.json',
+        to: 'BepInEx/plugins/Author-Mod/manifest.json',
+        disableable: true
+      },
       { from: 'MyMod-1.2.0/Mod.dll', to: 'BepInEx/plugins/Author-Mod/Mod.dll', disableable: true }
     ])
   })
@@ -74,8 +79,20 @@ describe('planInstall', () => {
 
   test('non-subdir tracking methods do not add the package folder', () => {
     const r: InstallRule[] = [
-      { route: 'Game/state', defaultFileExtensions: [], trackingMethod: 'state', subRoutes: [], isDefaultLocation: true },
-      { route: 'Game/pz', defaultFileExtensions: ['.pz'], trackingMethod: 'package-zip', subRoutes: [], isDefaultLocation: false }
+      {
+        route: 'Game/state',
+        defaultFileExtensions: [],
+        trackingMethod: 'state',
+        subRoutes: [],
+        isDefaultLocation: true
+      },
+      {
+        route: 'Game/pz',
+        defaultFileExtensions: ['.pz'],
+        trackingMethod: 'package-zip',
+        subRoutes: [],
+        isDefaultLocation: false
+      }
     ]
     const out = planInstall(['a.pz', 'b.txt', 'state/c.txt'], { packageId, rules: r }).files
     expect(out.map((f) => f.to)).toEqual(['Game/pz/a.pz', 'Game/state/b.txt', 'Game/state/c.txt'])
@@ -85,11 +102,23 @@ describe('planInstall', () => {
   test('loader package', () => {
     const out = planInstall(
       ['BepInExPack/winhttp.dll', 'BepInExPack/BepInEx/core/BepInEx.Preloader.dll', 'icon.png'],
-      { packageId, rules, loaderPackage: { packageId: 'BepInEx-BepInExPack', rootFolder: 'BepInExPack', loader: 'bepinex' } }
+      {
+        packageId,
+        rules,
+        loaderPackage: {
+          packageId: 'BepInEx-BepInExPack',
+          rootFolder: 'BepInExPack',
+          loader: 'bepinex'
+        }
+      }
     ).files
     expect(out).toEqual([
       { from: 'BepInExPack/winhttp.dll', to: 'winhttp.dll', disableable: false },
-      { from: 'BepInExPack/BepInEx/core/BepInEx.Preloader.dll', to: 'BepInEx/core/BepInEx.Preloader.dll', disableable: false }
+      {
+        from: 'BepInExPack/BepInEx/core/BepInEx.Preloader.dll',
+        to: 'BepInEx/core/BepInEx.Preloader.dll',
+        disableable: false
+      }
     ])
   })
 
@@ -101,7 +130,10 @@ describe('planInstall', () => {
 
   test('throws when there is no default rule', () => {
     expect(() =>
-      planInstall(['a.txt'], { packageId, rules: rules.map((r) => ({ ...r, isDefaultLocation: false })) })
+      planInstall(['a.txt'], {
+        packageId,
+        rules: rules.map((r) => ({ ...r, isDefaultLocation: false }))
+      })
     ).toThrow(/default/)
   })
 
@@ -121,14 +153,22 @@ describe('planInstall', () => {
     const out = planInstall(['bepinexpack/winhttp.dll'], {
       packageId,
       rules,
-      loaderPackage: { packageId: 'BepInEx-BepInExPack', rootFolder: 'BepInExPack', loader: 'bepinex' }
+      loaderPackage: {
+        packageId: 'BepInEx-BepInExPack',
+        rootFolder: 'BepInExPack',
+        loader: 'bepinex'
+      }
     }).files
-    expect(out).toEqual([{ from: 'bepinexpack/winhttp.dll', to: 'winhttp.dll', disableable: false }])
+    expect(out).toEqual([
+      { from: 'bepinexpack/winhttp.dll', to: 'winhttp.dll', disableable: false }
+    ])
   })
 
   test('matches folders and extensions case-insensitively', () => {
     expect(plan(['Plugins/A.dll'])[0].to).toBe('BepInEx/plugins/Author-Mod/A.dll')
-    expect(plan(['BEPINEX/plugins/A.dll', 'icon.png'])[0].to).toBe('BepInEx/plugins/Author-Mod/A.dll')
+    expect(plan(['BEPINEX/plugins/A.dll', 'icon.png'])[0].to).toBe(
+      'BepInEx/plugins/Author-Mod/A.dll'
+    )
     expect(plan(['X.MM.DLL'])[0].to).toBe('BepInEx/monomod/Author-Mod/X.MM.DLL')
   })
 
@@ -143,7 +183,11 @@ describe('planInstall', () => {
     const out = planInstall(['Pack-5.4/BepInExPack/winhttp.dll', 'Pack-5.4/icon.png'], {
       packageId,
       rules,
-      loaderPackage: { packageId: 'BepInEx-BepInExPack', rootFolder: 'BepInExPack', loader: 'bepinex' }
+      loaderPackage: {
+        packageId: 'BepInEx-BepInExPack',
+        rootFolder: 'BepInExPack',
+        loader: 'bepinex'
+      }
     }).files
     expect(out).toEqual([
       { from: 'Pack-5.4/BepInExPack/winhttp.dll', to: 'winhttp.dll', disableable: false }

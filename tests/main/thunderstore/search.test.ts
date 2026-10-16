@@ -67,7 +67,10 @@ describe('searchPackages filters', () => {
       pkg({ name: 'c', nsfw: true })
     ]
     expect(names(searchPackages(pkgs, q({ sort: 'name' })))).toEqual(['a'])
-    expect(names(searchPackages(pkgs, q({ sort: 'name', includeDeprecated: true })))).toEqual(['a', 'b'])
+    expect(names(searchPackages(pkgs, q({ sort: 'name', includeDeprecated: true })))).toEqual([
+      'a',
+      'b'
+    ])
     expect(names(searchPackages(pkgs, q({ sort: 'name', includeNsfw: true })))).toEqual(['a', 'c'])
   })
   it('requires every listed category', () => {
@@ -108,7 +111,9 @@ describe('searchPackages sort', () => {
 })
 
 describe('searchPackages paging', () => {
-  const pkgs = Array.from({ length: 250 }, (_, i) => pkg({ name: `p${String(i).padStart(3, '0')}` }))
+  const pkgs = Array.from({ length: 250 }, (_, i) =>
+    pkg({ name: `p${String(i).padStart(3, '0')}` })
+  )
   it('slices and reports total', () => {
     const r = searchPackages(pkgs, q({ sort: 'name', offset: 10, limit: 5 }))
     expect(r.total).toBe(250)
@@ -123,7 +128,10 @@ describe('searchPackages paging', () => {
 
 describe('allCategories', () => {
   it('returns sorted unique set', () => {
-    const pkgs = [pkg({ name: 'a', categories: ['Tools', 'Mods'] }), pkg({ name: 'b', categories: ['Mods', 'Audio'] })]
+    const pkgs = [
+      pkg({ name: 'a', categories: ['Tools', 'Mods'] }),
+      pkg({ name: 'b', categories: ['Mods', 'Audio'] })
+    ]
     expect(allCategories(pkgs)).toEqual(['Audio', 'Mods', 'Tools'])
   })
 })

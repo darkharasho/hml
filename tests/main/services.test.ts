@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createServices, type DialogPort, type ServiceDeps } from '../../src/main/services'
 import { makePaths } from '../../src/main/store/paths'
 import { HML_METHODS } from '../../src/shared/ipc'
-import type { HmlEvent } from '../../src/shared/types'
+import type { HmlEvent, TsQuery } from '../../src/shared/types'
 
 const hooks = vi.hoisted(() => ({
   rename: null as null | ((...a: unknown[]) => Promise<void>)
@@ -456,7 +456,12 @@ describe('services', () => {
         'manifest.json': strToU8(JSON.stringify({ name, version_number: version })),
         [`${name}.dll`]: strToU8('dll')
       })
-    const rawPkg = (owner: string, name: string, versions: string[], deps: string[] = []) => ({
+    const rawPkg = (
+      owner: string,
+      name: string,
+      versions: string[],
+      deps: string[] = []
+    ): Record<string, unknown> => ({
       name,
       full_name: `${owner}-${name}`,
       owner,
@@ -560,7 +565,7 @@ describe('services', () => {
       )
     })
 
-    const query = (over = {}) => ({
+    const query = (over: Partial<TsQuery> = {}): TsQuery => ({
       text: '',
       categories: [],
       sort: 'name' as const,

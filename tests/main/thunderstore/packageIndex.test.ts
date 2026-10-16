@@ -29,7 +29,9 @@ afterEach(async () => {
   await fs.rm(tmp, { recursive: true, force: true })
 })
 
-function fakeFetch(map: Record<string, Uint8Array | 'fail' | number>): typeof fetch & ReturnType<typeof vi.fn> {
+function fakeFetch(
+  map: Record<string, Uint8Array | 'fail' | number>
+): typeof fetch & ReturnType<typeof vi.fn> {
   return vi.fn(async (url: string) => {
     const b = map[url]
     if (b === 'fail' || b === undefined) throw new Error('network down')
@@ -75,7 +77,10 @@ describe('decodeMaybeGzip', () => {
 })
 
 describe('loadPackageIndex', () => {
-  const base = (f: typeof fetch, extra = {}) => ({
+  const base = (
+    f: typeof fetch,
+    extra: Partial<Parameters<typeof loadPackageIndex>[0]> = {}
+  ): Parameters<typeof loadPackageIndex>[0] => ({
     paths: makePaths(tmp),
     label: 'repo',
     indexUrl: IDX,
@@ -87,7 +92,12 @@ describe('loadPackageIndex', () => {
     const f = fakeFetch(goodMap())
     const r = await loadPackageIndex(base(f, { now: () => 5_000 }))
     expect(r.packages.map((p) => p.fullName)).toEqual([
-      'A-Alpha', 'A-Beta', 'A-Gamma', 'A-Delta', 'A-Eps', 'A-Zeta'
+      'A-Alpha',
+      'A-Beta',
+      'A-Gamma',
+      'A-Delta',
+      'A-Eps',
+      'A-Zeta'
     ])
     expect(r.stale).toBe(false)
     const cache = await readJson<{ chunkUrls: string[]; fetchedAt: string }>(
@@ -133,7 +143,10 @@ describe('loadPackageIndex', () => {
   it.each([
     ['index throws', { [IDX]: 'fail' }],
     ['index non-OK', { [IDX]: 503 }],
-    ['chunk throws', { [IDX]: gz([A, 'https://ts.test/new']), [A]: gz([]), 'https://ts.test/new': 'fail' }],
+    [
+      'chunk throws',
+      { [IDX]: gz([A, 'https://ts.test/new']), [A]: gz([]), 'https://ts.test/new': 'fail' }
+    ],
     ['chunk non-OK', { [IDX]: gz(['https://ts.test/new']), 'https://ts.test/new': 500 }],
     ['index not strings', { [IDX]: gz([1, 2]) }],
     ['chunk not array', { [IDX]: gz(['https://ts.test/new']), 'https://ts.test/new': gz({}) }]
@@ -174,10 +187,12 @@ describe('loadPackageIndex', () => {
 
   it('limits chunk concurrency to 3', async () => {
     const urls = Array.from({ length: 8 }, (_, i) => `https://ts.test/c${i}`)
-    let cur = 0, max = 0
+    let cur = 0,
+      max = 0
     const f = vi.fn(async (url: string) => {
       const body = url === IDX ? gz(urls) : gz([])
-      cur++; max = Math.max(max, cur)
+      cur++
+      max = Math.max(max, cur)
       await new Promise((r) => setTimeout(r, 5))
       cur--
       const buf = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)

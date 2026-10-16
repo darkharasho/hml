@@ -1,13 +1,17 @@
 import { create } from 'zustand'
 import type { GameSummary } from '../../shared/ipc'
 import type {
+  HmlEvent,
   InstalledMod,
   LaunchMode,
   LaunchWarning,
+  ModUpdate,
   ProfileManifest,
-  Settings
+  Settings,
+  TsInstallResult
 } from '../../shared/types'
 import { api, errorMessage } from './api'
+import { displayName, progressLabel } from './tsView'
 
 export type ToastKind = 'error' | 'success' | 'info'
 export interface Toast {
@@ -23,7 +27,15 @@ interface State {
   profiles: ProfileManifest[]
   currentProfile: string | null
   warnings: LaunchWarning[]
+  /** Number of running mutations; `busy` is `busyCount > 0` so overlapping runs don't clear it. */
+  busyCount: number
   busy: boolean
+  /** Thunderstore updates for the current profile, from tsCheckUpdates. */
+  updates: ModUpdate[]
+  /** fullNames of Thunderstore packages being installed or updated. */
+  tsInstalling: string[]
+  /** Latest progress line from the main process while a Thunderstore install runs. */
+  tsProgress: string | null
   toasts: Toast[]
   settingsOpen: boolean
 
@@ -39,6 +51,10 @@ interface State {
   installFromPaths(paths: string[]): Promise<void>
   setModEnabled(modId: string, enabled: boolean): Promise<void>
   uninstallMod(mod: InstalledMod): Promise<void>
+  tsInstall(pkg: { fullName: string; name: string }, version?: string): Promise<void>
+  tsUpdate(updates: ModUpdate[]): Promise<void>
+  checkUpdates(): Promise<void>
+  handleEvent(e: HmlEvent): void
   launch(mode: LaunchMode): Promise<void>
   saveSteamPath(dir: string | null): Promise<void>
   setGamePath(dir: string | null): Promise<void>
@@ -49,6 +65,7 @@ interface State {
 }
 
 let toastSeq = 0
+let updatesSeq = 0
 
 export const useStore = create<State>()((set, get) => {
   const fail = (e: unknown): void => get().toast('error', errorMessage(e))
@@ -56,14 +73,14 @@ export const useStore = create<State>()((set, get) => {
   /** Runs a mutation with the busy flag set; errors become toasts and yield `failed`. */
   const failed = Symbol('failed')
   async function busy<T>(fn: () => Promise<T>): Promise<T | typeof failed> {
-    set({ busy: true })
+    set((s) => ({ busyCount: s.busyCount + 1, busy: true }))
     try {
       return await fn()
     } catch (e) {
       fail(e)
       return failed
     } finally {
-      set({ busy: false })
+      set((s) => ({ busyCount: s.busyCount - 1, busy: s.busyCount - 1 > 0 }))
     }
   }
 
@@ -149,6 +166,37 @@ export const useStore = create<State>()((set, get) => {
     if (mods.length === 1) get().toast('success', `Installed ${mods[0].name} ${mods[0].version}`)
     else if (mods.length > 1) get().toast('success', `Installed ${mods.length} mods`)
     await refreshWarnings()
+    if (mods.length > 0) await get().checkUpdates()
+  }
+
+  /** Runs a Thunderstore install or update with the packages marked as installing. */
+  async function tsRun(
+    fullNames: string[],
+    run: () => Promise<TsInstallResult>
+  ): Promise<TsInstallResult | typeof failed> {
+    set((s) => ({ tsInstalling: [...s.tsInstalling, ...fullNames] }))
+    try {
+      return await busy(async () => {
+        try {
+          return await run()
+        } finally {
+          // Packages installed before a failure are recorded, so always reload.
+          await reloadProfiles()
+        }
+      })
+    } finally {
+      set((s) => {
+        const tsInstalling = [...s.tsInstalling]
+        for (const n of fullNames) tsInstalling.splice(tsInstalling.indexOf(n), 1)
+        return { tsInstalling, tsProgress: tsInstalling.length > 0 ? s.tsProgress : null }
+      })
+      await refreshWarnings()
+      await get().checkUpdates()
+    }
+  }
+
+  function missingSuffix(r: TsInstallResult): string {
+    return r.missing.length > 0 ? ` — missing dependencies: ${r.missing.join(', ')}` : ''
   }
 
   return {
@@ -158,7 +206,11 @@ export const useStore = create<State>()((set, get) => {
     profiles: [],
     currentProfile: null,
     warnings: [],
+    busyCount: 0,
     busy: false,
+    updates: [],
+    tsInstalling: [],
+    tsProgress: null,
     toasts: [],
     settingsOpen: false,
 
@@ -167,7 +219,7 @@ export const useStore = create<State>()((set, get) => {
       return initPromise
     },
     async selectGame(game) {
-      set({ currentGame: game, profiles: [], currentProfile: null, warnings: [] })
+      set({ currentGame: game, profiles: [], currentProfile: null, warnings: [], updates: [] })
       try {
         const profiles = await loadProfilesEnsuringOne(game.label)
         if (get().currentGame?.label !== game.label) return
@@ -175,6 +227,8 @@ export const useStore = create<State>()((set, get) => {
         const remembered = get().settings?.lastProfile[game.label]
         const profile = profiles.find((p) => p.id === remembered) ?? profiles[0]
         await persist((s) => ({ ...s, lastGame: game.label }))
+        // The user may have picked another game while settings were saving.
+        if (get().currentGame?.label !== game.label) return
         await get().selectProfile(profile.id)
       } catch (e) {
         fail(e)
@@ -182,19 +236,19 @@ export const useStore = create<State>()((set, get) => {
     },
 
     leaveGame() {
-      set({ currentGame: null, profiles: [], currentProfile: null, warnings: [] })
+      set({ currentGame: null, profiles: [], currentProfile: null, warnings: [], updates: [] })
     },
 
     async selectProfile(id) {
       const game = get().currentGame
       if (!game) return
-      set({ currentProfile: id, warnings: [] })
+      set({ currentProfile: id, warnings: [], updates: [] })
       try {
         await persist((s) => ({ ...s, lastProfile: { ...s.lastProfile, [game.label]: id } }))
       } catch (e) {
         fail(e)
       }
-      await refreshWarnings()
+      await Promise.all([refreshWarnings(), get().checkUpdates()])
     },
 
     async createProfile(name) {
@@ -225,9 +279,10 @@ export const useStore = create<State>()((set, get) => {
       if (!game) return
       const ok = await busy(async () => {
         await api.deleteProfile(game.label, id)
-        set({ profiles: await loadProfilesEnsuringOne(game.label) })
+        const profiles = await loadProfilesEnsuringOne(game.label)
+        if (get().currentGame?.label === game.label) set({ profiles })
       })
-      if (ok !== failed && get().currentProfile === id)
+      if (ok !== failed && get().currentGame?.label === game.label && get().currentProfile === id)
         await get().selectProfile(get().profiles[0].id)
     },
 
@@ -278,6 +333,68 @@ export const useStore = create<State>()((set, get) => {
       })
       if (ok !== failed) get().toast('success', `Uninstalled ${mod.name}`)
       await refreshWarnings()
+      await get().checkUpdates()
+    },
+
+    async tsInstall(pkg, version) {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile || get().tsInstalling.includes(pkg.fullName)) return
+      const result = await tsRun([pkg.fullName], () =>
+        api.tsInstall(currentGame.label, currentProfile, pkg.fullName, version)
+      )
+      if (result === failed) return
+      get().toast(
+        result.missing.length > 0 ? 'info' : 'success',
+        `Installed ${displayName(pkg.name)}${missingSuffix(result)}`
+      )
+    },
+
+    async tsUpdate(updates) {
+      const { currentGame, currentProfile, tsInstalling } = get()
+      const todo = updates.filter((u) => !tsInstalling.includes(u.fullName))
+      if (!currentGame || !currentProfile || todo.length === 0) return
+      const result = await tsRun(
+        todo.map((u) => u.fullName),
+        () =>
+          api.tsUpdate(
+            currentGame.label,
+            currentProfile,
+            todo.map((u) => u.modId)
+          )
+      )
+      if (result === failed) return
+      const first = get()
+        .profiles.find((p) => p.id === currentProfile)
+        ?.mods.find((m) => m.id === todo[0].modId)
+      const what =
+        todo.length === 1
+          ? `${first ? displayName(first.name) : todo[0].fullName} to ${todo[0].latest}`
+          : `${todo.length} mods`
+      get().toast(
+        result.missing.length > 0 ? 'info' : 'success',
+        `Updated ${what}${missingSuffix(result)}`
+      )
+    },
+
+    async checkUpdates() {
+      const { currentGame, currentProfile } = get()
+      const seq = ++updatesSeq
+      if (!currentGame?.packageIndex || !currentProfile) return set({ updates: [] })
+      try {
+        const updates = await api.tsCheckUpdates(currentGame.label, currentProfile)
+        // Only the newest check for the still-selected profile may write.
+        const { currentGame: g, currentProfile: p } = get()
+        if (seq === updatesSeq && g?.label === currentGame.label && p === currentProfile)
+          set({ updates })
+      } catch {
+        // Update checks are background work: with Thunderstore unreachable and no cached list
+        // there is nothing to compare against, and the Online tab already reports the error.
+      }
+    },
+
+    handleEvent(e) {
+      if (e.type !== 'progress' || get().tsInstalling.length === 0) return
+      set({ tsProgress: progressLabel(e) })
     },
 
     async launch(mode) {

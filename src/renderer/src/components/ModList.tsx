@@ -1,7 +1,10 @@
 import { useRef, useState, type DragEvent } from 'react'
-import type { InstalledMod, ModSource } from '../../../shared/types'
+import type { InstalledMod, ModSource, ModUpdate } from '../../../shared/types'
 import { pathForFile } from '../api'
 import { useCurrentProfile, useStore } from '../store'
+import { UNSUPPORTED_LOADER } from '../tsView'
+import { Browse } from './Browse'
+import { ProgressLine } from './PackageDetail'
 import { Button, ConfirmDialog, Icon, Menu } from './ui'
 
 const SOURCE_BADGE: Record<ModSource['kind'], { label: string; className: string }> = {
@@ -19,11 +22,19 @@ export function ModList(): React.JSX.Element | null {
   const installFromFile = useStore((s) => s.installFromFile)
   const installFromPaths = useStore((s) => s.installFromPaths)
   const openProfileFolder = useStore((s) => s.openProfileFolder)
+  const game = useStore((s) => s.currentGame)
+  const updates = useStore((s) => s.updates)
+  const tsUpdate = useStore((s) => s.tsUpdate)
+  const updatingAny = useStore((s) => s.tsInstalling.length > 0)
+  const [tab, setTab] = useState<'installed' | 'online'>('installed')
+  // Browse mounts on first visit and then stays mounted, so search and filters survive tab switches.
+  const [onlineOpened, setOnlineOpened] = useState(false)
   const [dragging, setDragging] = useState(false)
   // dragenter/dragleave fire for every child element; count depth to know when we truly left.
   const depth = useRef(0)
 
-  if (!profile) return null
+  if (!profile || !game) return null
+  const updateById = new Map(updates.map((u) => [u.modId, u]))
   const mods = [...profile.mods].sort((a, b) => a.name.localeCompare(b.name))
   const enabledCount = mods.filter((m) => m.enabled).length
 
@@ -56,37 +67,65 @@ export function ModList(): React.JSX.Element | null {
       onDrop={onDrop}
     >
       <div className="flex items-end justify-between gap-4 border-b border-line px-6">
-        <nav className="flex gap-6" aria-label="Profile views">
-          <span
-            aria-current="page"
-            className="-mb-px border-b-2 border-ember pt-4 pb-2.5 text-sm font-semibold text-fg"
-          >
+        <div role="tablist" aria-label="Profile views" className="flex gap-6">
+          <TabButton selected={tab === 'installed'} onSelect={() => setTab('installed')}>
             Installed
             <span className="ml-2 text-xs font-normal text-muted tabular-nums">{mods.length}</span>
-          </span>
-        </nav>
-        <div className="flex gap-2 pb-2">
-          <Button variant="quiet" onClick={() => void openProfileFolder()}>
-            <Icon name="folder" />
-            Open folder
-          </Button>
-          <Button disabled={busy} onClick={() => void installFromFile()}>
-            <Icon name="upload" />
-            Install from file
-          </Button>
+          </TabButton>
+          <TabButton
+            selected={tab === 'online'}
+            onSelect={() => {
+              setTab('online')
+              setOnlineOpened(true)
+            }}
+          >
+            Online
+          </TabButton>
+        </div>
+        <div className="flex h-11 items-center gap-2 pb-2">
+          {tab === 'installed' && (
+            <>
+              <Button variant="quiet" onClick={() => void openProfileFolder()}>
+                <Icon name="folder" />
+                Open folder
+              </Button>
+              <Button disabled={busy} onClick={() => void installFromFile()}>
+                <Icon name="upload" />
+                Install from file
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
-      {mods.length === 0 ? (
+      {onlineOpened && (
+        <div className={tab === 'online' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+          <Browse key={game.label} game={game.label} />
+        </div>
+      )}
+      {tab === 'online' ? null : mods.length === 0 ? (
         <EmptyState onPick={() => void installFromFile()} />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-3">
-          <p className="px-2 pb-2 text-xs text-muted">
-            {enabledCount} of {mods.length} enabled. Drop .zip files anywhere here to install.
-          </p>
+          <div className="flex min-h-9 items-center justify-between gap-3 px-2 pb-2">
+            <p className="text-xs text-muted">
+              {enabledCount} of {mods.length} enabled. Drop .zip files anywhere here to install.
+            </p>
+            {updates.length > 0 && (
+              <Button
+                variant="primary"
+                disabled={!game.supported || updatingAny}
+                title={game.supported ? undefined : UNSUPPORTED_LOADER}
+                onClick={() => void tsUpdate(updates)}
+              >
+                <Icon name="download" />
+                Update all ({updates.length})
+              </Button>
+            )}
+          </div>
           <ul className="flex flex-col">
             {mods.map((m) => (
-              <ModRow key={m.id} mod={m} />
+              <ModRow key={m.id} mod={m} update={updateById.get(m.id)} supported={game.supported} />
             ))}
           </ul>
         </div>
@@ -105,9 +144,45 @@ export function ModList(): React.JSX.Element | null {
   )
 }
 
-function ModRow({ mod }: { mod: InstalledMod }): React.JSX.Element {
+function TabButton({
+  selected,
+  onSelect,
+  children
+}: {
+  selected: boolean
+  onSelect(): void
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      onClick={onSelect}
+      className={`-mb-px border-b-2 pt-4 pb-2.5 text-sm font-semibold transition-colors ${
+        selected ? 'border-ember text-fg' : 'border-transparent text-muted hover:text-fg'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function ModRow({
+  mod,
+  update,
+  supported
+}: {
+  mod: InstalledMod
+  update?: ModUpdate
+  supported: boolean
+}): React.JSX.Element {
   const setModEnabled = useStore((s) => s.setModEnabled)
   const uninstallMod = useStore((s) => s.uninstallMod)
+  const tsUpdate = useStore((s) => s.tsUpdate)
+  const updating = useStore(
+    (s) => mod.source.kind === 'thunderstore' && s.tsInstalling.includes(mod.source.fullName)
+  )
   const [confirming, setConfirming] = useState(false)
   const badge = SOURCE_BADGE[mod.source.kind]
   const canToggle = mod.disableable.length > 0
@@ -126,10 +201,24 @@ function ModRow({ mod }: { mod: InstalledMod }): React.JSX.Element {
           <span className="truncate font-medium">{mod.name}</span>
           <span className="shrink-0 text-xs text-muted tabular-nums">{mod.version}</span>
         </div>
-        {mod.source.kind === 'local' && (
-          <p className="truncate text-xs text-muted">{mod.source.fileName}</p>
+        {updating ? (
+          <ProgressLine className="mt-0.5" />
+        ) : (
+          mod.source.kind === 'local' && (
+            <p className="truncate text-xs text-muted">{mod.source.fileName}</p>
+          )
         )}
       </div>
+      {update && (
+        <Button
+          className="h-7 px-2.5 text-xs"
+          disabled={!supported || updating}
+          title={supported ? undefined : UNSUPPORTED_LOADER}
+          onClick={() => void tsUpdate([update])}
+        >
+          {updating ? 'Updating…' : `Update to ${update.latest}`}
+        </Button>
+      )}
       <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${badge.className}`}>
         {badge.label}
       </span>

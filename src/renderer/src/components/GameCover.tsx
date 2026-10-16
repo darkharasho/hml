@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { GameSummary } from '../../../shared/ipc'
+import { initials } from '../tsView'
 
 /** Cover art with an initials fallback when the icon is missing or fails to load. */
 export function GameCover({
@@ -30,14 +31,4 @@ export function GameCover({
       {initials(game.displayName)}
     </span>
   )
-}
-
-function initials(name: string): string {
-  const words = name
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-  return (
-    words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? '?').slice(0, 2)
-  ).toUpperCase()
 }

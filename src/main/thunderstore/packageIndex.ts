@@ -36,7 +36,8 @@ export function slimPackage(raw: unknown): TsPackage | null {
   const fullName = str(raw.full_name)
   if (!fullName || !Array.isArray(raw.versions)) return null
   const active = raw.versions.filter(
-    (v): v is Record<string, unknown> => isObj(v) && v.is_active !== false && !!str(v.version_number)
+    (v): v is Record<string, unknown> =>
+      isObj(v) && v.is_active !== false && !!str(v.version_number)
   )
   if (active.length === 0) return null
   const newest = active[0]
@@ -147,6 +148,6 @@ export async function loadPackageIndex(opts: {
   } catch (e) {
     console.warn(`Thunderstore index fetch failed: ${msg(e)}`)
     if (cached) return { ...cached, stale: true }
-    throw new Error(UNREACHABLE)
+    throw new Error(UNREACHABLE, { cause: e })
   }
 }
