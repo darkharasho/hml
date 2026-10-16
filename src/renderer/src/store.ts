@@ -1,16 +1,19 @@
 import { create } from 'zustand'
 import type { GameSummary } from '../../shared/ipc'
 import type {
+  GhInstallResult,
+  GhUpdate,
+  GhUpdateMode,
   HmlEvent,
   InstalledMod,
   LaunchMode,
   LaunchWarning,
   ModUpdate,
   ProfileManifest,
-  Settings,
-  TsInstallResult
+  Settings
 } from '../../shared/types'
 import { api, errorMessage } from './api'
+import { ghInstallToast, ghUpdatedToast } from './ghView'
 import { displayName, installToast, progressLabel } from './tsView'
 
 export type ToastKind = 'error' | 'success' | 'info'
@@ -34,8 +37,16 @@ interface State {
   updates: ModUpdate[]
   /** fullNames of Thunderstore packages being installed or updated. */
   tsInstalling: string[]
-  /** Latest progress line from the main process while a Thunderstore install runs. */
-  tsProgress: string | null
+  /** GitHub updates for the current profile, from ghCheckUpdates. */
+  ghUpdates: GhUpdate[]
+  /** Ids of GitHub mods being updated. */
+  ghUpdating: string[]
+  /** Number of running GitHub installs (the Add from GitHub dialog). */
+  ghInstalling: number
+  /** GitHub account of a token saved in this session; null when unknown or removed. */
+  ghLogin: string | null
+  /** Latest progress line from the main process while a Thunderstore or GitHub install runs. */
+  progress: string | null
   toasts: Toast[]
   settingsOpen: boolean
 
@@ -53,6 +64,14 @@ interface State {
   uninstallMod(mod: InstalledMod): Promise<void>
   tsInstall(pkg: { fullName: string; name: string }, version?: string): Promise<void>
   tsUpdate(updates: ModUpdate[]): Promise<void>
+  /** Throws on failure so the GitHub dialog can show the error inline. */
+  ghInstall(url: string, asset?: string): Promise<GhInstallResult>
+  ghUpdate(updates: GhUpdate[]): Promise<void>
+  ghSetUpdateMode(modId: string, mode: GhUpdateMode): Promise<void>
+  /** Saves a token, or removes it with null. Resolves false when that failed. */
+  ghSetToken(token: string | null): Promise<boolean>
+  /** Runs every Thunderstore and GitHub update for the current profile. */
+  updateAll(): Promise<void>
   checkUpdates(): Promise<void>
   handleEvent(e: HmlEvent): void
   launch(mode: LaunchMode): Promise<void>
@@ -70,19 +89,30 @@ let updatesSeq = 0
 export const useStore = create<State>()((set, get) => {
   const fail = (e: unknown): void => get().toast('error', errorMessage(e))
 
-  /** Runs a mutation with the busy flag set; errors become toasts and yield `failed`. */
-  const failed = Symbol('failed')
-  async function busy<T>(fn: () => Promise<T>): Promise<T | typeof failed> {
+  /** Runs a mutation with the busy flag set; errors propagate. */
+  async function tracked<T>(fn: () => Promise<T>): Promise<T> {
     set((s) => ({ busyCount: s.busyCount + 1, busy: true }))
     try {
       return await fn()
-    } catch (e) {
-      fail(e)
-      return failed
     } finally {
       set((s) => ({ busyCount: s.busyCount - 1, busy: s.busyCount - 1 > 0 }))
     }
   }
+
+  /** Runs a mutation with the busy flag set; errors become toasts and yield `failed`. */
+  const failed = Symbol('failed')
+  async function busy<T>(fn: () => Promise<T>): Promise<T | typeof failed> {
+    try {
+      return await tracked(fn)
+    } catch (e) {
+      fail(e)
+      return failed
+    }
+  }
+
+  /** The progress line is kept only while some install or update is running. */
+  const progressIdle = (s: State): boolean =>
+    s.tsInstalling.length === 0 && s.ghUpdating.length === 0 && s.ghInstalling === 0
 
   async function persist(patch: (s: Settings) => Settings): Promise<void> {
     // Read fresh settings so main-process changes (game path overrides) are never clobbered.
@@ -169,30 +199,44 @@ export const useStore = create<State>()((set, get) => {
     if (mods.length > 0) await get().checkUpdates()
   }
 
-  /** Runs a Thunderstore install or update with the packages marked as installing. */
-  async function tsRun(
-    fullNames: string[],
-    run: () => Promise<TsInstallResult>
-  ): Promise<TsInstallResult | typeof failed> {
-    set((s) => ({ tsInstalling: [...s.tsInstalling, ...fullNames] }))
+  /**
+   * Runs a Thunderstore install/update (fullNames in `tsInstalling`) or a GitHub update (mod ids
+   * in `ghUpdating`) with those entries marked as running.
+   */
+  async function markedRun<T>(
+    list: 'tsInstalling' | 'ghUpdating',
+    keys: string[],
+    run: () => Promise<T>
+  ): Promise<T | typeof failed> {
+    set((s) => ({ [list]: [...s[list], ...keys] }))
     try {
       return await busy(async () => {
         try {
           return await run()
         } finally {
-          // Packages installed before a failure are recorded, so always reload.
+          // Mods installed before a failure are recorded, so always reload.
           await reloadProfiles()
         }
       })
     } finally {
       set((s) => {
-        const tsInstalling = [...s.tsInstalling]
-        for (const n of fullNames) tsInstalling.splice(tsInstalling.indexOf(n), 1)
-        return { tsInstalling, tsProgress: tsInstalling.length > 0 ? s.tsProgress : null }
+        const running = [...s[list]]
+        for (const k of keys) running.splice(running.indexOf(k), 1)
+        const next = { ...s, [list]: running }
+        return { [list]: running, progress: progressIdle(next) ? null : s.progress }
       })
       await refreshWarnings()
       await get().checkUpdates()
     }
+  }
+
+  async function onGithubUpdated(e: Extract<HmlEvent, { type: 'github-updated' }>): Promise<void> {
+    get().toast('success', ghUpdatedToast(e.mods))
+    const { currentGame, currentProfile } = get()
+    if (currentGame?.label !== e.game || currentProfile !== e.profileId) return
+    await reloadProfiles().catch(fail)
+    await refreshWarnings()
+    await get().checkUpdates()
   }
 
   return {
@@ -206,7 +250,11 @@ export const useStore = create<State>()((set, get) => {
     busy: false,
     updates: [],
     tsInstalling: [],
-    tsProgress: null,
+    ghUpdates: [],
+    ghUpdating: [],
+    ghInstalling: 0,
+    ghLogin: null,
+    progress: null,
     toasts: [],
     settingsOpen: false,
 
@@ -215,7 +263,14 @@ export const useStore = create<State>()((set, get) => {
       return initPromise
     },
     async selectGame(game) {
-      set({ currentGame: game, profiles: [], currentProfile: null, warnings: [], updates: [] })
+      set({
+        currentGame: game,
+        profiles: [],
+        currentProfile: null,
+        warnings: [],
+        updates: [],
+        ghUpdates: []
+      })
       try {
         const profiles = await loadProfilesEnsuringOne(game.label)
         if (get().currentGame?.label !== game.label) return
@@ -232,13 +287,20 @@ export const useStore = create<State>()((set, get) => {
     },
 
     leaveGame() {
-      set({ currentGame: null, profiles: [], currentProfile: null, warnings: [], updates: [] })
+      set({
+        currentGame: null,
+        profiles: [],
+        currentProfile: null,
+        warnings: [],
+        updates: [],
+        ghUpdates: []
+      })
     },
 
     async selectProfile(id) {
       const game = get().currentGame
       if (!game) return
-      set({ currentProfile: id, warnings: [], updates: [] })
+      set({ currentProfile: id, warnings: [], updates: [], ghUpdates: [] })
       try {
         await persist((s) => ({ ...s, lastProfile: { ...s.lastProfile, [game.label]: id } }))
       } catch (e) {
@@ -335,7 +397,7 @@ export const useStore = create<State>()((set, get) => {
     async tsInstall(pkg, version) {
       const { currentGame, currentProfile } = get()
       if (!currentGame || !currentProfile || get().tsInstalling.includes(pkg.fullName)) return
-      const result = await tsRun([pkg.fullName], () =>
+      const result = await markedRun('tsInstalling', [pkg.fullName], () =>
         api.tsInstall(currentGame.label, currentProfile, pkg.fullName, version)
       )
       if (result === failed) return
@@ -348,7 +410,8 @@ export const useStore = create<State>()((set, get) => {
       const { currentGame, currentProfile, tsInstalling } = get()
       const todo = updates.filter((u) => !tsInstalling.includes(u.fullName))
       if (!currentGame || !currentProfile || todo.length === 0) return
-      const result = await tsRun(
+      const result = await markedRun(
+        'tsInstalling',
         todo.map((u) => u.fullName),
         () =>
           api.tsUpdate(
@@ -369,25 +432,116 @@ export const useStore = create<State>()((set, get) => {
       get().toast(t.kind, t.message)
     },
 
+    async ghInstall(url, asset) {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) throw new Error('Pick a profile first.')
+      set((s) => ({ ghInstalling: s.ghInstalling + 1 }))
+      let result: GhInstallResult
+      try {
+        result = await tracked(async () => {
+          try {
+            return await api.ghInstall(currentGame.label, currentProfile, url, asset)
+          } finally {
+            await reloadProfiles()
+          }
+        })
+      } finally {
+        set((s) => {
+          const ghInstalling = s.ghInstalling - 1
+          return {
+            ghInstalling,
+            progress: progressIdle({ ...s, ghInstalling }) ? null : s.progress
+          }
+        })
+      }
+      if (result.kind === 'installed') {
+        get().toast('success', ghInstallToast(result.mod, result.replaced))
+        await refreshWarnings()
+        await get().checkUpdates()
+      }
+      return result
+    },
+
+    async ghUpdate(updates) {
+      const { currentGame, currentProfile, ghUpdating } = get()
+      const todo = updates.filter((u) => !ghUpdating.includes(u.modId))
+      if (!currentGame || !currentProfile || todo.length === 0) return
+      const ids = todo.map((u) => u.modId)
+      const result = await markedRun('ghUpdating', ids, () =>
+        api.ghUpdate(currentGame.label, currentProfile, ids)
+      )
+      if (result === failed) return
+      if (result.length === 0) {
+        const what = todo.length === 1 ? `${todo[0].owner}/${todo[0].repo} is` : 'GitHub mods are'
+        return get().toast('info', `${what} already up to date`)
+      }
+      const done = result.map((m) => ({
+        name: m.name,
+        tag: m.source.kind === 'github' ? m.source.tag : m.version
+      }))
+      get().toast('success', ghUpdatedToast(done))
+    },
+
+    async ghSetUpdateMode(modId, mode) {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) return
+      const ok = await busy(async () => {
+        await api.ghSetUpdateMode(currentGame.label, currentProfile, modId, mode)
+        await reloadProfiles()
+      })
+      if (ok !== failed) await get().checkUpdates()
+    },
+
+    async ghSetToken(token) {
+      const result = await busy(() => api.ghSetToken(token))
+      if (result === failed) return false
+      set({ ghLogin: token ? result.login : null })
+      get().toast(
+        'success',
+        !token
+          ? 'Removed GitHub token'
+          : result.login
+            ? `Saved GitHub token for ${result.login}`
+            : 'Saved GitHub token'
+      )
+      // A token can reveal updates for private repos or lift a rate limit.
+      await get().checkUpdates()
+      return true
+    },
+
+    async updateAll() {
+      const { updates, ghUpdates } = get()
+      await Promise.all([get().tsUpdate(updates), get().ghUpdate(ghUpdates)])
+    },
+
     async checkUpdates() {
       const { currentGame, currentProfile } = get()
       const seq = ++updatesSeq
-      if (!currentGame?.packageIndex || !currentProfile) return set({ updates: [] })
-      try {
-        const updates = await api.tsCheckUpdates(currentGame.label, currentProfile)
-        // Only the newest check for the still-selected profile may write.
+      if (!currentGame || !currentProfile) return set({ updates: [], ghUpdates: [] })
+      // Only the newest check for the still-selected profile may write.
+      const current = (): boolean => {
         const { currentGame: g, currentProfile: p } = get()
-        if (seq === updatesSeq && g?.label === currentGame.label && p === currentProfile)
-          set({ updates })
-      } catch {
-        // Update checks are background work: with Thunderstore unreachable and no cached list
-        // there is nothing to compare against, and the Online tab already reports the error.
+        return seq === updatesSeq && g?.label === currentGame.label && p === currentProfile
       }
+      if (!currentGame.packageIndex) set({ updates: [] })
+      const ts = currentGame.packageIndex
+        ? api.tsCheckUpdates(currentGame.label, currentProfile).then((updates) => {
+            if (current()) set({ updates })
+          })
+        : null
+      const gh = api.ghCheckUpdates(currentGame.label, currentProfile).then((ghUpdates) => {
+        if (current()) set({ ghUpdates })
+      })
+      // Update checks are background work. With Thunderstore unreachable and no cached list there
+      // is nothing to compare against, and the Online tab already reports the error; a failing
+      // GitHub lookup only skips that mod, and a manual update surfaces the error.
+      await Promise.all([ts?.catch(() => {}), gh.catch(() => {})])
     },
 
     handleEvent(e) {
-      if (e.type !== 'progress' || get().tsInstalling.length === 0) return
-      set({ tsProgress: progressLabel(e) })
+      if (e.type === 'github-updated') return void onGithubUpdated(e)
+      if (progressIdle(get())) return
+      set({ progress: progressLabel(e) })
     },
 
     async launch(mode) {

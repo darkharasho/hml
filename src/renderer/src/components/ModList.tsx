@@ -1,11 +1,13 @@
 import { useRef, useState, type DragEvent } from 'react'
-import type { InstalledMod, ModSource, ModUpdate } from '../../../shared/types'
-import { pathForFile } from '../api'
+import type { GhUpdate, InstalledMod, ModSource, ModUpdate } from '../../../shared/types'
+import { api, errorMessage, pathForFile } from '../api'
+import { ghSubline, githubRepoUrl, UPDATE_MODES, updateModeLabel } from '../ghView'
 import { useCurrentProfile, useStore } from '../store'
 import { UNSUPPORTED_LOADER } from '../tsView'
 import { Browse } from './Browse'
+import { GithubDialog } from './GithubDialog'
 import { ProgressLine } from './PackageDetail'
-import { Button, ConfirmDialog, Icon, Menu } from './ui'
+import { Button, ConfirmDialog, Icon, Menu, type MenuItem } from './ui'
 
 const SOURCE_BADGE: Record<ModSource['kind'], { label: string; className: string }> = {
   thunderstore: { label: 'Thunderstore', className: 'text-[#79b8ff] bg-[#79b8ff]/10' },
@@ -24,8 +26,10 @@ export function ModList(): React.JSX.Element | null {
   const openProfileFolder = useStore((s) => s.openProfileFolder)
   const game = useStore((s) => s.currentGame)
   const updates = useStore((s) => s.updates)
-  const tsUpdate = useStore((s) => s.tsUpdate)
-  const updatingAny = useStore((s) => s.tsInstalling.length > 0)
+  const ghUpdates = useStore((s) => s.ghUpdates)
+  const updateAll = useStore((s) => s.updateAll)
+  const updatingAny = useStore((s) => s.tsInstalling.length > 0 || s.ghUpdating.length > 0)
+  const [githubOpen, setGithubOpen] = useState(false)
   const [selectedTab, setTab] = useState<'installed' | 'online'>('installed')
   // Browse mounts on first visit and then stays mounted, so search and filters survive tab switches.
   const [onlineOpened, setOnlineOpened] = useState(false)
@@ -38,6 +42,9 @@ export function ModList(): React.JSX.Element | null {
   const hasListing = !!game.packageIndex
   const tab = hasListing ? selectedTab : 'installed'
   const updateById = new Map(updates.map((u) => [u.modId, u]))
+  const ghUpdateById = new Map(ghUpdates.map((u) => [u.modId, u]))
+  const updateCount = updates.length + ghUpdates.length
+  const openGithub = (): void => setGithubOpen(true)
   const mods = [...profile.mods].sort((a, b) => a.name.localeCompare(b.name))
   const enabledCount = mods.filter((m) => m.enabled).length
 
@@ -98,6 +105,14 @@ export function ModList(): React.JSX.Element | null {
                 <Icon name="upload" />
                 Install from file
               </Button>
+              <Button
+                disabled={busy || !game.supported}
+                title={game.supported ? undefined : UNSUPPORTED_LOADER}
+                onClick={openGithub}
+              >
+                <Icon name="github" />
+                Add from GitHub
+              </Button>
             </>
           )}
         </div>
@@ -109,32 +124,43 @@ export function ModList(): React.JSX.Element | null {
         </div>
       )}
       {tab === 'online' ? null : mods.length === 0 ? (
-        <EmptyState onPick={() => void installFromFile()} />
+        <EmptyState
+          onPick={() => void installFromFile()}
+          onGithub={game.supported ? openGithub : undefined}
+        />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-3">
           <div className="flex min-h-9 items-center justify-between gap-3 px-2 pb-2">
             <p className="text-xs text-muted">
               {enabledCount} of {mods.length} enabled. Drop .zip files anywhere here to install.
             </p>
-            {updates.length > 0 && (
+            {updateCount > 0 && (
               <Button
                 variant="primary"
                 disabled={!game.supported || updatingAny}
                 title={game.supported ? undefined : UNSUPPORTED_LOADER}
-                onClick={() => void tsUpdate(updates)}
+                onClick={() => void updateAll()}
               >
                 <Icon name="download" />
-                Update all ({updates.length})
+                Update all ({updateCount})
               </Button>
             )}
           </div>
           <ul className="flex flex-col">
             {mods.map((m) => (
-              <ModRow key={m.id} mod={m} update={updateById.get(m.id)} supported={game.supported} />
+              <ModRow
+                key={m.id}
+                mod={m}
+                update={updateById.get(m.id)}
+                ghUpdate={ghUpdateById.get(m.id)}
+                supported={game.supported}
+              />
             ))}
           </ul>
         </div>
       )}
+
+      {githubOpen && <GithubDialog onClose={() => setGithubOpen(false)} />}
 
       {dragging && (
         <div className="pointer-events-none absolute inset-3 grid place-items-center rounded-xl border-2 border-dashed border-ember bg-ink/85">
@@ -176,21 +202,56 @@ function TabButton({
 function ModRow({
   mod,
   update,
+  ghUpdate,
   supported
 }: {
   mod: InstalledMod
   update?: ModUpdate
+  ghUpdate?: GhUpdate
   supported: boolean
 }): React.JSX.Element {
   const setModEnabled = useStore((s) => s.setModEnabled)
   const uninstallMod = useStore((s) => s.uninstallMod)
   const tsUpdate = useStore((s) => s.tsUpdate)
-  const updating = useStore(
-    (s) => mod.source.kind === 'thunderstore' && s.tsInstalling.includes(mod.source.fullName)
+  const runGhUpdate = useStore((s) => s.ghUpdate)
+  const setUpdateMode = useStore((s) => s.ghSetUpdateMode)
+  const toast = useStore((s) => s.toast)
+  const updating = useStore((s) =>
+    mod.source.kind === 'thunderstore'
+      ? s.tsInstalling.includes(mod.source.fullName)
+      : s.ghUpdating.includes(mod.id)
   )
   const [confirming, setConfirming] = useState(false)
   const badge = SOURCE_BADGE[mod.source.kind]
   const canToggle = mod.disableable.length > 0
+  const source = mod.source
+  const latest = update?.latest ?? ghUpdate?.latest
+  const runUpdate = (): void =>
+    void (update ? tsUpdate([update]) : ghUpdate && runGhUpdate([ghUpdate]))
+
+  const uninstall: MenuItem = {
+    label: 'Uninstall…',
+    danger: true,
+    onSelect: () => setConfirming(true)
+  }
+  let menu: MenuItem[] = [uninstall]
+  if (source.kind === 'github') {
+    const mode = mod.github?.updateMode ?? 'auto'
+    menu = [
+      {
+        label: 'Open on GitHub',
+        onSelect: () =>
+          void api.openExternal(githubRepoUrl(source)).catch((e) => toast('error', errorMessage(e)))
+      },
+      ...UPDATE_MODES.map((m, i): MenuItem => ({
+        label: updateModeLabel(m),
+        checked: m === mode,
+        divider: i === 0,
+        onSelect: () => void (m !== mode && setUpdateMode(mod.id, m))
+      })),
+      { ...uninstall, divider: true }
+    ]
+  }
 
   return (
     <li className="group flex items-center gap-4 rounded-lg px-2 py-2.5 hover:bg-panel">
@@ -208,29 +269,30 @@ function ModRow({
         </div>
         {updating ? (
           <ProgressLine className="mt-0.5" />
+        ) : source.kind === 'local' ? (
+          <p className="truncate text-xs text-muted">{source.fileName}</p>
         ) : (
-          mod.source.kind === 'local' && (
-            <p className="truncate text-xs text-muted">{mod.source.fileName}</p>
+          source.kind === 'github' && (
+            <p className="truncate text-xs text-muted">
+              {ghSubline(source, mod.github?.updateMode ?? 'auto')}
+            </p>
           )
         )}
       </div>
-      {update && (
+      {latest && (
         <Button
           className="h-7 px-2.5 text-xs"
           disabled={!supported || updating}
           title={supported ? undefined : UNSUPPORTED_LOADER}
-          onClick={() => void tsUpdate([update])}
+          onClick={runUpdate}
         >
-          {updating ? 'Updating…' : `Update to ${update.latest}`}
+          {updating ? 'Updating…' : `Update to ${latest}`}
         </Button>
       )}
       <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${badge.className}`}>
         {badge.label}
       </span>
-      <Menu
-        label={`Actions for ${mod.name}`}
-        items={[{ label: 'Uninstall…', danger: true, onSelect: () => setConfirming(true) }]}
-      />
+      <Menu label={`Actions for ${mod.name}`} items={menu} />
       {confirming && (
         <ConfirmDialog
           title={`Uninstall ${mod.name}?`}
@@ -279,19 +341,34 @@ function Toggle({
   )
 }
 
-function EmptyState({ onPick }: { onPick(): void }): React.JSX.Element {
+function EmptyState({
+  onPick,
+  onGithub
+}: {
+  onPick(): void
+  /** Omitted when the game's loader isn't supported. */
+  onGithub?: () => void
+}): React.JSX.Element {
   return (
     <div className="grid flex-1 place-items-center p-8">
       <div className="max-w-sm rounded-xl border border-dashed border-line px-8 py-10 text-center">
         <Icon name="upload" className="mx-auto size-7 text-muted" />
         <p className="mt-3 font-semibold">No mods in this profile yet</p>
         <p className="mt-1 text-sm text-muted">
-          Drag mod .zip files here, or pick them from disk. Start with BepInExPack if the game needs
-          it.
+          Drag mod .zip files here, pick them from disk, or add a mod from its GitHub repository.
+          Start with BepInExPack if the game needs it.
         </p>
-        <Button variant="primary" className="mt-5" onClick={onPick}>
-          Install from file
-        </Button>
+        <div className="mt-5 flex justify-center gap-2">
+          <Button variant="primary" onClick={onPick}>
+            Install from file
+          </Button>
+          {onGithub && (
+            <Button onClick={onGithub}>
+              <Icon name="github" />
+              Add from GitHub
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )

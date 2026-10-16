@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 
 type Variant = 'primary' | 'ghost' | 'quiet' | 'danger'
 
@@ -127,11 +127,17 @@ const ICONS = {
     'M2 10h4v11H2V10Zm6 11V9.6l4.6-6.9a1.5 1.5 0 0 1 2.7 1.1L14.4 9H20a2 2 0 0 1 2 2.3l-1.3 8A2 2 0 0 1 18.7 21H8Z',
   external:
     'M14 3h7v7h-2V6.4l-8.3 8.3-1.4-1.4L17.6 5H14V3ZM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z',
+  check: 'm9.5 16.2-4.2-4.2-1.4 1.4 5.6 5.6 11.4-11.4-1.4-1.4-10 10Z',
+  github:
+    'M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.22.48-2.69-1.07-2.69-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.77-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z',
   refresh:
     'M12 4a8 8 0 0 1 7.4 5H17v2h6V5h-2v2.3A10 10 0 0 0 2 12h2a8 8 0 0 1 8-8Zm8 8a8 8 0 0 1-15.4 3H7v-2H1v6h2v-2.3A10 10 0 0 0 22 12h-2Z'
 } as const
 
 export type IconName = keyof typeof ICONS
+
+/** Icons drawn on a grid other than the default 24×24. */
+const VIEWBOX: Partial<Record<IconName, string>> = { github: '0 0 16 16' }
 
 export function Icon({
   name,
@@ -141,10 +147,25 @@ export function Icon({
   className?: string
 }): React.JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+    <svg
+      viewBox={VIEWBOX[name] ?? '0 0 24 24'}
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
       <path fillRule="evenodd" d={ICONS[name]} />
     </svg>
   )
+}
+
+export interface MenuItem {
+  label: string
+  onSelect(): void
+  danger?: boolean
+  /** Set (true or false) to make this a radio-style item; true shows a check mark. */
+  checked?: boolean
+  /** Draws a divider above the item to start a new group. */
+  divider?: boolean
 }
 
 /** A small popover menu anchored to a trigger; closes on outside click or Escape. */
@@ -154,9 +175,10 @@ export function Menu({
   className = ''
 }: {
   label: string
-  items: { label: string; onSelect(): void; danger?: boolean }[]
+  items: MenuItem[]
   className?: string
 }): React.JSX.Element {
+  const hasChecks = items.some((i) => i.checked !== undefined)
   const ref = useRef<HTMLDetailsElement>(null)
   useEffect(() => {
     const close = (e: Event): void => {
@@ -183,21 +205,31 @@ export function Menu({
       </summary>
       <div
         role="menu"
-        className="absolute right-0 z-20 mt-1 min-w-40 overflow-hidden rounded-lg border border-line bg-raised py-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)]"
+        className="absolute right-0 z-20 mt-1 min-w-40 overflow-hidden whitespace-nowrap rounded-lg border border-line bg-raised py-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)]"
       >
         {items.map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              if (ref.current) ref.current.open = false
-              item.onSelect()
-            }}
-            className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-line/60 ${item.danger ? 'text-danger' : 'text-fg'}`}
-          >
-            {item.label}
-          </button>
+          <Fragment key={item.label}>
+            {item.divider && <div role="separator" className="my-1 h-px bg-line" />}
+            <button
+              type="button"
+              role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+              aria-checked={item.checked}
+              onClick={() => {
+                if (ref.current) ref.current.open = false
+                item.onSelect()
+              }}
+              className={`flex w-full items-center gap-2 py-1.5 pr-4 text-left text-sm hover:bg-line/60 ${
+                hasChecks ? 'pl-2' : 'pl-3'
+              } ${item.danger ? 'text-danger' : 'text-fg'}`}
+            >
+              {hasChecks && (
+                <span className="grid size-4 shrink-0 place-items-center text-ember">
+                  {item.checked && <Icon name="check" className="size-3.5" />}
+                </span>
+              )}
+              {item.label}
+            </button>
+          </Fragment>
         ))}
       </div>
     </details>

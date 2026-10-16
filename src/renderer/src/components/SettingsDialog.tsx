@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { api, errorMessage } from '../api'
 import { useStore } from '../store'
 import { Button, Modal } from './ui'
 
@@ -90,8 +91,79 @@ function SettingsForm({
             </Button>
           </Field>
         )}
+
+        <GithubTokenField />
       </div>
     </Modal>
+  )
+}
+
+function GithubTokenField(): React.JSX.Element {
+  const busy = useStore((s) => s.busy)
+  const login = useStore((s) => s.ghLogin)
+  const setToken = useStore((s) => s.ghSetToken)
+  const toast = useStore((s) => s.toast)
+  const [status, setStatus] = useState<{ set: boolean; encryptionAvailable: boolean } | null>(null)
+  const [token, setTokenText] = useState('')
+
+  useEffect(() => {
+    let live = true
+    api
+      .ghTokenStatus()
+      .then((s) => live && setStatus(s))
+      .catch((e) => toast('error', errorMessage(e)))
+    return () => {
+      live = false
+    }
+  }, [toast])
+
+  const unavailable = status?.encryptionAvailable === false
+  const hint = !status
+    ? 'Checking for a saved token…'
+    : unavailable
+      ? "Secure storage isn't available on this system, so HML can't save a GitHub token."
+      : status.set && login
+        ? `Signed in as ${login}`
+        : status.set
+          ? 'A token is saved.'
+          : 'No token saved. Without one, GitHub allows 60 update checks per hour.'
+
+  async function save(): Promise<void> {
+    if (await setToken(token.trim())) {
+      setTokenText('')
+      setStatus((s) => s && { ...s, set: true })
+    }
+  }
+
+  async function remove(): Promise<void> {
+    if (await setToken(null)) setStatus((s) => s && { ...s, set: false })
+  }
+
+  return (
+    <Field
+      label="GitHub token"
+      hint={hint}
+      type="password"
+      value={token}
+      onChange={setTokenText}
+      placeholder={status?.set ? 'Paste a new token to replace it' : 'Personal access token'}
+      disabled={!status || unavailable}
+    >
+      <Button
+        variant={token.trim() ? 'primary' : 'ghost'}
+        disabled={busy || unavailable || !token.trim()}
+        onClick={() => void save()}
+      >
+        Save token
+      </Button>
+      <Button
+        variant="quiet"
+        disabled={busy || unavailable || !status?.set}
+        onClick={() => void remove()}
+      >
+        Remove
+      </Button>
+    </Field>
   )
 }
 
@@ -101,6 +173,8 @@ function Field({
   value,
   onChange,
   placeholder,
+  type = 'text',
+  disabled,
   children
 }: {
   label: string
@@ -108,6 +182,8 @@ function Field({
   value: string
   onChange(v: string): void
   placeholder: string
+  type?: 'text' | 'password'
+  disabled?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
   return (
@@ -115,11 +191,14 @@ function Field({
       <span className="text-sm font-medium text-fg">{label}</span>
       <div className="mt-1.5 flex gap-2">
         <input
+          type={type}
+          disabled={disabled}
+          autoComplete="off"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           spellCheck={false}
-          className="h-9 min-w-0 flex-1 rounded-md border border-line bg-ink px-3 text-sm text-fg placeholder:text-muted focus:border-ember/70 focus:outline-none"
+          className="h-9 min-w-0 flex-1 rounded-md border border-line bg-ink px-3 text-sm text-fg placeholder:text-muted focus:border-ember/70 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
         />
         {children}
       </div>

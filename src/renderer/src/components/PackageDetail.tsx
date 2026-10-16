@@ -47,7 +47,7 @@ export function PackageIcon({
 
 /** The main-process progress line, shown while this package is installing. */
 export function ProgressLine({ className = '' }: { className?: string }): React.JSX.Element {
-  const progress = useStore((s) => s.tsProgress)
+  const progress = useStore((s) => s.progress)
   return (
     <p role="status" className={`flex min-w-0 items-center gap-2 text-xs text-ember ${className}`}>
       <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-ember" />
