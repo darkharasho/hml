@@ -772,26 +772,46 @@ export const useStore = create<State>()((set, get) => {
         const { currentGame: g, currentProfile: p } = get()
         return seq === updatesSeq && g?.label === currentGame.label && p === currentProfile
       }
+      // A failed check keeps the last list, minus mods that were uninstalled since.
+      const pruneOnFail = (e: unknown, key: 'updates' | 'ghUpdates' | 'nxUpdates'): never => {
+        if (current()) {
+          const installed = get().profiles.find((p) => p.id === currentProfile)?.mods ?? []
+          const still = (u: { modId: string }): boolean => installed.some((m) => m.id === u.modId)
+          if (key === 'updates') set((s) => ({ updates: s.updates.filter(still) }))
+          else if (key === 'ghUpdates') set((s) => ({ ghUpdates: s.ghUpdates.filter(still) }))
+          else set((s) => ({ nxUpdates: s.nxUpdates.filter(still) }))
+        }
+        throw e
+      }
       if (!currentGame.packageIndex) set({ updates: [] })
       const ts = currentGame.packageIndex
-        ? api.tsCheckUpdates(currentGame.label, currentProfile).then((updates) => {
-            if (current()) set({ updates })
-          })
+        ? api
+            .tsCheckUpdates(currentGame.label, currentProfile)
+            .then((updates) => {
+              if (current()) set({ updates })
+            })
+            .catch((e) => pruneOnFail(e, 'updates'))
         : null
-      const gh = api.ghCheckUpdates(currentGame.label, currentProfile).then((ghUpdates) => {
-        if (current()) set({ ghUpdates })
-      })
+      const gh = api
+        .ghCheckUpdates(currentGame.label, currentProfile)
+        .then((ghUpdates) => {
+          if (current()) set({ ghUpdates })
+        })
+        .catch((e) => pruneOnFail(e, 'ghUpdates'))
       // Nexus checks need the game's domain; a game that isn't on Nexus Mods has no updates there.
       const hasNexusMods = get()
         .profiles.find((p) => p.id === currentProfile)
         ?.mods.some((m) => m.source.kind === 'nexus')
       const nx = hasNexusMods
-        ? api.nxGetDomain(currentGame.label).then(async (domain) => {
-            const nxUpdates = domain
-              ? await api.nxCheckUpdates(currentGame.label, currentProfile)
-              : []
-            if (current()) set({ nxUpdates })
-          })
+        ? api
+            .nxGetDomain(currentGame.label)
+            .then(async (domain) => {
+              const nxUpdates = domain
+                ? await api.nxCheckUpdates(currentGame.label, currentProfile)
+                : []
+              if (current()) set({ nxUpdates })
+            })
+            .catch((e) => pruneOnFail(e, 'nxUpdates'))
         : null
       if (!nx) set({ nxUpdates: [] })
       // Update checks are background work. With Thunderstore unreachable and no cached list there

@@ -2,7 +2,7 @@
 import type {} from '../../src/renderer/src/env.d'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { GameSummary } from '../../src/shared/ipc'
-import type { DeploymentStatus } from '../../src/shared/types'
+import type { DeploymentStatus, GhUpdate, ProfileManifest } from '../../src/shared/types'
 
 const api = vi.hoisted(() => ({
   getDeployment: vi.fn(),
@@ -138,5 +138,46 @@ describe('store notify-mode GitHub updates', () => {
     await settle()
     expect(api.ghCheckUpdates).not.toHaveBeenCalled()
     expect(useStore.getState().toasts).toEqual([])
+  })
+})
+
+describe('store update lists after a failed check', () => {
+  const repo = { label: 'repo', displayName: 'R.E.P.O.', loader: 'bepinex', packageIndex: null }
+  const gh = (modId: string): GhUpdate => ({
+    modId,
+    owner: 'o',
+    repo: modId,
+    current: 'v1',
+    latest: 'v2',
+    mode: 'notify'
+  })
+  const profile = { id: 'p', name: 'P', mods: [{ id: 'kept', source: { kind: 'github' } }] }
+
+  beforeEach(() => {
+    api.ghCheckUpdates.mockReset()
+    useStore.setState({
+      currentGame: repo as unknown as GameSummary,
+      currentProfile: 'p',
+      profiles: [profile] as unknown as ProfileManifest[],
+      ghUpdates: [gh('kept'), gh('gone')],
+      toasts: []
+    })
+  })
+
+  test('a rejected check drops uninstalled mods and keeps the rest', async () => {
+    api.ghCheckUpdates.mockRejectedValue(new Error('GitHub returned HTTP 500 for o/r.'))
+    await useStore.getState().checkUpdates()
+    expect(useStore.getState().ghUpdates.map((u) => u.modId)).toEqual(['kept'])
+  })
+
+  test('a rate-limit failure prunes too and still shows its info toast', async () => {
+    api.ghCheckUpdates.mockRejectedValue(
+      new Error(
+        "GitHub's rate limit was reached. Try again after 11:00, or add a GitHub token in Settings."
+      )
+    )
+    await useStore.getState().checkUpdates()
+    expect(useStore.getState().ghUpdates.map((u) => u.modId)).toEqual(['kept'])
+    expect(useStore.getState().toasts.filter((t) => t.kind === 'info')).toHaveLength(1)
   })
 })
