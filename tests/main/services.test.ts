@@ -1350,6 +1350,45 @@ describe('services', () => {
       expect((await api.tsSearch('repo', query())).stale).toBe(false)
     })
 
+    test('a failed first load is not retried within 30 s, unless refresh is forced', async () => {
+      let clock = Date.parse('2026-10-15T00:00:00Z')
+      const api = createServices({ ...deps, fetch: tsFetch, now: () => clock })
+      offline = true
+      const calls = (): number => tsFetch.mock.calls.length
+      const before = calls()
+      const first = await api.tsSearch('repo', query()).then(
+        () => null,
+        (e: Error) => e
+      )
+      expect(first).toBeInstanceOf(Error)
+      const afterFirst = calls()
+      expect(afterFirst).toBeGreaterThan(before)
+
+      clock += 10_000
+      await expect(api.tsSearch('repo', query())).rejects.toThrow(first!.message)
+      expect(calls()).toBe(afterFirst)
+
+      await api.tsRefresh('repo').catch(() => undefined)
+      expect(calls()).toBeGreaterThan(afterFirst)
+
+      offline = false
+      clock += 31_000
+      expect((await api.tsSearch('repo', query())).total).toBe(2)
+    })
+
+    test('concurrent forced refreshes share one load', async () => {
+      const calls = (): number => tsFetch.mock.calls.length
+      // Warm the disk cache, so each forced refresh below costs the same.
+      await createServices({ ...deps, fetch: tsFetch }).tsRefresh('repo')
+      const c0 = calls()
+      await createServices({ ...deps, fetch: tsFetch }).tsRefresh('repo')
+      const single = calls() - c0
+      const api = createServices({ ...deps, fetch: tsFetch })
+      const c1 = calls()
+      await Promise.all([api.tsRefresh('repo'), api.tsRefresh('repo')])
+      expect(calls() - c1).toBe(single)
+    })
+
     test('search is paged; the index stays in memory; refresh failure serves stale cache', async () => {
       const api = make()
       const a = await api.tsSearch('repo', query())

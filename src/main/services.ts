@@ -128,6 +128,8 @@ interface LoadedIndex extends TsIndex {
   loadedAt: number
 }
 interface IndexSlot {
+  /** Whether this load was forced (a user refresh), so a second forced call can share it. */
+  forced: boolean
   promise: Promise<LoadedIndex>
   /** Set once the load resolved. */
   value?: LoadedIndex
@@ -368,6 +370,8 @@ export function createServices(
 
   // In-memory index per game label, least recently used evicted beyond INDEX_LRU.
   const indexes = new Map<string, IndexSlot>()
+  // When each game's index last failed to load, so a non-forced call doesn't refetch every time.
+  const failedAt = new Map<string, { at: number; error: unknown }>()
   const touchIndex = (label: string, slot: IndexSlot): void => {
     indexes.delete(label)
     indexes.set(label, slot)
@@ -384,6 +388,7 @@ export function createServices(
       : !(now() - Date.parse(v.fetchedAt) < INDEX_MAX_AGE_MS)
   function startIndexLoad(def: GameDef, indexUrl: string, force: boolean): IndexSlot {
     const slot: IndexSlot = {
+      forced: force,
       promise: loadPackageIndex({
         paths,
         label: def.label,
@@ -429,15 +434,26 @@ export function createServices(
       })
       return refreshing
     }
+    if (force && hit?.forced && !hit.value) return hit.promise
+    const failure = failedAt.get(def.label)
+    if (!force && failure && now() - failure.at < STALE_RETRY_MS)
+      return Promise.reject(failure.error)
     const slot = startIndexLoad(def, indexUrl, force)
     // A failed load must not poison the slot: restore the previous index, if any.
-    slot.promise = slot.promise.catch((e) => {
-      if (indexes.get(def.label) === slot) {
-        indexes.delete(def.label)
-        if (hit) touchIndex(def.label, hit)
+    slot.promise = slot.promise.then(
+      (v) => {
+        failedAt.delete(def.label)
+        return v
+      },
+      (e) => {
+        failedAt.set(def.label, { at: now(), error: e })
+        if (indexes.get(def.label) === slot) {
+          indexes.delete(def.label)
+          if (hit) touchIndex(def.label, hit)
+        }
+        throw e
       }
-      throw e
-    })
+    )
     touchIndex(def.label, slot)
     return slot.promise
   }
