@@ -12,6 +12,7 @@ export interface KvLike {
 export interface Env {
   PROFILES: KvLike
   UPLOAD_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> }
+  DOWNLOAD_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> }
 }
 
 export const MAX_BYTES = 10485760
@@ -56,6 +57,16 @@ function isZip(b: Uint8Array): boolean {
   return b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04
 }
 
+const FIRST_ENTRY = 'export.json'
+
+/** True when the zip's first local file header names `export.json`, as every .hml does. */
+function startsWithExport(b: Uint8Array): boolean {
+  if (b.length < 30) return false
+  const nameLen = b[26] | (b[27] << 8)
+  if (nameLen !== FIRST_ENTRY.length || b.length < 30 + nameLen) return false
+  return new TextDecoder().decode(b.subarray(30, 30 + nameLen)) === FIRST_ENTRY
+}
+
 async function upload(req: Request, env: Env, rand?: (n: number) => Uint8Array): Promise<Response> {
   const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown'
   const { success } = await env.UPLOAD_LIMITER.limit({ key: ip })
@@ -67,6 +78,7 @@ async function upload(req: Request, env: Env, rand?: (n: number) => Uint8Array):
   const body = await readCapped(req)
   if (!body) return err(413, 'too-large')
   if (!isZip(body)) return err(400, 'not-a-zip')
+  if (!startsWithExport(body)) return err(400, 'not-an-hml')
 
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const code = newCode(rand)
@@ -80,7 +92,11 @@ async function upload(req: Request, env: Env, rand?: (n: number) => Uint8Array):
   return err(500, 'code-collision')
 }
 
-async function download(raw: string, env: Env): Promise<Response> {
+async function download(req: Request, raw: string, env: Env): Promise<Response> {
+  const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown'
+  const { success } = await env.DOWNLOAD_LIMITER.limit({ key: ip })
+  if (!success) return err(429, 'rate-limited')
+
   let decoded: string
   try {
     decoded = decodeURIComponent(raw)
@@ -94,7 +110,7 @@ async function download(raw: string, env: Env): Promise<Response> {
   return new Response(bytes, {
     headers: {
       'content-type': 'application/zip',
-      'cache-control': 'public, max-age=3600'
+      'cache-control': 'public, max-age=86400, immutable'
     }
   })
 }
@@ -111,7 +127,7 @@ export function createHandler(rand?: (n: number) => Uint8Array): {
       if (path.startsWith(`${PREFIX}/`)) {
         const raw = path.slice(PREFIX.length + 1)
         if (raw.includes('/')) return err(404, 'not-found')
-        return req.method === 'GET' ? download(raw, env) : err(405, 'method-not-allowed')
+        return req.method === 'GET' ? download(req, raw, env) : err(405, 'method-not-allowed')
       }
       return err(404, 'not-found')
     }

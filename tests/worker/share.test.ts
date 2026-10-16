@@ -1,16 +1,22 @@
+import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { CROCKFORD, newCode, normalizeCode } from '../../worker/src/code'
 import worker, { createHandler, MAX_BYTES, TTL_SECONDS, type Env } from '../../worker/src/index'
 
-function makeEnv(success = true): {
+function makeEnv(
+  success = true,
+  downloadSuccess = true
+): {
   env: Env
   store: Map<string, Uint8Array>
   ttls: Map<string, number | undefined>
   limitKeys: string[]
+  downloadKeys: string[]
 } {
   const store = new Map<string, Uint8Array>()
   const ttls = new Map<string, number | undefined>()
   const limitKeys: string[] = []
+  const downloadKeys: string[] = []
   const env: Env = {
     PROFILES: {
       async get(key) {
@@ -27,12 +33,18 @@ function makeEnv(success = true): {
         limitKeys.push(key)
         return { success }
       }
+    },
+    DOWNLOAD_LIMITER: {
+      async limit({ key }) {
+        downloadKeys.push(key)
+        return { success: downloadSuccess }
+      }
     }
   }
-  return { env, store, ttls, limitKeys }
+  return { env, store, ttls, limitKeys, downloadKeys }
 }
 
-const ZIP = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4])
+const ZIP = zipSync({ 'export.json': strToU8('{}'), 'BepInEx/config/a.cfg': strToU8('x') })
 const URL_ = 'https://x.test/v1/profiles'
 const post = (body: BodyInit, headers: Record<string, string> = {}): Request =>
   new Request(URL_, { method: 'POST', body, headers })
@@ -66,6 +78,21 @@ describe('POST /v1/profiles', () => {
     const res = await worker.fetch(post(new Uint8Array([1, 2, 3, 4, 5])), makeEnv().env)
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'not-a-zip' })
+  })
+  it('rejects a zip whose first entry is not export.json', async () => {
+    const cases = [
+      zipSync({ 'BepInEx/config/a.cfg': strToU8('x'), 'export.json': strToU8('{}') }),
+      zipSync({ 'export.jsonx': strToU8('{}') }),
+      zipSync({ 'xport.json': strToU8('{}') }),
+      new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4])
+    ]
+    for (const body of cases) {
+      const { env, store } = makeEnv()
+      const res = await worker.fetch(post(body), env)
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'not-an-hml' })
+      expect(store.size).toBe(0)
+    }
   })
   it('413 on declared content-length without reading the body', async () => {
     let pulled = false
@@ -124,9 +151,21 @@ describe('GET /v1/profiles/:code', () => {
       const res = await worker.fetch(new Request(`${URL_}/${c}`), env)
       expect(res.status).toBe(200)
       expect(res.headers.get('content-type')).toBe('application/zip')
-      expect(res.headers.get('cache-control')).toContain('max-age')
+      expect(res.headers.get('cache-control')).toBe('public, max-age=86400, immutable')
       expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual(Array.from(ZIP))
     }
+  })
+  it('429 when downloads are limited, keyed by CF-Connecting-IP', async () => {
+    const { env, store, downloadKeys, limitKeys } = makeEnv(true, false)
+    store.set('p:ABCDEFGHJK', ZIP)
+    const res = await worker.fetch(
+      new Request(`${URL_}/ABCDEFGHJK`, { headers: { 'CF-Connecting-IP': '5.6.7.8' } }),
+      env
+    )
+    expect(res.status).toBe(429)
+    expect(await res.json()).toEqual({ error: 'rate-limited' })
+    expect(downloadKeys).toEqual(['5.6.7.8'])
+    expect(limitKeys).toEqual([])
   })
   it('404 unknown, 400 bad code', async () => {
     const { env } = makeEnv()
