@@ -17,12 +17,17 @@ export async function readJson<T>(file: string): Promise<T | null> {
   }
 }
 
-export async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
+/** `pretty: false` writes compact JSON, for large caches nobody reads by hand. */
+export async function writeJsonAtomic(
+  file: string,
+  data: unknown,
+  { pretty = true }: { pretty?: boolean } = {}
+): Promise<void> {
   const dir = path.dirname(file)
   await fs.mkdir(dir, { recursive: true })
   const tmp = path.join(dir, `.${path.basename(file)}.${randomUUID()}.tmp`)
   try {
-    await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
+    await fs.writeFile(tmp, pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data), 'utf8')
     await fs.rename(tmp, file)
   } catch (e) {
     await fs.rm(tmp, { force: true })

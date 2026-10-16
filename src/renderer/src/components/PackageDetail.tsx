@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { TsPackage } from '../../../shared/types'
+import { findInstalledMod } from '../../../shared/modIdentity'
 import { api, errorMessage } from '../api'
 import { useCurrentProfile, useStore } from '../store'
 import {
@@ -55,6 +56,8 @@ export function ProgressLine({ className = '' }: { className?: string }): React.
   )
 }
 
+const NO_LOADERS: string[] = []
+
 export function PackageDetail({
   pkg,
   onClose
@@ -67,14 +70,14 @@ export function PackageDetail({
   const installing = useStore((s) => s.tsInstalling.includes(pkg.fullName))
   const tsInstall = useStore((s) => s.tsInstall)
   const toast = useStore((s) => s.toast)
+  const loaderIds = useStore((s) => s.currentGame?.loaderPackageIds) ?? NO_LOADERS
   const [version, setVersion] = useState(() => newestVersion(pkg)?.version ?? '')
   const [websiteRejected, setWebsiteRejected] = useState(false)
 
   const mods = profile?.mods ?? []
   const selected = pkg.versions.find((v) => v.version === version)
-  const installedVersion = mods.find((m) => m.id === pkg.fullName)?.version ?? null
+  const installedVersion = findInstalledMod(mods, pkg.fullName, loaderIds)?.version ?? null
   const isInstalled = installedVersion === version
-  const installedIds = new Set(mods.map((m) => m.id))
 
   async function openWebsite(): Promise<void> {
     try {
@@ -229,7 +232,7 @@ export function PackageDetail({
                 <span className="truncate text-fg">{displayName(d.name)}</span>
                 <span className="truncate text-xs">by {d.owner}</span>
                 <span className="ml-auto shrink-0 text-xs tabular-nums">
-                  {installedIds.has(d.fullName) && (
+                  {findInstalledMod(mods, d.fullName, loaderIds) && (
                     <span className="mr-2 text-teal">Installed</span>
                   )}
                   {d.version}

@@ -140,7 +140,7 @@ export async function loadPackageIndex(opts: {
     const packages = unchanged ? cached.packages : await fetchChunks(fetchFn, chunkUrls)
     const index: TsIndex = { packages, chunkUrls, fetchedAt: new Date(now()).toISOString() }
     try {
-      await writeJsonAtomic(paths.tsIndexCache(label), index)
+      await writeJsonAtomic(paths.tsIndexCache(label), index, { pretty: false })
     } catch (e) {
       console.warn(`Thunderstore index cache write failed: ${msg(e)}`)
     }

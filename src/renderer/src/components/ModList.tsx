@@ -26,7 +26,7 @@ export function ModList(): React.JSX.Element | null {
   const updates = useStore((s) => s.updates)
   const tsUpdate = useStore((s) => s.tsUpdate)
   const updatingAny = useStore((s) => s.tsInstalling.length > 0)
-  const [tab, setTab] = useState<'installed' | 'online'>('installed')
+  const [selectedTab, setTab] = useState<'installed' | 'online'>('installed')
   // Browse mounts on first visit and then stays mounted, so search and filters survive tab switches.
   const [onlineOpened, setOnlineOpened] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -34,6 +34,9 @@ export function ModList(): React.JSX.Element | null {
   const depth = useRef(0)
 
   if (!profile || !game) return null
+  // Games without a Thunderstore listing have nothing to browse, so they get no Online tab.
+  const hasListing = !!game.packageIndex
+  const tab = hasListing ? selectedTab : 'installed'
   const updateById = new Map(updates.map((u) => [u.modId, u]))
   const mods = [...profile.mods].sort((a, b) => a.name.localeCompare(b.name))
   const enabledCount = mods.filter((m) => m.enabled).length
@@ -72,15 +75,17 @@ export function ModList(): React.JSX.Element | null {
             Installed
             <span className="ml-2 text-xs font-normal text-muted tabular-nums">{mods.length}</span>
           </TabButton>
-          <TabButton
-            selected={tab === 'online'}
-            onSelect={() => {
-              setTab('online')
-              setOnlineOpened(true)
-            }}
-          >
-            Online
-          </TabButton>
+          {hasListing && (
+            <TabButton
+              selected={tab === 'online'}
+              onSelect={() => {
+                setTab('online')
+                setOnlineOpened(true)
+              }}
+            >
+              Online
+            </TabButton>
+          )}
         </div>
         <div className="flex h-11 items-center gap-2 pb-2">
           {tab === 'installed' && (
@@ -98,7 +103,7 @@ export function ModList(): React.JSX.Element | null {
         </div>
       </div>
 
-      {onlineOpened && (
+      {onlineOpened && hasListing && (
         <div className={tab === 'online' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
           <Browse key={game.label} game={game.label} />
         </div>

@@ -5,7 +5,7 @@ import { join } from 'path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { isAllowedNavigation, isSafeExternalUrl } from './security'
+import { isAllowedNavigation, parseAllowedExternalUrl } from './security'
 import { registerIpc } from './ipc'
 import { createServices } from './services'
 import { makePaths } from './store/paths'
@@ -47,7 +47,8 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    if (isSafeExternalUrl(details.url)) shell.openExternal(details.url)
+    const url = parseAllowedExternalUrl(details.url)
+    if (url) void shell.openExternal(url.href)
     return { action: 'deny' }
   })
 

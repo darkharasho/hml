@@ -1,10 +1,22 @@
-export function isSafeExternalUrl(url: string): boolean {
+/**
+ * The one policy for opening links outside the app (openExternal and window.open): https only, on
+ * Thunderstore or GitHub. Returns the parsed URL, whose normalized `href` is what gets opened.
+ */
+export function parseAllowedExternalUrl(raw: string): URL | null {
+  let u: URL
   try {
-    const { protocol } = new URL(url)
-    return protocol === 'https:' || protocol === 'http:'
+    u = new URL(raw)
   } catch {
-    return false
+    return null
   }
+  if (u.protocol !== 'https:') return null
+  const h = u.hostname
+  const ok =
+    h === 'thunderstore.io' ||
+    h.endsWith('.thunderstore.io') ||
+    h === 'github.com' ||
+    h === 'www.github.com'
+  return ok ? u : null
 }
 
 /**

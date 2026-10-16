@@ -1,15 +1,24 @@
 import { describe, test, expect } from 'vitest'
-import { isAllowedNavigation, isSafeExternalUrl } from '../../src/main/security'
+import { isAllowedNavigation, parseAllowedExternalUrl } from '../../src/main/security'
 
-describe('isSafeExternalUrl', () => {
-  test('allows http and https', () => {
-    expect(isSafeExternalUrl('https://github.com/a/b')).toBe(true)
-    expect(isSafeExternalUrl('http://example.com')).toBe(true)
-  })
-  test.each(['file:///etc/passwd', 'javascript:alert(1)', 'custom-scheme://x', 'not a url', ''])(
-    'rejects %s',
-    (u) => expect(isSafeExternalUrl(u)).toBe(false)
-  )
+describe('parseAllowedExternalUrl', () => {
+  test.each([
+    'https://thunderstore.io/c/repo/p/A/B/',
+    'https://ccdn.thunderstore.io/x.png',
+    'https://github.com/a/b',
+    'https://www.github.com/a/b'
+  ])('allows %s', (u) => expect(parseAllowedExternalUrl(u)?.href).toBe(u))
+  test.each([
+    'http://github.com/a/b',
+    'https://example.com',
+    'https://evilthunderstore.io/',
+    'https://github.com.evil.com/',
+    'file:///etc/passwd',
+    'javascript:alert(1)',
+    'custom-scheme://x',
+    'not a url',
+    ''
+  ])('rejects %s', (u) => expect(parseAllowedExternalUrl(u)).toBeNull())
 })
 
 describe('isAllowedNavigation', () => {

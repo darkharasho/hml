@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { InstalledMod, TsPackage } from '../../src/shared/types'
+import type { InstalledMod, TsInstallResult, TsPackage } from '../../src/shared/types'
 import {
   compactCount,
   displayName,
   initials,
   installState,
+  installToast,
   progressLabel,
   relativeTime,
   splitDependency
@@ -124,5 +125,61 @@ describe('initials and displayName', () => {
     expect(initials('More_Upgrades')).toBe('MU')
     expect(initials('REPOLib')).toBe('RE')
     expect(displayName('More_Upgrades')).toBe('More Upgrades')
+  })
+})
+
+describe('installState loader alias', () => {
+  const loaders = ['BepInEx-BepInExPack', 'bbepis-BepInExPack']
+  const bep = pkg('BepInEx-BepInExPack', ['5.4.2200', '5.4.2100'])
+  const local = (v: string): InstalledMod => ({
+    ...mod('BepInExPack', v),
+    source: { kind: 'local', fileName: 'BepInExPack.zip', sha256: '' }
+  })
+  it('a local loader under its alias shows as update or installed', () => {
+    expect(installState(bep, [local('5.4.2100')], loaders)).toEqual({
+      kind: 'update',
+      installed: '5.4.2100',
+      latest: '5.4.2200'
+    })
+    expect(installState(bep, [local('5.4.2200')], loaders)).toEqual({
+      kind: 'installed',
+      version: '5.4.2200'
+    })
+  })
+  it('the alias only applies to loader packages', () => {
+    expect(installState(bep, [local('5.4.2200')], [])).toEqual({ kind: 'install' })
+    const other = pkg('Owner-BepInExPack', ['1.0.0'])
+    expect(installState(other, [local('1.0.0')], loaders)).toEqual({ kind: 'install' })
+  })
+})
+
+describe('installToast', () => {
+  const r = (over: Partial<TsInstallResult> = {}): TsInstallResult => ({
+    installed: [mod('Owner-Mod', '1.0.0')],
+    skipped: [],
+    missing: [],
+    ...over
+  })
+  it('reports success', () => {
+    expect(installToast('Installed More_Upgrades', r())).toEqual({
+      kind: 'success',
+      message: 'Installed More_Upgrades'
+    })
+  })
+  it('says already installed when nothing was installed', () => {
+    expect(installToast('Installed X', r({ installed: [] }), 'X')).toEqual({
+      kind: 'info',
+      message: 'X is already installed'
+    })
+  })
+  it('mentions a replaced local copy and missing dependencies', () => {
+    expect(installToast('Installed X', r({ replaced: ['X'] }))).toEqual({
+      kind: 'success',
+      message: 'Installed X — replaced local copy'
+    })
+    expect(installToast('Installed X', r({ replaced: ['X'], missing: ['A-B-1.0.0'] }))).toEqual({
+      kind: 'info',
+      message: 'Installed X — replaced local copy — missing dependencies: A-B-1.0.0'
+    })
   })
 })

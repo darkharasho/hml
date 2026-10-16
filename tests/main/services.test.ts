@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
@@ -596,6 +596,127 @@ describe('services', () => {
       const mods = (await api.listProfiles('repo'))[0].mods
       expect(mods.find((m) => m.id === 'Own-Mod')?.version).toBe('1.1.0')
       expect(await api.tsCheckUpdates('repo', profile.id)).toEqual([])
+    })
+
+    const installLocal = async (
+      api: ReturnType<typeof createServices>,
+      profileId: string,
+      fileName: string,
+      files: Record<string, Uint8Array>
+    ): Promise<void> => {
+      const file = path.join(tmp, fileName)
+      writeFileSync(file, zipSync(files))
+      await api.installFromPaths('repo', profileId, [file])
+    }
+    const bepZip = (v: string): Uint8Array =>
+      zipSync({
+        'manifest.json': strToU8(JSON.stringify({ name: 'BepInExPack', version_number: v })),
+        'BepInExPack/winhttp.dll': strToU8('w' + v),
+        'BepInExPack/BepInEx/core/BepInEx.dll': strToU8('c' + v)
+      })
+
+    test('a Thunderstore loader install replaces the local BepInExPack record', async () => {
+      packages = [
+        rawPkg('Own', 'Mod', ['1.0.0'], ['BepInEx-BepInExPack-5.4.2200']),
+        rawPkg('BepInEx', 'BepInExPack', ['5.4.2200', '5.4.2100'])
+      ]
+      blobs.set(dl('BepInEx-BepInExPack', '5.4.2200'), bepZip('5.4.2200'))
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await installLocal(api, profile.id, 'BepInExPack.zip', {
+        'manifest.json': strToU8(
+          JSON.stringify({ name: 'BepInExPack', version_number: '5.4.2100' })
+        ),
+        'BepInExPack/winhttp.dll': strToU8('w5.4.2100'),
+        'BepInExPack/BepInEx/core/BepInEx.dll': strToU8('c5.4.2100')
+      })
+      const r = await api.tsInstall('repo', profile.id, 'Own-Mod')
+      expect(r.installed.map((m) => m.id)).toEqual(['BepInEx-BepInExPack', 'Own-Mod'])
+      expect(r.replaced).toEqual(['BepInExPack'])
+      const mods = (await api.listProfiles('repo'))[0].mods
+      const loaders = mods.filter((m) => m.name === 'BepInExPack')
+      expect(loaders.map((m) => `${m.id}@${m.version}`)).toEqual(['BepInEx-BepInExPack@5.4.2200'])
+      const dir = deps.paths.profileDir('repo', profile.id)
+      expect(readFileSync(path.join(dir, 'winhttp.dll'), 'utf8')).toBe('w5.4.2200')
+      expect(await api.tsCheckUpdates('repo', profile.id)).toEqual([])
+      await api.uninstallMod('repo', profile.id, 'BepInEx-BepInExPack')
+      expect(existsSync(path.join(dir, 'winhttp.dll'))).toBe(false)
+      expect(existsSync(path.join(dir, 'BepInEx/core/BepInEx.dll'))).toBe(false)
+    })
+
+    test('installing a package replaces a local copy with the same manifest name', async () => {
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await installLocal(api, profile.id, 'Lib.zip', {
+        'manifest.json': strToU8(JSON.stringify({ name: 'Lib', version_number: '1.0.0' })),
+        'Lib.dll': strToU8('local')
+      })
+      await installLocal(api, profile.id, 'Other.zip', {
+        'manifest.json': strToU8(JSON.stringify({ name: 'Other', version_number: '1.0.0' })),
+        'Other.dll': strToU8('o')
+      })
+      const r = await api.tsInstall('repo', profile.id, 'Own-Mod')
+      // The local Lib does not satisfy Dep-Lib-1.0.0; it is replaced by the Thunderstore copy.
+      expect(r.installed.map((m) => m.id)).toEqual(['Dep-Lib', 'Own-Mod'])
+      expect(r.skipped).toEqual([])
+      expect(r.replaced).toEqual(['Lib'])
+      const mods = (await api.listProfiles('repo'))[0].mods
+      expect(mods.map((m) => m.id).sort()).toEqual(['Dep-Lib', 'Other', 'Own-Mod'])
+      const dir = deps.paths.profileDir('repo', profile.id)
+      expect(existsSync(path.join(dir, 'BepInEx/plugins/Lib'))).toBe(false)
+    })
+
+    test('a disabled dependency that is already satisfied is enabled', async () => {
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      await api.setModEnabled('repo', profile.id, 'Dep-Lib', false)
+      await api.uninstallMod('repo', profile.id, 'Own-Mod')
+      const r = await api.tsInstall('repo', profile.id, 'Own-Mod')
+      expect(r.installed.map((m) => m.id)).toEqual(['Own-Mod'])
+      expect(r.skipped).toEqual(['Dep-Lib'])
+      expect(r.enabled).toEqual(['Dep-Lib'])
+      const mods = (await api.listProfiles('repo'))[0].mods
+      expect(mods.find((m) => m.id === 'Dep-Lib')?.enabled).toBe(true)
+    })
+
+    test('the in-memory index expires after maxAge and picks up new versions', async () => {
+      let clock = Date.parse('2026-10-15T00:00:00Z')
+      const api = createServices({ ...deps, fetch: tsFetch, now: () => clock })
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      packages = [
+        rawPkg('Own', 'Mod', ['1.1.0', '1.0.0'], ['Dep-Lib-1.0.0']),
+        rawPkg('Dep', 'Lib', ['1.0.0'])
+      ]
+      CHUNK = 'https://ts.test/chunk-2'
+      clock += 30 * 60_000
+      expect(await api.tsCheckUpdates('repo', profile.id)).toEqual([])
+      clock += 31 * 60_000
+      expect((await api.tsCheckUpdates('repo', profile.id)).map((u) => u.latest)).toEqual(['1.1.0'])
+    })
+
+    test('an expired index refresh that fails keeps serving the old index', async () => {
+      let clock = Date.parse('2026-10-15T00:00:00Z')
+      const api = createServices({ ...deps, fetch: tsFetch, now: () => clock })
+      expect((await api.tsSearch('repo', query())).total).toBe(2)
+      offline = true
+      clock += 2 * 3_600_000
+      const r = await api.tsSearch('repo', query())
+      expect(r.total).toBe(2)
+      expect(r.stale).toBe(true)
+    })
+
+    test('a stale in-memory index is retried, so the offline notice clears', async () => {
+      let clock = Date.parse('2026-10-15T00:00:00Z')
+      const api = createServices({ ...deps, fetch: tsFetch, now: () => clock })
+      await api.tsSearch('repo', query())
+      offline = true
+      expect((await api.tsRefresh('repo')).stale).toBe(true)
+      expect((await api.tsSearch('repo', query())).stale).toBe(true)
+      offline = false
+      clock += 60_000
+      expect((await api.tsSearch('repo', query())).stale).toBe(false)
     })
 
     test('search is paged; the index stays in memory; refresh failure serves stale cache', async () => {

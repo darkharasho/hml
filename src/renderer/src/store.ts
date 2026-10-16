@@ -11,7 +11,7 @@ import type {
   TsInstallResult
 } from '../../shared/types'
 import { api, errorMessage } from './api'
-import { displayName, progressLabel } from './tsView'
+import { displayName, installToast, progressLabel } from './tsView'
 
 export type ToastKind = 'error' | 'success' | 'info'
 export interface Toast {
@@ -195,10 +195,6 @@ export const useStore = create<State>()((set, get) => {
     }
   }
 
-  function missingSuffix(r: TsInstallResult): string {
-    return r.missing.length > 0 ? ` — missing dependencies: ${r.missing.join(', ')}` : ''
-  }
-
   return {
     ready: false,
     settings: null,
@@ -343,10 +339,9 @@ export const useStore = create<State>()((set, get) => {
         api.tsInstall(currentGame.label, currentProfile, pkg.fullName, version)
       )
       if (result === failed) return
-      get().toast(
-        result.missing.length > 0 ? 'info' : 'success',
-        `Installed ${displayName(pkg.name)}${missingSuffix(result)}`
-      )
+      const name = displayName(pkg.name)
+      const t = installToast(`Installed ${name}`, result, name)
+      get().toast(t.kind, t.message)
     },
 
     async tsUpdate(updates) {
@@ -370,10 +365,8 @@ export const useStore = create<State>()((set, get) => {
         todo.length === 1
           ? `${first ? displayName(first.name) : todo[0].fullName} to ${todo[0].latest}`
           : `${todo.length} mods`
-      get().toast(
-        result.missing.length > 0 ? 'info' : 'success',
-        `Updated ${what}${missingSuffix(result)}`
-      )
+      const t = installToast(`Updated ${what}`, result)
+      get().toast(t.kind, t.message)
     },
 
     async checkUpdates() {

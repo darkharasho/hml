@@ -108,6 +108,13 @@ describe('loadPackageIndex', () => {
     expect(f).toHaveBeenCalledTimes(3)
   })
 
+  it('writes the cache compact, without indentation', async () => {
+    await loadPackageIndex(base(fakeFetch(goodMap()), { now: () => 5_000 }))
+    const text = readFileSync(makePaths(tmp).tsIndexCache('repo'), 'utf8')
+    expect(text).not.toContain('\n')
+    expect(JSON.parse(text).packages).toHaveLength(6)
+  })
+
   it('does not fetch with a fresh cache', async () => {
     await loadPackageIndex(base(fakeFetch(goodMap()), { now: () => 1_000 }))
     const f = fakeFetch({})

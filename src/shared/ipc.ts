@@ -14,6 +14,8 @@ import type {
 
 export interface GameSummary extends GameDef {
   installDir: string | null
+  /** Catalog ids of this game's loader packages, e.g. "BepInEx-BepInExPack". */
+  loaderPackageIds: string[]
 }
 
 export interface HmlApi {

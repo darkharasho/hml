@@ -1,6 +1,13 @@
 // Pure display helpers for the Thunderstore views. No DOM, no store, so they unit-test in node.
-import type { HmlEvent, InstalledMod, TsPackage, TsVersion } from '../../shared/types'
+import type {
+  HmlEvent,
+  InstalledMod,
+  TsInstallResult,
+  TsPackage,
+  TsVersion
+} from '../../shared/types'
 import { compareVersions } from '../../shared/version'
+import { findInstalledMod } from '../../shared/modIdentity'
 
 export const UNSUPPORTED_LOADER = 'Mod loader not supported yet'
 
@@ -43,14 +50,37 @@ export type InstallState =
   | { kind: 'installed'; version: string }
   | { kind: 'update'; installed: string; latest: string }
 
-/** Thunderstore mods are recorded with id `Owner-Name`, which equals the package's fullName. */
-export function installState(pkg: TsPackage, mods: InstalledMod[]): InstallState {
-  const mod = mods.find((m) => m.id === pkg.fullName)
+/**
+ * Thunderstore mods are recorded with id `Owner-Name`, which equals the package's fullName. A
+ * loader package (one of `loaderPackageIds`) also matches a local install under its alias.
+ */
+export function installState(
+  pkg: TsPackage,
+  mods: InstalledMod[],
+  loaderPackageIds: readonly string[] = []
+): InstallState {
+  const mod = findInstalledMod(mods, pkg.fullName, loaderPackageIds)
   if (!mod) return { kind: 'install' }
   const latest = newestVersion(pkg)?.version
   if (latest && compareVersions(mod.version, latest) < 0)
     return { kind: 'update', installed: mod.version, latest }
   return { kind: 'installed', version: mod.version }
+}
+
+/**
+ * The toast after a Thunderstore install or update. `done` is the success line ("Installed X");
+ * with `alreadyName`, an install that installed nothing says "<alreadyName> is already installed".
+ */
+export function installToast(
+  done: string,
+  r: TsInstallResult,
+  alreadyName?: string
+): { kind: 'success' | 'info'; message: string } {
+  if (alreadyName !== undefined && r.installed.length === 0)
+    return { kind: 'info', message: `${alreadyName} is already installed` }
+  const replaced = r.replaced && r.replaced.length > 0 ? ' — replaced local copy' : ''
+  const missing = r.missing.length > 0 ? ` — missing dependencies: ${r.missing.join(', ')}` : ''
+  return { kind: missing ? 'info' : 'success', message: `${done}${replaced}${missing}` }
 }
 
 /** "Installing BepInExPack 5.4.2100 (1/3)"; null once the run is finished. */

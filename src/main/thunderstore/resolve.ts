@@ -1,5 +1,6 @@
 import type { InstalledMod, ModUpdate, TsPackage, TsVersion } from '../../shared/types'
 import { compareVersions } from '../../shared/version'
+import { loaderAlias } from '../../shared/modIdentity'
 
 export { compareVersions }
 
@@ -138,6 +139,37 @@ export function resolveInstall(
   return { plan: pass.plan, skipped: pass.skipped, missing: pass.missing }
 }
 
+/**
+ * Merges several plans into one: each package once, at the highest planned version, ordered so
+ * that every package comes after the planned packages its chosen version depends on. Otherwise
+ * the order of first appearance in the concatenated plans is kept.
+ */
+export function mergePlans(
+  plans: PlannedPackage[][],
+  index: Map<string, TsPackage>
+): PlannedPackage[] {
+  const best = new Map<string, PlannedPackage>()
+  for (const p of plans.flat()) {
+    const cur = best.get(p.fullName)
+    if (!cur || compareVersions(p.version, cur.version) > 0) best.set(p.fullName, p)
+  }
+  const out: PlannedPackage[] = []
+  const seen = new Set<string>()
+  const place = (p: PlannedPackage): void => {
+    if (seen.has(p.fullName)) return
+    seen.add(p.fullName)
+    const v = index.get(p.fullName)?.versions.find((x) => x.version === p.version)
+    for (const dep of v?.dependencies ?? []) {
+      const d = parseDependency(dep)
+      const planned = d && best.get(d.fullName)
+      if (planned) place(planned)
+    }
+    out.push(p)
+  }
+  for (const p of plans.flat()) place(best.get(p.fullName)!)
+  return out
+}
+
 export function findUpdates(mods: InstalledMod[], index: Map<string, TsPackage>): ModUpdate[] {
   const updates: ModUpdate[] = []
   for (const mod of mods) {
@@ -165,7 +197,7 @@ export function installedVersions(
     if (mod.source.kind === 'thunderstore') out.set(mod.source.fullName, mod.version)
   }
   for (const loaderId of loaderPackageIds) {
-    const short = loaderId.slice(loaderId.indexOf('-') + 1)
+    const short = loaderAlias(loaderId)
     const mod = mods.find((m) => m.id === loaderId || m.id === short)
     if (mod) out.set(loaderId, mod.version)
   }

@@ -268,7 +268,8 @@ function ResultRow({ pkg, onOpen }: { pkg: TsPackage; onOpen(): void }): React.J
   const supported = useStore((s) => s.currentGame?.supported ?? false)
   const installing = useStore((s) => s.tsInstalling.includes(pkg.fullName))
   const tsInstall = useStore((s) => s.tsInstall)
-  const state = installState(pkg, profile?.mods ?? [])
+  const loaderIds = useStore((s) => s.currentGame?.loaderPackageIds)
+  const state = installState(pkg, profile?.mods ?? [], loaderIds)
   const name = displayName(pkg.name)
 
   return (

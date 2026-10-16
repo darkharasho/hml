@@ -11,6 +11,7 @@ import type {
 import type { AppPaths } from '../store/paths'
 import { getProfile, saveProfile } from '../profiles/profiles'
 import { planInstall, UnsafeEntryError } from './planInstall'
+import { loaderAlias } from '../../shared/modIdentity'
 
 export interface ZipEntries {
   names: string[]
@@ -82,10 +83,9 @@ function findLoaderPackage(
   return catalog.modloaderPackages.find((p) => {
     if (p.loader !== game.loader) return false
     if (p.packageId === packageId) return true
-    const afterDash = p.packageId.slice(p.packageId.indexOf('-') + 1)
     return (
       manifestName !== undefined &&
-      manifestName === afterDash &&
+      manifestName === loaderAlias(p.packageId) &&
       zip.names.some((n) =>
         n.replace(/\\/g, '/').toLowerCase().startsWith(`${p.rootFolder.toLowerCase()}/`)
       )
@@ -135,7 +135,16 @@ export async function installZip(
   profileId: string,
   data: Uint8Array,
   source: ModSource,
-  opts: { packageId?: string; name?: string; version?: string } = {}
+  opts: {
+    packageId?: string
+    name?: string
+    version?: string
+    /**
+     * Other mod ids this install supersedes (e.g. a local copy of the same package). They are
+     * treated as the previous version: their files are replaced and their records dropped.
+     */
+    replaces?: string[]
+  } = {}
 ): Promise<InstalledMod> {
   const profile = await getProfile(paths, game.label, profileId)
   const root = path.resolve(paths.profileDir(game.label, profileId))
@@ -161,24 +170,30 @@ export async function installZip(
   }
 
   // Everything validated; only now touch the profile.
-  const previous = profile.mods.find((m) => m.id === packageId)
+  // The previous version is the mod under this id, any mod this install replaces, and for a
+  // loader package a local install recorded under the loader's alias (its manifest name).
+  const replaced = new Set([packageId, ...(opts.replaces ?? [])])
+  if (loaderPackage) replaced.add(loaderAlias(loaderPackage.packageId))
+  const previous = profile.mods.filter((m) => replaced.has(m.id))
   let keptOwned: string[] = []
-  if (previous) {
+  if (previous.length > 0) {
     // Upgrade: keep user config (non-disableable files) of regular mods; loader
     // packages are all non-disableable and must be replaced wholesale.
-    const keep = loaderPackage ? new Set<string>() : new Set(previous.files)
-    for (const d of previous.disableable) keep.delete(d)
+    const keep = new Set<string>()
+    if (!loaderPackage) for (const p of previous) for (const f of p.files) keep.add(f)
+    for (const p of previous) for (const d of p.disableable) keep.delete(d)
     keptOwned = [...keep]
     await removeFiles(
       root,
-      previous.files.filter((f) => !keep.has(f))
+      previous.flatMap((p) => p.files).filter((f) => !keep.has(f))
     )
     await saveProfile(paths, {
       ...profile,
-      mods: profile.mods.filter((m) => m.id !== packageId)
+      mods: profile.mods.filter((m) => !replaced.has(m.id))
     })
   }
-  const enabled = previous ? previous.enabled : true
+  const prior = previous.find((m) => m.id === packageId) ?? previous[0]
+  const enabled = prior ? prior.enabled : true
 
   const written: string[] = []
   const files: string[] = []
@@ -214,7 +229,7 @@ export async function installZip(
     const current = await getProfile(paths, game.label, profileId)
     await saveProfile(paths, {
       ...current,
-      mods: [...current.mods.filter((m) => m.id !== packageId), mod]
+      mods: [...current.mods.filter((m) => !replaced.has(m.id)), mod]
     })
     return mod
   } catch (e) {

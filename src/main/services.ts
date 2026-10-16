@@ -44,13 +44,15 @@ import {
 import { loadPackageIndex, type TsIndex } from './thunderstore/packageIndex'
 import { allCategories, searchPackages } from './thunderstore/search'
 import {
-  compareVersions,
   findUpdates,
   installedVersions,
+  mergePlans,
   resolveInstall,
   type PlannedPackage
 } from './thunderstore/resolve'
 import { downloadPackage } from './thunderstore/download'
+import { parseAllowedExternalUrl } from './security'
+import { findInstalledMod } from '../shared/modIdentity'
 
 export interface DialogPort {
   pickFiles(opts: {
@@ -79,14 +81,28 @@ export interface ServiceDeps {
   execFile: ExecFilePort
   /** Progress events for long operations (sent to the renderer as hml:event). */
   emit(e: HmlEvent): void
+  /** Clock for index freshness; defaults to Date.now. */
+  now?: () => number
 }
 
 interface LoadedIndex extends TsIndex {
   stale: boolean
   byName: Map<string, TsPackage>
   categories: string[]
+  /** When this process loaded it (ms), for retrying a stale index. */
+  loadedAt: number
+}
+interface IndexSlot {
+  promise: Promise<LoadedIndex>
+  /** Set once the load resolved. */
+  value?: LoadedIndex
+  /** An in-flight background refresh of an expired or stale value. */
+  refreshing?: Promise<LoadedIndex>
 }
 const INDEX_LRU = 2
+const INDEX_MAX_AGE_MS = 3_600_000
+/** A stale (offline) index is retried at most this often. */
+const STALE_RETRY_MS = 30_000
 
 const DEFAULT_PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll'
 
@@ -100,28 +116,12 @@ async function assertZipFile(file: string): Promise<void> {
   if (!stat?.isFile()) throw new Error(`${name} was not found or is not a file.`)
 }
 
-function parseAllowedExternalUrl(raw: string): URL | null {
-  let u: URL
-  try {
-    u = new URL(raw)
-  } catch {
-    return null
-  }
-  if (u.protocol !== 'https:') return null
-  const h = u.hostname
-  const ok =
-    h === 'thunderstore.io' ||
-    h.endsWith('.thunderstore.io') ||
-    h === 'github.com' ||
-    h === 'www.github.com'
-  return ok ? u : null
-}
-
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 export function createServices(deps: ServiceDeps): HmlApi {
   const { paths } = deps
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
+  const now = deps.now ?? Date.now
 
   let catalogPromise: Promise<Catalog> | null = null
   const getCatalog = (): Promise<Catalog> => {
@@ -211,10 +211,10 @@ export function createServices(deps: ServiceDeps): HmlApi {
   }
 
   // In-memory index per game label, least recently used evicted beyond INDEX_LRU.
-  const indexes = new Map<string, Promise<LoadedIndex>>()
-  const touchIndex = (label: string, p: Promise<LoadedIndex>): void => {
+  const indexes = new Map<string, IndexSlot>()
+  const touchIndex = (label: string, slot: IndexSlot): void => {
     indexes.delete(label)
-    indexes.set(label, p)
+    indexes.set(label, slot)
     while (indexes.size > INDEX_LRU) indexes.delete(indexes.keys().next().value as string)
   }
   function requireListing(def: GameDef): string {
@@ -222,33 +222,68 @@ export function createServices(deps: ServiceDeps): HmlApi {
       throw new Error(`${def.displayName} has no Thunderstore listing.`)
     return def.packageIndex
   }
+  const expired = (v: LoadedIndex): boolean =>
+    v.stale
+      ? now() - v.loadedAt >= STALE_RETRY_MS
+      : !(now() - Date.parse(v.fetchedAt) < INDEX_MAX_AGE_MS)
+  function startIndexLoad(def: GameDef, indexUrl: string, force: boolean): IndexSlot {
+    const slot: IndexSlot = {
+      promise: loadPackageIndex({
+        paths,
+        label: def.label,
+        indexUrl,
+        fetch: deps.fetch,
+        now,
+        maxAgeMs: INDEX_MAX_AGE_MS,
+        force
+      }).then((idx) => {
+        const value: LoadedIndex = {
+          ...idx,
+          byName: new Map(idx.packages.map((pkg) => [pkg.fullName, pkg])),
+          categories: allCategories(idx.packages),
+          loadedAt: now()
+        }
+        slot.value = value
+        return value
+      })
+    }
+    return slot
+  }
   function loadIndex(def: GameDef, force: boolean): Promise<LoadedIndex> {
     const indexUrl = requireListing(def)
     const hit = indexes.get(def.label)
     if (hit && !force) {
       touchIndex(def.label, hit)
-      return hit
+      if (hit.refreshing) return hit.refreshing
+      if (!hit.value || !expired(hit.value)) return hit.promise
+      // Expired or stale: refresh, keeping the old index in the slot until the refresh settles,
+      // and fall back to it if the refresh fails.
+      const old = hit.value
+      const next = startIndexLoad(def, indexUrl, false)
+      const refreshing = next.promise.then(
+        (v) => {
+          if (indexes.get(def.label) === hit) touchIndex(def.label, next)
+          return v
+        },
+        () => old
+      )
+      hit.refreshing = refreshing
+      void refreshing.then(() => {
+        if (hit.refreshing === refreshing) hit.refreshing = undefined
+      })
+      return refreshing
     }
-    const p = loadPackageIndex({
-      paths,
-      label: def.label,
-      indexUrl,
-      fetch: deps.fetch,
-      force
-    }).then((idx) => ({
-      ...idx,
-      byName: new Map(idx.packages.map((pkg) => [pkg.fullName, pkg])),
-      categories: allCategories(idx.packages)
-    }))
-    const guarded = p.catch((e) => {
-      if (indexes.get(def.label) === guarded) {
+    const slot = startIndexLoad(def, indexUrl, force)
+    // A failed load must not poison the slot: restore the previous index, if any.
+    slot.promise = slot.promise.catch((e) => {
+      if (indexes.get(def.label) === slot) {
         indexes.delete(def.label)
         if (hit) touchIndex(def.label, hit)
       }
       throw e
     })
-    touchIndex(def.label, guarded)
-    return guarded
+    touchIndex(def.label, slot)
+    return slot.promise
   }
   function requireInstallable(def: GameDef): void {
     requireListing(def)
@@ -257,14 +292,18 @@ export function createServices(deps: ServiceDeps): HmlApi {
     }
   }
 
-  /** Installs a resolved plan in order (dependencies first), inside the profile's queue. */
+  /**
+   * Installs a resolved plan in order (dependencies first), inside the profile's queue. A local
+   * mod whose id is a planned package's manifest name is replaced by the Thunderstore copy.
+   */
   async function installPlan(
     def: GameDef,
     profileId: string,
     plan: PlannedPackage[]
-  ): Promise<InstalledMod[]> {
+  ): Promise<{ installed: InstalledMod[]; replaced: string[] }> {
     const catalog = await getCatalog()
     const installed: InstalledMod[] = []
+    const replaced: string[] = []
     const total = plan.length
     for (const [i, pkg] of plan.entries()) {
       deps.emit({
@@ -281,6 +320,8 @@ export function createServices(deps: ServiceDeps): HmlApi {
           downloadsDir: paths.downloads,
           fetch: deps.fetch
         })
+        const { mods } = await getProfile(paths, def.label, profileId)
+        const local = mods.some((m) => m.source.kind === 'local' && m.id === pkg.name)
         installed.push(
           await installZip(
             paths,
@@ -289,15 +330,40 @@ export function createServices(deps: ServiceDeps): HmlApi {
             profileId,
             data,
             { kind: 'thunderstore', fullName: pkg.fullName },
-            { packageId: pkg.fullName, name: pkg.name, version: pkg.version }
+            {
+              packageId: pkg.fullName,
+              name: pkg.name,
+              version: pkg.version,
+              replaces: local ? [pkg.name] : []
+            }
           )
         )
+        if (local) replaced.push(pkg.name)
       } catch (e) {
         throw new Error(`${pkg.fullName}: ${errMsg(e)}`, { cause: e })
       }
     }
     deps.emit({ type: 'progress', message: 'Done', done: total, total })
-    return installed
+    return { installed, replaced }
+  }
+
+  /** Turns on installed-but-disabled mods that satisfied dependencies; returns their fullNames. */
+  async function enableSatisfied(
+    def: GameDef,
+    profileId: string,
+    fullNames: string[],
+    loaders: string[]
+  ): Promise<string[]> {
+    const { mods } = await getProfile(paths, def.label, profileId)
+    const enabled: string[] = []
+    for (const fullName of fullNames) {
+      const mod = findInstalledMod(mods, fullName, loaders)
+      if (mod && !mod.enabled) {
+        await setModEnabled(paths, def, profileId, mod.id, true)
+        enabled.push(fullName)
+      }
+    }
+    return enabled
   }
 
   async function loaderIds(def: GameDef): Promise<string[]> {
@@ -342,7 +408,10 @@ export function createServices(deps: ServiceDeps): HmlApi {
           { fullName, version },
           installedVersions(profile.mods, loaders)
         )
-        return { installed: await installPlan(def, profileId, plan), skipped, missing }
+        const satisfied = skipped.filter((s) => s !== fullName)
+        const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
+        const { installed, replaced } = await installPlan(def, profileId, plan)
+        return { installed, skipped, missing, replaced, enabled }
       })
     },
 
@@ -364,25 +433,21 @@ export function createServices(deps: ServiceDeps): HmlApi {
         const wanted = new Set(modIds)
         const targets = findUpdates(profile.mods, idx.byName).filter((u) => wanted.has(u.modId))
         const installedNow = installedVersions(profile.mods, loaders)
-        const plan: PlannedPackage[] = []
+        const plans: PlannedPackage[][] = []
         const skipped = new Set<string>()
         const missing = new Set<string>()
         for (const t of targets) {
           const r = resolveInstall(idx.byName, { fullName: t.fullName }, installedNow)
-          for (const p of r.plan) {
-            const at = plan.findIndex((q) => q.fullName === p.fullName)
-            if (at === -1) plan.push(p)
-            else if (compareVersions(p.version, plan[at].version) > 0) plan[at] = p
-          }
+          plans.push(r.plan)
           r.skipped.forEach((s) => skipped.add(s))
           r.missing.forEach((m) => missing.add(m))
         }
+        const plan = mergePlans(plans, idx.byName)
         const planned = new Set(plan.map((p) => p.fullName))
-        return {
-          installed: await installPlan(def, profileId, plan),
-          skipped: [...skipped].filter((s) => !planned.has(s)),
-          missing: [...missing]
-        }
+        const satisfied = [...skipped].filter((s) => !planned.has(s))
+        const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
+        const { installed, replaced } = await installPlan(def, profileId, plan)
+        return { installed, skipped: satisfied, missing: [...missing], replaced, enabled }
       })
     }
   }
@@ -397,6 +462,9 @@ export function createServices(deps: ServiceDeps): HmlApi {
       const summaries = await Promise.all(
         ranked.map(async (g): Promise<GameSummary> => ({
           ...g,
+          loaderPackageIds: catalog.modloaderPackages
+            .filter((m) => m.loader === g.loader)
+            .map((m) => m.packageId),
           installDir: await resolveGameDir(g, settings, steamRoot).catch(() => null)
         }))
       )

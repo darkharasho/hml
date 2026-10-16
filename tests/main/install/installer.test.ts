@@ -167,6 +167,58 @@ describe('installer', () => {
     expect(existsSync(path.join(profDir, 'winhttp.dll'))).toBe(true)
   })
 
+  test('a Thunderstore loader replaces the local loader recorded under its alias', async () => {
+    const pack = (v: string): Uint8Array =>
+      zipSync({
+        'manifest.json': manifest('BepInExPack', v),
+        'BepInExPack/winhttp.dll': strToU8('w' + v),
+        'BepInExPack/BepInEx/core/BepInEx.dll': strToU8('c' + v),
+        ...(v === '5.4.2100' ? { 'BepInExPack/old-only.txt': strToU8('o') } : {})
+      })
+    await installZip(paths, game, catalog, pid, pack('5.4.2100'), {
+      kind: 'local',
+      fileName: 'x.zip',
+      sha256: ''
+    })
+    await setModEnabled(paths, game, pid, 'BepInExPack', false)
+    const mod = await installZip(
+      paths,
+      game,
+      catalog,
+      pid,
+      pack('5.4.2200'),
+      { kind: 'thunderstore', fullName: 'BepInEx-BepInExPack' },
+      { packageId: 'BepInEx-BepInExPack', name: 'BepInExPack', version: '5.4.2200' }
+    )
+    const mods = (await getProfile(paths, 'repo', pid)).mods
+    expect(mods.map((m) => `${m.id}@${m.version}`)).toEqual(['BepInEx-BepInExPack@5.4.2200'])
+    expect(mod.enabled).toBe(false)
+    expect(readFileSync(path.join(profDir, 'winhttp.dll'), 'utf8')).toBe('w5.4.2200')
+    expect(readFileSync(path.join(profDir, 'BepInEx/core/BepInEx.dll'), 'utf8')).toBe('c5.4.2200')
+    expect(existsSync(path.join(profDir, 'old-only.txt'))).toBe(false)
+    expect(mod.files.sort()).toEqual(['BepInEx/core/BepInEx.dll', 'winhttp.dll'])
+    await uninstallMod(paths, game, pid, 'BepInEx-BepInExPack')
+    expect(existsSync(path.join(profDir, 'winhttp.dll'))).toBe(false)
+    expect(existsSync(path.join(profDir, 'BepInEx/core/BepInEx.dll'))).toBe(false)
+  })
+
+  test('replaces: another mod id is upgraded in place, keeping config and enabled', async () => {
+    const local: ModSource = { kind: 'local', fileName: 'Mod.zip', sha256: '' }
+    await installZip(paths, game, catalog, pid, modZip('1.0.0'), local)
+    writeFileSync(path.join(profDir, 'BepInEx/config/mod.cfg'), 'user')
+    await setModEnabled(paths, game, pid, 'Mod', false)
+    const mod = await installZip(paths, game, catalog, pid, modZip('2.0.0'), src, {
+      packageId: 'A-Mod',
+      replaces: ['Mod']
+    })
+    const mods = (await getProfile(paths, 'repo', pid)).mods
+    expect(mods.map((m) => m.id)).toEqual(['A-Mod'])
+    expect(mod.enabled).toBe(false)
+    expect(readFileSync(path.join(profDir, 'BepInEx/config/mod.cfg'), 'utf8')).toBe('user')
+    expect(mod.files).toContain('BepInEx/config/mod.cfg')
+    expect(existsSync(path.join(profDir, 'BepInEx/plugins/Mod'))).toBe(false)
+  })
+
   test('unsafe zip writes nothing', async () => {
     const before = snapshot(profDir)
     const zip = zipSync({ 'Good.dll': strToU8('g'), '../evil.dll': strToU8('e') })

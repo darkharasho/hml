@@ -126,6 +126,8 @@ export interface TsInstallResult {
   installed: InstalledMod[]
   skipped: string[] // fullNames already satisfied
   missing: string[] // dependency strings not found in the index
+  replaced?: string[] // ids of local mods superseded by the Thunderstore copy
+  enabled?: string[] // fullNames of disabled dependencies that were turned back on
 }
 export interface ModUpdate {
   modId: string

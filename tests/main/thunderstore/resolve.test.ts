@@ -3,6 +3,7 @@ import {
   compareVersions,
   findUpdates,
   installedVersions,
+  mergePlans,
   parseDependency,
   resolveInstall
 } from '../../../src/main/thunderstore/resolve'
@@ -273,6 +274,36 @@ describe('findUpdates', () => {
     ]
     expect(findUpdates(mods, i)).toEqual([
       { modId: 'O-A', fullName: 'O-A', current: '1.0.0', latest: '1.2.0' }
+    ])
+  })
+})
+
+describe('mergePlans', () => {
+  it('keeps the highest version once, after the packages it depends on', () => {
+    // Target X needs Dep 1.0.0; target Y needs Dep 2.0.0, which newly depends on Sub.
+    const i = idx(
+      pkg('O-X', { '1.0.0': ['O-Dep-1.0.0'] }),
+      pkg('O-Y', { '1.0.0': ['O-Dep-2.0.0'] }),
+      pkg('O-Dep', { '1.0.0': [], '2.0.0': ['O-Sub-1.0.0'] }),
+      pkg('O-Sub', { '1.0.0': [] })
+    )
+    const a = resolveInstall(i, { fullName: 'O-X' }, new Map())
+    const b = resolveInstall(i, { fullName: 'O-Y' }, new Map())
+    expect(names(a)).toEqual(['O-Dep@1.0.0', 'O-X@1.0.0'])
+    expect(names(b)).toEqual(['O-Sub@1.0.0', 'O-Dep@2.0.0', 'O-Y@1.0.0'])
+    const merged = mergePlans([a.plan, b.plan], i)
+    expect(names({ plan: merged })).toEqual([
+      'O-Sub@1.0.0',
+      'O-Dep@2.0.0',
+      'O-X@1.0.0',
+      'O-Y@1.0.0'
+    ])
+    // Same result with the plans in the other order.
+    expect(names({ plan: mergePlans([b.plan, a.plan], i) })).toEqual([
+      'O-Sub@1.0.0',
+      'O-Dep@2.0.0',
+      'O-Y@1.0.0',
+      'O-X@1.0.0'
     ])
   })
 })
