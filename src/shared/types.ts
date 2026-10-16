@@ -32,3 +32,10 @@ export interface Catalog {
   modloaderPackages: ModloaderPackage[]
   fetchedAt: string
 }
+
+export interface Settings {
+  gamePathOverrides: Record<string, string>
+  steamRootOverride: string | null
+  lastGame: string | null
+  lastProfile: Record<string, string>
+}
