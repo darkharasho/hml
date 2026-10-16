@@ -112,6 +112,10 @@ export async function gql<T>(o: NxClientOpts, query: string, variables: object):
 /** A GraphQL string literal (JSON strings are valid GraphQL strings). */
 const lit = (s: string): string => JSON.stringify(s)
 
+function assertId(n: number, what: string): void {
+  if (!Number.isSafeInteger(n) || n <= 0) throw new Error(`Invalid Nexus ${what} id.`)
+}
+
 const num = (v: unknown): number => {
   const n = Number(v)
   return Number.isFinite(n) ? n : 0
@@ -202,6 +206,7 @@ export async function gameByDomain(
 }
 
 export async function getMod(o: NxClientOpts, domain: string, modId: number): Promise<NxMod> {
+  assertId(modId, 'mod')
   const game = await gameByDomain(o, domain)
   if (!game) throw new Error("That game isn't on Nexus Mods.")
   const data = await gql<{ mods: { nodes: Record<string, unknown>[] } }>(
@@ -250,6 +255,8 @@ export async function findGameByName(
 }
 
 export async function modFiles(o: NxClientOpts, gameId: number, modId: number): Promise<NxFile[]> {
+  assertId(gameId, 'game')
+  assertId(modId, 'mod')
   const data = await gql<{ modFiles: Record<string, unknown>[] }>(
     o,
     `query($modId: ID!, $gameId: ID!) { modFiles(modId: $modId, gameId: $gameId) { fileId name version category categoryId primary size sizeInBytes date } }`,
@@ -278,6 +285,8 @@ export async function downloadLinks(
   fileId: number,
   nxm?: { key: string; expires: number }
 ): Promise<string[]> {
+  assertId(modId, 'mod')
+  assertId(fileId, 'file')
   let url = `${V1_ROOT}games/${encodeURIComponent(domain)}/mods/${modId}/files/${fileId}/download_link.json`
   if (nxm) {
     url += `?key=${encodeURIComponent(nxm.key)}&expires=${encodeURIComponent(String(nxm.expires))}`
@@ -298,17 +307,37 @@ export async function downloadLinks(
     .filter((u): u is string => typeof u === 'string' && u.startsWith('https://'))
 }
 
-export async function downloadFile(o: NxClientOpts, url: string): Promise<Uint8Array> {
+export async function downloadFile(
+  o: NxClientOpts,
+  url: string,
+  maxBytes = NX_MAX_DOWNLOAD
+): Promise<Uint8Array> {
+  if (!URL.canParse(url) || new URL(url).protocol !== 'https:') {
+    throw new Error('Nexus Mods download links must use https.')
+  }
   const res = await send(o, url, { headers: headersFor(o, url) }, DOWNLOAD_TIMEOUT_MS)
   if (!res.ok) throw new Error(`Download from Nexus Mods failed: HTTP ${res.status}.`)
-  if (num(res.headers.get('content-length')) > NX_MAX_DOWNLOAD) {
+  if (num(res.headers.get('content-length')) > maxBytes) {
     void res.body?.cancel().catch(() => undefined)
     throw new Error(TOO_BIG)
   }
-  let data: Uint8Array
+  if (!res.body) throw new Error('Download from Nexus Mods failed: empty response.')
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
   try {
-    data = new Uint8Array(await res.arrayBuffer())
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        void reader.cancel().catch(() => undefined)
+        throw new Error(TOO_BIG)
+      }
+      chunks.push(value)
+    }
   } catch (e) {
+    if (e instanceof Error && e.message === TOO_BIG) throw e
     throw new Error(
       isTimeout(e)
         ? TIMEOUT_ERROR
@@ -316,6 +345,11 @@ export async function downloadFile(o: NxClientOpts, url: string): Promise<Uint8A
       { cause: e }
     )
   }
-  if (data.byteLength > NX_MAX_DOWNLOAD) throw new Error(TOO_BIG)
+  const data = new Uint8Array(total)
+  let at = 0
+  for (const c of chunks) {
+    data.set(c, at)
+    at += c.byteLength
+  }
   return data
 }

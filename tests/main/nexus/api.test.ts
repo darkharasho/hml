@@ -42,10 +42,12 @@ function fake(handler: (url: string, body: string | undefined) => Reply | Error)
       status,
       headers: new Headers(r.headers),
       json: async () => r.body,
-      arrayBuffer: async () => {
-        const b = r.raw ?? new Uint8Array()
-        return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
-      }
+      body: new ReadableStream<Uint8Array>({
+        start(c) {
+          if (r.raw && r.raw.byteLength > 0) c.enqueue(r.raw)
+          c.close()
+        }
+      })
     }
   }) as unknown as typeof fetch
   return {
@@ -246,20 +248,31 @@ describe('downloads', () => {
     expect(calls[0].headers.apikey).toBeUndefined()
     expect(calls[0].headers['Application-Name']).toBe('HML')
   })
-  it('enforces the size cap by header and by bytes', async () => {
+  it('enforces the size cap by header', async () => {
     const msg = "This file is larger than 1 GB, which HML can't install yet."
     const byHeader = fake(() => ({ headers: { 'content-length': String(NX_MAX_DOWNLOAD + 1) } }))
     await expect(downloadFile(byHeader.o, 'https://cf-files.nexusmods.com/x')).rejects.toThrow(msg)
-    const o = {
-      ...byHeader.o,
-      fetch: (async () => ({
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        arrayBuffer: async () => new ArrayBuffer(NX_MAX_DOWNLOAD + 1)
-      })) as unknown as typeof fetch
-    }
-    await expect(downloadFile(o, 'https://cf-files.nexusmods.com/x')).rejects.toThrow(msg)
+  })
+  it('enforces the cap on streamed bytes without a Content-Length', async () => {
+    const { o } = fake(() => ({ raw: new Uint8Array(10) }))
+    await expect(downloadFile(o, 'https://cf-files.nexusmods.com/x', 9)).rejects.toThrow(
+      "This file is larger than 1 GB, which HML can't install yet."
+    )
+    expect((await downloadFile(o, 'https://cf-files.nexusmods.com/x', 10)).byteLength).toBe(10)
+  })
+  it('refuses non-https download URLs', async () => {
+    const { o, calls } = fake(() => ({ raw: new Uint8Array(1) }))
+    await expect(downloadFile(o, 'http://cf-files.nexusmods.com/x')).rejects.toThrow('https')
+    await expect(downloadFile(o, 'file:///etc/passwd')).rejects.toThrow('https')
+    expect(calls).toHaveLength(0)
+  })
+  it('rejects non-integer ids before any request', async () => {
+    const { o, calls } = fake(() => ({}))
+    await expect(downloadLinks(o, KEY, 'repo', NaN, 9)).rejects.toThrow('Invalid Nexus mod id')
+    await expect(downloadLinks(o, KEY, 'repo', 5, 1.5)).rejects.toThrow('Invalid Nexus file id')
+    await expect(modFiles(o, 7398, 0)).rejects.toThrow('Invalid Nexus mod id')
+    await expect(getMod(o, 'repo', -1)).rejects.toThrow('Invalid Nexus mod id')
+    expect(calls).toHaveLength(0)
   })
 })
 
