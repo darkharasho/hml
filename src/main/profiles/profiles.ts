@@ -24,7 +24,8 @@ export function slugifyProfileName(name: string): string {
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9._-]/g, '')
     .replace(/^\.+/, '')
-    .replace(/[. ]+$/, '')
+    .slice(0, 64)
+    .replace(/[-. ]+$/, '')
   if (!s) return 'profile'
   const dot = s.indexOf('.')
   const base = dot === -1 ? s : s.slice(0, dot)
@@ -60,16 +61,28 @@ export async function createProfile(
       createdAt: new Date().toISOString(),
       mods: []
     }
-    await saveProfile(paths, manifest)
+    await writeJsonAtomic(manifestPath(paths, game, id), manifest)
     return manifest
   }
+}
+
+function isValidManifest(m: unknown, dirName: string): m is ProfileManifest {
+  if (typeof m !== 'object' || m === null) return false
+  const o = m as Record<string, unknown>
+  return (
+    typeof o.createdAt === 'string' &&
+    typeof o.name === 'string' &&
+    Array.isArray(o.mods) &&
+    o.id === dirName
+  )
 }
 
 export async function listProfiles(paths: AppPaths, game: string): Promise<ProfileManifest[]> {
   assertSafe('game', game)
   let entries: string[]
   try {
-    entries = await fs.readdir(paths.profilesDir(game))
+    const dirents = await fs.readdir(paths.profilesDir(game), { withFileTypes: true })
+    entries = dirents.filter((d) => d.isDirectory()).map((d) => d.name)
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw e
@@ -77,7 +90,7 @@ export async function listProfiles(paths: AppPaths, game: string): Promise<Profi
   const found: ProfileManifest[] = []
   for (const id of entries) {
     const m = await readJson<ProfileManifest>(manifestPath(paths, game, id))
-    if (m) found.push(m)
+    if (isValidManifest(m, id)) found.push(m)
   }
   return found.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 }
@@ -97,6 +110,14 @@ export async function getProfile(
 export async function saveProfile(paths: AppPaths, m: ProfileManifest): Promise<void> {
   assertSafe('game', m.game)
   assertSafe('profile id', m.id)
+  try {
+    await fs.stat(paths.profileDir(m.game, m.id))
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(`Profile not found: ${m.game}/${m.id}`)
+    }
+    throw e
+  }
   await writeJsonAtomic(manifestPath(paths, m.game, m.id), m)
 }
 

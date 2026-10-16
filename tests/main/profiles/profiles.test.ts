@@ -133,4 +133,41 @@ describe('profiles', () => {
     expect(await exists(path.join(victim, 'keep.txt'))).toBe(true)
     expect(await exists(paths.profileDir('repo', 'default'))).toBe(true)
   })
+
+  test('list ignores stray files in profiles dir', async () => {
+    await createProfile(paths, 'repo', 'Default')
+    await fs.writeFile(path.join(paths.profilesDir('repo'), 'stray.txt'), 'x')
+    expect((await listProfiles(paths, 'repo')).map((p) => p.id)).toEqual(['default'])
+  })
+
+  test('list skips malformed manifests and id/dir mismatches', async () => {
+    await createProfile(paths, 'repo', 'Good')
+    const write = async (dir: string, data: unknown): Promise<void> => {
+      const d = path.join(paths.profilesDir('repo'), dir)
+      await fs.mkdir(d, { recursive: true })
+      await fs.writeFile(path.join(d, 'hml-profile.json'), JSON.stringify(data))
+    }
+    const ok = { id: 'x', name: 'n', createdAt: '2020', mods: [] }
+    await write('null', null)
+    await write('arr', [])
+    await write('nocreated', { ...ok, id: 'nocreated', createdAt: undefined })
+    await write('noname', { ...ok, id: 'noname', name: 5 })
+    await write('nomods', { ...ok, id: 'nomods', mods: {} })
+    await write('mismatch', { ...ok, id: 'other' })
+    expect((await listProfiles(paths, 'repo')).map((p) => p.id)).toEqual(['good'])
+  })
+
+  test('saveProfile does not resurrect a deleted profile', async () => {
+    const m = await createProfile(paths, 'repo', 'Default')
+    await deleteProfile(paths, 'repo', 'default')
+    await expect(saveProfile(paths, m)).rejects.toThrow(/Profile not found/)
+    expect(await exists(paths.profileDir('repo', 'default'))).toBe(false)
+  })
+
+  test('slug is capped at 64 chars with no trailing separator', () => {
+    expect(slugifyProfileName('a'.repeat(100))).toBe('a'.repeat(64))
+    const s = slugifyProfileName('a'.repeat(63) + '-bbb')
+    expect(s).toBe('a'.repeat(63))
+    expect(slugifyProfileName('a'.repeat(63) + '.bbb')).toBe('a'.repeat(63))
+  })
 })
