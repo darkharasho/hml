@@ -96,6 +96,40 @@ async function parentInside(realRoot: string, p: string): Promise<boolean> {
   }
 }
 
+/** True when the nearest existing folder at or above dir resolves inside the real game folder. */
+async function ancestorInside(realRoot: string, dir: string): Promise<boolean> {
+  for (let d = dir; ; d = path.dirname(d)) {
+    try {
+      return isInside(realRoot, await fs.realpath(d))
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT' || path.dirname(d) === d) return false
+    }
+  }
+}
+
+/** Compares two files in chunks, so big files are never held in memory. */
+async function sameBytes(a: string, b: string): Promise<boolean> {
+  const [fa, fb] = [await fs.open(a, 'r'), await fs.open(b, 'r')]
+  try {
+    const size = (await fa.stat()).size
+    if (size !== (await fb.stat()).size) return false
+    const [ba, bb] = [Buffer.alloc(1 << 20), Buffer.alloc(1 << 20)]
+    for (let pos = 0; pos < size; pos += ba.length) {
+      const [ra, rb] = [await fa.read(ba, 0, ba.length, pos), await fb.read(bb, 0, bb.length, pos)]
+      if (
+        ra.bytesRead !== rb.bytesRead ||
+        !ba.subarray(0, ra.bytesRead).equals(bb.subarray(0, rb.bytesRead))
+      ) {
+        return false
+      }
+    }
+    return true
+  } finally {
+    await fa.close()
+    await fb.close()
+  }
+}
+
 /** Whether names differing only in case are the same file in this folder. */
 async function detectCaseInsensitive(dir: string): Promise<boolean> {
   const name = `.HML-Case-Probe-${randomUUID()}`
@@ -235,17 +269,18 @@ async function removeFromManifest(
     if (!backup) continue
     const there = await lstat(e.game)
     if (there) {
-      // A crash during the backup copy leaves the original and a full copy of it.
-      if (m.phase === 'backup' && there.isFile() && backup.isFile() && there.size === backup.size) {
+      // A crash during a cross-drive move leaves both copies. Dropping the backup is safe only
+      // when the bytes are identical; anything else is a conflict and both files stay.
+      if (there.isFile() && backup.isFile() && (await sameBytes(e.game, e.backup))) {
         await fs.rm(e.backup)
         continue
       }
       throw new Error(`Can't restore ${e.f.path}: something else is in its place.`)
     }
-    await fs.mkdir(path.dirname(e.game), { recursive: true })
-    if (!(await parentInside(realRoot, e.game))) {
+    if (!(await ancestorInside(realRoot, path.dirname(e.game)))) {
       throw new Error(`Can't restore ${e.f.path}: its folder points outside the game folder.`)
     }
+    await fs.mkdir(path.dirname(e.game), { recursive: true })
     await move(e.backup, e.game)
   }
   // Created dirs, deepest first; rmdir refuses a folder that isn't empty.

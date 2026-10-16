@@ -418,4 +418,48 @@ describe('deploy', () => {
     )
     expect(existsSync(paths.deployment(game.label))).toBe(true)
   })
+
+  test('same-size backup with different bytes keeps both files and reports a conflict', async () => {
+    writeFileSync(path.join(gameDir, 'a.esp'), 'AAAA')
+    mkdirSync(paths.deployBackup(game.label), { recursive: true })
+    writeFileSync(path.join(paths.deployBackup(game.label), 'a.esp'), 'BBBB')
+    writeFileSync(
+      paths.deployment(game.label),
+      JSON.stringify({
+        formatVersion: 1,
+        profileId: pid,
+        deployedAt: 'x',
+        gameDir,
+        phase: 'backup',
+        files: [{ path: 'a.esp', mod: 'nexus-1', size: -1, mtimeMs: -1, backedUp: false }],
+        createdDirs: []
+      })
+    )
+    await expect(removeDeployment(paths, game, gameDir)).rejects.toThrow(/something else/)
+    expect(read('a.esp')).toBe('AAAA')
+    expect(readFileSync(path.join(paths.deployBackup(game.label), 'a.esp'), 'utf8')).toBe('BBBB')
+    expect(existsSync(paths.deployment(game.label))).toBe(true)
+  })
+
+  test('restore checks containment before creating folders', async () => {
+    const outside = path.join(tmp, 'outside')
+    mkdirSync(outside)
+    symlinkSync(outside, path.join(gameDir, 'Data'))
+    mkdirSync(path.join(paths.deployBackup(game.label), 'Data/sub'), { recursive: true })
+    writeFileSync(path.join(paths.deployBackup(game.label), 'Data/sub/a.esp'), 'orig')
+    writeFileSync(
+      paths.deployment(game.label),
+      JSON.stringify({
+        formatVersion: 1,
+        profileId: pid,
+        deployedAt: 'x',
+        gameDir,
+        phase: 'copy',
+        files: [{ path: 'Data/sub/a.esp', mod: 'nexus-1', size: 1, mtimeMs: 1, backedUp: true }],
+        createdDirs: []
+      })
+    )
+    await expect(removeDeployment(paths, game, gameDir)).rejects.toThrow(/outside the game folder/)
+    expect(readdirSync(outside)).toEqual([])
+  })
 })
