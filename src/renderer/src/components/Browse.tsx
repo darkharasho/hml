@@ -43,10 +43,11 @@ const SOURCES: { value: OnlineSource; label: string }[] = [
  */
 export function Browse({ game }: { game: string }): React.JSX.Element {
   const packageIndex = useStore((s) => s.currentGame?.packageIndex ?? null)
+  const label = useStore((s) => s.currentGame?.label ?? game)
   const domain = useStore((s) => s.currentDomain)
   const chosen = useStore((s) => s.onlineSource[game])
   const setSource = useStore((s) => s.setOnlineSource)
-  const { online } = sourcesFor({ packageIndex }, domain)
+  const { online } = sourcesFor({ packageIndex, label }, domain)
   const hasListing = online.includes('thunderstore')
   const offered = SOURCES.filter((s) => online.includes(s.value))
   // A remembered choice that is no longer offered falls back to the first source that is.

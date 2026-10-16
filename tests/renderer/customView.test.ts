@@ -98,6 +98,12 @@ describe('platform and runner helpers', () => {
         githubPrimary: false
       })
     })
+    test('a Nexus-only game offers Nexus before its domain has loaded', () => {
+      expect(sourcesFor(asGame({ label: 'nexus-skyrim', packageIndex: null }), null)).toEqual({
+        online: ['nexus'],
+        githubPrimary: false
+      })
+    })
     test('a custom game with a Nexus domain offers Nexus only', () => {
       expect(sourcesFor(asGame(custom), 'somegame')).toEqual({
         online: ['nexus'],

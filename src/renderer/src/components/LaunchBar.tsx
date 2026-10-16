@@ -176,7 +176,15 @@ export function LaunchBar(): React.JSX.Element | null {
       {deploys ? (
         <>
           {game.custom && (
-            <Button disabled={busy} onClick={() => void launch('vanilla')}>
+            <Button
+              disabled={busy || warnings.includes('no-runner')}
+              title={
+                warnings.includes('no-runner')
+                  ? 'Choose a runner first (Choose runner…).'
+                  : undefined
+              }
+              onClick={() => void launch('vanilla')}
+            >
               <Icon name="play" />
               Play
             </Button>

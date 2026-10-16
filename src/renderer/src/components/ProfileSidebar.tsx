@@ -34,7 +34,8 @@ export function ProfileSidebar(): React.JSX.Element | null {
   // A hand-installed BepInEx in the game folder; a failed lookup counts as none.
   const [manualFor, setManualFor] = useState<string | null>(null)
   const gameLabel = game?.label
-  const hasManual = !!gameLabel && manualFor === gameLabel
+  const manualPrompt = useStore((s) => s.manualLoader)
+  const hasManual = !!gameLabel && game?.loader === 'bepinex' && manualFor === gameLabel
   const isCustom = !!game?.custom
   const isBepinex = game?.loader === 'bepinex'
   useEffect(() => {
@@ -47,7 +48,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
     return () => {
       live = false
     }
-  }, [gameLabel, isCustom, isBepinex])
+  }, [gameLabel, isCustom, isBepinex, manualPrompt])
 
   if (!game) return null
 
