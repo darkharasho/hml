@@ -79,3 +79,58 @@ export type LaunchWarning =
   | 'flatpak-filesystem'
   | 'native-linux-unsupported'
 export type DoorstopVersion = 3 | 4
+
+export interface TsVersion {
+  version: string // version_number
+  dependencies: string[] // "Owner-Name-x.y.z"
+  downloadUrl: string
+  downloads: number
+  fileSize: number
+  dateCreated: string
+}
+export interface TsPackage {
+  fullName: string // "Owner-Name"
+  owner: string
+  name: string
+  description: string // from newest version
+  iconUrl: string // from newest version
+  websiteUrl: string // from newest version, '' if none
+  packageUrl: string
+  categories: string[]
+  rating: number
+  totalDownloads: number // sum over kept versions
+  dateUpdated: string
+  isPinned: boolean
+  isDeprecated: boolean
+  nsfw: boolean
+  versions: TsVersion[] // newest first, only is_active versions
+}
+export type TsSort = 'top' | 'downloads' | 'updated' | 'name'
+export interface TsQuery {
+  text: string
+  categories: string[] // package must have every listed category
+  sort: TsSort
+  includeDeprecated: boolean
+  includeNsfw: boolean
+  offset: number
+  limit: number // clamped to 1..100
+}
+export interface TsSearchResult {
+  items: TsPackage[]
+  total: number
+  categories: string[] // all categories in the community, sorted
+  fetchedAt: string
+  stale: boolean // true when the refresh failed and cached data is shown
+}
+export interface TsInstallResult {
+  installed: InstalledMod[]
+  skipped: string[] // fullNames already satisfied
+  missing: string[] // dependency strings not found in the index
+}
+export interface ModUpdate {
+  modId: string
+  fullName: string
+  current: string
+  latest: string
+}
+export type HmlEvent = { type: 'progress'; message: string; done: number; total: number }

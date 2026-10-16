@@ -5,6 +5,7 @@ export interface AppPaths {
   settings: string
   schemaCache: string
   downloads: string
+  tsIndexCache(label: string): string
   /** Parent of every per-game dir. */
   gamesDir: string
   gameDir(label: string): string
@@ -21,6 +22,7 @@ export function makePaths(root: string): AppPaths {
     settings: path.join(root, 'settings.json'),
     schemaCache: path.join(root, 'cache', 'ecosystem.json'),
     downloads: path.join(root, 'cache', 'downloads'),
+    tsIndexCache: (label) => path.join(root, 'cache', 'thunderstore', `${label}.json`),
     gamesDir,
     gameDir,
     profilesDir,
