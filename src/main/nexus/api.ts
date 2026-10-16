@@ -195,17 +195,18 @@ export async function searchMods(
 export async function gameByDomain(
   o: NxClientOpts,
   domain: string
-): Promise<{ id: number; name: string; domain: string } | null> {
+): Promise<{ id: number; name: string; domain: string; modCount: number } | null> {
   const { data, errors } = await gqlRaw<{ game: Record<string, unknown> | null }>(
     o,
-    `{ game(domainName:${lit(domain)}) { id name domainName } }`,
+    `{ game(domainName:${lit(domain)}) { id name domainName modCount } }`,
     {}
   )
   if (data?.game) {
     return {
       id: num(data.game.id),
       name: String(data.game.name),
-      domain: String(data.game.domainName)
+      domain: String(data.game.domainName),
+      modCount: num(data.game.modCount)
     }
   }
   if (errors.length > 0 && !errors.some((e) => e.extensions?.code === 'GAME_NOT_FOUND')) {

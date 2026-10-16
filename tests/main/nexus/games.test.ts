@@ -174,6 +174,17 @@ describe('addGame', () => {
     expect((await make().addedGames()).map((d) => d.label)).toEqual(['nexus-skyrimspecialedition'])
   })
 
+  it('stores the mod count and uses it for the added game card', async () => {
+    handler = () => ({
+      data: {
+        game: { id: '1704', name: 'Skyrim SE', domainName: 'skyrimspecialedition', modCount: 77 }
+      }
+    })
+    const def = await make().addGame('skyrimspecialedition')
+    expect(def.nexusModCount).toBe(77)
+    expect((await make().addedGames())[0].nexusModCount).toBe(77)
+  })
+
   it('rejects an unknown domain', async () => {
     handler = () => ({ data: { game: null }, errors: [{ extensions: { code: 'GAME_NOT_FOUND' } }] })
     await expect(make().addGame('nope')).rejects.toThrow('Nexus Mods has no game "nope".')

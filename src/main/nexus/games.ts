@@ -16,6 +16,8 @@ type Cache = Record<string, CacheEntry>
 interface AddedGame {
   name: string
   domain: string
+  /** The count when the game was added; it can go stale, which is fine for a card label. */
+  modCount?: number
 }
 
 export interface NexusGames {
@@ -147,7 +149,13 @@ export function createNexusGames(ctx: {
           typeof g.domain === 'string' &&
           DOMAIN_RE.test(g.domain)
       )
-      .map(nexusGameDef)
+      .map((g) =>
+        nexusGameDef({
+          name: g.name,
+          domain: g.domain,
+          ...(typeof g.modCount === 'number' ? { modCount: g.modCount } : {})
+        })
+      )
   }
 
   async function searchExtra(
@@ -179,12 +187,12 @@ export function createNexusGames(ctx: {
     if (!DOMAIN_RE.test(d)) throw noGame()
     const found = await gameByDomain(client, d)
     if (!found || !DOMAIN_RE.test(found.domain)) throw noGame()
-    const def = nexusGameDef({ name: found.name, domain: found.domain })
+    const def = nexusGameDef({ name: found.name, domain: found.domain, modCount: found.modCount })
     await locked(async () => {
       const stored = await readJson<unknown>(paths.nxAddedGames)
       const list = (Array.isArray(stored) ? stored : []) as AddedGame[]
       if (!list.some((g) => g.domain === found.domain)) {
-        list.push({ name: found.name, domain: found.domain })
+        list.push({ name: found.name, domain: found.domain, modCount: found.modCount })
         await writeJsonAtomic(paths.nxAddedGames, list)
       }
     })
