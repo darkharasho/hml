@@ -23,6 +23,7 @@ import {
   type GhRelease
 } from './api'
 import { loadToken, NO_SECURE_STORAGE, saveToken } from './token'
+import { isGhAccessError } from '../../shared/messages'
 
 export const GH_CHECK_INTERVAL_MS = 21_600_000
 
@@ -340,11 +341,14 @@ export function createGithubServices(ctx: GhContext): Pick<
     const token = await loadToken(paths, deps.secrets)
     const latestOf = memoLookup(token, GH_RELEASE_MEMO_MS)
     const out: GhUpdate[] = []
+    let checked = 0
+    let accessError: unknown = null
     for (const m of mods.filter(isGhMod)) {
       const mode = configOf(m).updateMode
       if (mode === 'pinned') continue
       try {
         const latest = await latestOf(m.source.owner, m.source.repo)
+        checked++
         if (needsUpdate(m, latest)) {
           out.push({
             modId: m.id,
@@ -355,10 +359,14 @@ export function createGithubServices(ctx: GhContext): Pick<
             mode
           })
         }
-      } catch {
-        // a failing lookup skips this mod
+      } catch (e) {
+        // A failing lookup skips this mod; a rate limit or rejected token is kept to report.
+        if (accessError === null && isGhAccessError(errMsg(e))) accessError = e
       }
     }
+    // With nothing checked because of a rate limit or a rejected token, say so instead of
+    // reporting no updates.
+    if (checked === 0 && accessError !== null) throw accessError
     return out
   }
 

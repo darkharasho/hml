@@ -1303,7 +1303,8 @@ describe('services', () => {
     const res = (status: number, body?: unknown): unknown => ({
       ok: status >= 200 && status < 300,
       status,
-      headers: new Headers(),
+      // A 429 is GitHub's secondary rate limit, sent with retry-after.
+      headers: new Headers(status === 429 ? { 'retry-after': '60' } : {}),
       json: async () => body
     })
 
@@ -1851,6 +1852,43 @@ describe('services', () => {
       clock += 11 * 60_000
       const found = await api.ghCheckUpdates('repo', pid)
       expect(found.map((u) => u.modId)).toEqual(['ok-fine'])
+    })
+
+    test('ghCheckUpdates rethrows a rate limit or rejected token when no mod could be checked', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      publish('ok', 'fine', 'v1.0.0', { 'a.zip': zipOf('Fine', '1.0.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      await api.ghInstall('repo', pid, 'ok/fine')
+      rmSync(deps.paths.ghCache, { force: true })
+      clock += 11 * 60_000
+      repos.get('owner/repo')!.down = 401
+      repos.get('ok/fine')!.down = 401
+      await expect(api.ghCheckUpdates('repo', pid)).rejects.toThrow(
+        'GitHub rejected the saved token. Update or remove it in Settings.'
+      )
+      // One mod checked: the failure only skips the other.
+      repos.get('ok/fine')!.down = undefined
+      publish('ok', 'fine', 'v1.1.0', { 'a.zip': zipOf('Fine', '1.1.0') })
+      expect((await api.ghCheckUpdates('repo', pid)).map((u) => u.modId)).toEqual(['ok-fine'])
+      // Another error with nothing checked still just skips.
+      repos.get('owner/repo')!.down = 500
+      repos.get('ok/fine')!.down = 500
+      clock += 11 * 60_000
+      rmSync(deps.paths.ghCache, { force: true })
+      expect(await api.ghCheckUpdates('repo', pid)).toEqual([])
+    })
+
+    test('ghCheckUpdates keeps showing a known update through a rate limit', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      publish('owner', 'repo', 'v1.1.0', { 'a.zip': zipOf('Thing', '1.1.0') })
+      clock += 11 * 60_000
+      expect((await api.ghCheckUpdates('repo', pid)).map((u) => u.latest)).toEqual(['v1.1.0'])
+      repos.get('owner/repo')!.down = 429
+      clock += 11 * 60_000
+      expect((await api.ghCheckUpdates('repo', pid)).map((u) => u.latest)).toEqual(['v1.1.0'])
     })
 
     test('the token goes to api.github.com only, not to the asset download host', async () => {

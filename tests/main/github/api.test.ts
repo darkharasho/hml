@@ -252,6 +252,46 @@ describe('fetchRelease', () => {
   })
 })
 
+describe('fetchRelease with a cached body', () => {
+  const url = `${API}/releases/latest`
+  const primed = (later: Reply | 'offline'): typeof fetch => {
+    let first = true
+    const ok = fakeFetch({ [url]: { status: 200, body: rawRelease(), headers: { etag: 'e' } } })
+    const bad = later === 'offline' ? null : fakeFetch({ [url]: later })
+    return (async (u: string, init?: never) => {
+      if (first) {
+        first = false
+        return ok.fetch(u, init)
+      }
+      if (!bad) throw new Error('ECONNRESET')
+      return bad.fetch(u, init)
+    }) as unknown as typeof fetch
+  }
+
+  it('returns the cached release on a rate limit, a rejected token or no connection', async () => {
+    const cases: (Reply | 'offline')[] = [
+      { status: 403, headers: { 'x-ratelimit-remaining': '0' } },
+      { status: 429, headers: { 'retry-after': '60' } },
+      { status: 401 },
+      'offline'
+    ]
+    for (const later of cases) {
+      await fs.rm(cacheFile, { force: true })
+      const f = primed(later)
+      await fetchRelease(base(f))
+      expect((await fetchRelease(base(f))).tag).toBe('v1.0.0')
+    }
+  })
+
+  it('still throws without a cached body, and on other errors', async () => {
+    const rl = fakeFetch({ [url]: { status: 403, headers: { 'x-ratelimit-remaining': '0' } } })
+    await expect(fetchRelease(base(rl.fetch))).rejects.toThrow("GitHub's rate limit was reached.")
+    const f = primed({ status: 500 })
+    await fetchRelease(base(f))
+    await expect(fetchRelease(base(f))).rejects.toThrow('GitHub returned HTTP 500 for o/r.')
+  })
+})
+
 describe('fetchRelease cache robustness', () => {
   it('merges concurrent writers for different repos', async () => {
     const mk = (r: string): Record<string, Reply> => ({

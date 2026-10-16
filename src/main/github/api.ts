@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { compareVersions } from '../../shared/version'
+import { GH_RATE_LIMIT_PREFIX, GH_REJECTED_TOKEN_PREFIX } from '../../shared/messages'
 import { readJson, writeJsonAtomic } from '../store/json'
 import type { GhReleaseAsset } from './assets'
 
@@ -82,11 +83,11 @@ function throwCommonError(res: Response, nowMs: number): void {
       ? `after ${new Date(resetMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
       : 'later'
     throw new Error(
-      `GitHub's rate limit was reached. Try again ${when}, or add a GitHub token in Settings.`
+      `${GH_RATE_LIMIT_PREFIX}. Try again ${when}, or add a GitHub token in Settings.`
     )
   }
   if (res.status === 401) {
-    throw new Error('GitHub rejected the saved token. Update or remove it in Settings.')
+    throw new Error(`${GH_REJECTED_TOKEN_PREFIX}. Update or remove it in Settings.`)
   }
 }
 
@@ -160,7 +161,15 @@ export async function fetchRelease(
     }
     const headers = apiHeaders(opts.token)
     if (cached?.etag) headers['If-None-Match'] = cached.etag
-    const res = await send(opts.fetch, url, headers)
+    // Offline, rate-limited or with a rejected token, a cached body is still the best answer, so
+    // known updates don't vanish. Its fetchedAt is left alone, so the next call asks again.
+    let res: Response
+    try {
+      res = await send(opts.fetch, url, headers)
+    } catch (e) {
+      if (cached) return { status: 'ok', body: cached.body }
+      throw e
+    }
     if (res.status === 304 && cached) {
       await updateCache(opts.cacheFile, (c) => {
         c[key] = { ...cached, fetchedAt: now() }
@@ -168,7 +177,12 @@ export async function fetchRelease(
       return { status: 'ok', body: cached.body }
     }
     if (res.status === 404) return { status: 'notfound' }
-    throwCommonError(res, now())
+    try {
+      throwCommonError(res, now())
+    } catch (e) {
+      if (cached) return { status: 'ok', body: cached.body }
+      throw e
+    }
     if (!res.ok) throw new Error(`GitHub returned HTTP ${res.status} for ${slug}.`)
     const body = await res.json()
     await updateCache(opts.cacheFile, (c) => {

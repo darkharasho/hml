@@ -16,6 +16,7 @@ import type {
   Settings
 } from '../../shared/types'
 import { api, errorMessage } from './api'
+import { isGhAccessError } from '../../shared/messages'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
 import { displayName, installToast, progressLabel } from './tsView'
@@ -124,6 +125,8 @@ interface State {
 
 let toastSeq = 0
 let updatesSeq = 0
+/** The last GitHub rate-limit or rejected-token message shown, so it shows once per session. */
+let lastGhNotice: string | null = null
 
 export const useStore = create<State>()((set, get) => {
   const fail = (e: unknown): void => get().toast('error', errorMessage(e))
@@ -780,8 +783,15 @@ export const useStore = create<State>()((set, get) => {
       if (!nx) set({ nxUpdates: [] })
       // Update checks are background work. With Thunderstore unreachable and no cached list there
       // is nothing to compare against, and the Online tab already reports the error; a failing
-      // GitHub lookup only skips that mod, and a manual update surfaces the error.
-      await Promise.all([ts?.catch(() => {}), gh.catch(() => {}), nx?.catch(() => {})])
+      // GitHub lookup only skips that mod, and a manual update surfaces the error. A GitHub rate
+      // limit or rejected token that stopped every lookup is shown once, as info.
+      const ghFailed = (e: unknown): void => {
+        const message = errorMessage(e)
+        if (!isGhAccessError(message) || message === lastGhNotice) return
+        lastGhNotice = message
+        get().toast('info', message)
+      }
+      await Promise.all([ts?.catch(() => {}), gh.catch(ghFailed), nx?.catch(() => {})])
     },
 
     handleEvent(e) {
