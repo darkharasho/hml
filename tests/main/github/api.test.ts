@@ -381,7 +381,7 @@ describe('downloadAsset', () => {
     const a = asset('sha256:deadbeef')
     const ok = fakeFetch({ [a.downloadUrl]: { status: 200, raw: bytes } })
     await expect(downloadAsset({ fetch: ok.fetch, token: null, asset: a })).rejects.toThrow(
-      'Download of Mod.zip failed: checksum mismatch'
+      "Download of Mod.zip failed: it doesn't match the checksum GitHub published for it"
     )
     const nf = fakeFetch({ [a.downloadUrl]: { status: 404 } })
     await expect(downloadAsset({ fetch: nf.fetch, token: null, asset: a })).rejects.toThrow(

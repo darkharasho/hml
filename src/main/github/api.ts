@@ -255,7 +255,8 @@ export async function downloadAsset(opts: {
   if (data.byteLength > MAX_DOWNLOAD_BYTES) throw tooBig(data.byteLength)
   const sha256 = createHash('sha256').update(data).digest('hex')
   const m = /^sha256:([0-9a-f]+)$/i.exec(asset.digest ?? '')
-  if (m && m[1].toLowerCase() !== sha256) throw fail('checksum mismatch')
+  if (m && m[1].toLowerCase() !== sha256)
+    throw fail("it doesn't match the checksum GitHub published for it")
   return { data, sha256 }
 }
 

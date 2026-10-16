@@ -1645,7 +1645,7 @@ describe('services', () => {
 
       publish('owner', 'repo', 'v1.2.0', { 'a.zip': zipOf('Thing', '1.2.0') }, true)
       await expect(api.ghUpdate('repo', pid, ['owner-repo'])).rejects.toThrow(
-        'owner/repo: Download of a.zip failed: checksum mismatch'
+        "owner/repo: Download of a.zip failed: it doesn't match the checksum GitHub published for it"
       )
       const [kept] = await modsOf()
       expect(kept.source).toMatchObject({ tag: 'v1.1.0' })
@@ -1904,7 +1904,7 @@ describe('services', () => {
       publish('bad', 'two', 'v2.0.0', { 'a.zip': zipOf('Bad', '2.0.0') }, true)
       publish('good', 'one', 'v2.0.0', { 'a.zip': zipOf('Good', '2.0.0') })
       await expect(api.ghUpdate('repo', pid, ['bad-two', 'good-one'])).rejects.toThrow(
-        'Updated 1 of 2 GitHub mods. bad/two: Download of a.zip failed: checksum mismatch'
+        "Updated 1 of 2 GitHub mods. bad/two: Download of a.zip failed: it doesn't match the checksum GitHub published for it"
       )
       const mods = await modsOf()
       expect(mods.find((m) => m.id === 'good-one')!.source).toMatchObject({ tag: 'v2.0.0' })
