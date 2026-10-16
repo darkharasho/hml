@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -3007,6 +3008,24 @@ describe('services', () => {
 
 describe('share', () => {
   const fixtureResponse = { ok: true, json: async () => fixture }
+  test('exportProfileFile leaves no temp file behind, and none when the rename fails', async () => {
+    const api = createServices(deps)
+    const profile = await api.createProfile('repo', 'Atomic')
+    const outDir = path.join(tmp, 'atomic-out')
+    mkdirSync(outDir, { recursive: true })
+    const ok = path.join(outDir, 'ok.hml')
+    const mk = (target: string): ReturnType<typeof createServices> =>
+      createServices({ ...deps, dialog: { ...dialog, saveFile: async () => target } })
+    expect(await mk(ok).exportProfileFile('repo', profile.id)).toBe(ok)
+    expect(readdirSync(outDir)).toEqual(['ok.hml'])
+
+    // A directory at the target makes the rename fail.
+    const blocked = path.join(outDir, 'blocked.hml')
+    mkdirSync(path.join(blocked, 'child'), { recursive: true })
+    await expect(mk(blocked).exportProfileFile('repo', profile.id)).rejects.toThrow()
+    expect(readdirSync(outDir).sort()).toEqual(['blocked.hml', 'ok.hml'])
+  })
+
   test('exportProfileFile writes a file readHmlFile reads back, and returns null on cancel', async () => {
     const api = createServices(deps)
     const profile = await api.createProfile('repo', 'My: Profile?')

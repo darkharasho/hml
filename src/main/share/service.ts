@@ -286,7 +286,15 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       })
       if (!target) return null
       const { data } = await build(game, profileId)
-      await fs.writeFile(target, data)
+      // Write beside the target and rename, so a failed write never leaves a half-written file.
+      const tmp = `${target}.${randomUUID()}.tmp`
+      try {
+        await fs.writeFile(tmp, data)
+        await fs.rename(tmp, target)
+      } catch (e) {
+        await fs.rm(tmp, { force: true }).catch(() => undefined)
+        throw e
+      }
       return target
     },
 
