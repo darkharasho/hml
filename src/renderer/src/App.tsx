@@ -9,6 +9,27 @@ import { TitleBar } from './components/TitleBar'
 import { Toasts } from './components/Toast'
 import { useStore } from './store'
 
+/** Ctrl+F (Cmd+F on macOS) or / focuses the search box on screen, outside dialogs. */
+function focusSearch(e: KeyboardEvent): void {
+  const find = (e.key === 'f' || e.key === 'F') && (e.ctrlKey || e.metaKey) && !e.altKey
+  const target = e.target as HTMLElement | null
+  const typing =
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target?.isContentEditable
+  const slash = e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !typing
+  if ((!find && !slash) || e.defaultPrevented || document.querySelector('dialog[open]')) return
+  // Hidden tabs stay mounted, so pick the search box that is actually showing.
+  const box = [...document.querySelectorAll<HTMLInputElement>('input[data-find]')].find(
+    (el) => el.offsetParent !== null
+  )
+  if (!box) return
+  e.preventDefault()
+  box.focus()
+  box.select()
+}
+
 function App(): React.JSX.Element {
   const ready = useStore((s) => s.ready)
   const game = useStore((s) => s.currentGame)
@@ -19,11 +40,13 @@ function App(): React.JSX.Element {
     // Files dropped outside the mod list must not navigate the window to file://.
     const block = (e: DragEvent): void => e.preventDefault()
     window.addEventListener('dragover', block)
+    window.addEventListener('keydown', focusSearch)
     window.addEventListener('drop', block)
     return () => {
       offEvents()
       window.removeEventListener('dragover', block)
       window.removeEventListener('drop', block)
+      window.removeEventListener('keydown', focusSearch)
     }
   }, [])
 

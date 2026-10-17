@@ -39,17 +39,20 @@ function SettingsForm({ onClose }: { onClose(): void }): React.JSX.Element {
         {/* Each field is keyed by its own saved value, so saving one never resets the other. */}
         <SteamField key={`steam:${steamOverride}`} initial={steamOverride ?? ''} />
 
-        {game && (
-          <GameDirField
-            key={`${game.label}:${gameOverride}`}
-            game={game}
-            initial={gameOverride ?? ''}
-          />
-        )}
-
         <GithubTokenField />
 
         <NexusSection />
+
+        {game && (
+          <div className="flex flex-col gap-4 border-t border-line pt-5">
+            <h3 className="text-sm font-semibold text-fg">{game.displayName}</h3>
+            <GameDirField
+              key={`${game.label}:${gameOverride}`}
+              game={game}
+              initial={gameOverride ?? ''}
+            />
+          </div>
+        )}
 
         <UpdateSection />
       </div>
@@ -95,7 +98,7 @@ function GameDirField({
   const dirty = gameDir.trim() !== initial
   return (
     <Field
-      label={`${game.displayName} folder`}
+      label="Game folder"
       hint={
         game.installDir
           ? `Using ${game.installDir}`
@@ -180,7 +183,7 @@ function GithubTokenField(): React.JSX.Element {
         disabled={busy || unavailable || !token.trim()}
         onClick={() => void save()}
       >
-        Save token
+        Save
       </Button>
       <Button
         variant="quiet"
@@ -293,7 +296,7 @@ function NexusSection(): React.JSX.Element {
           disabled={busy || unavailable || !key.trim()}
           onClick={() => void save()}
         >
-          Save key
+          Save
         </Button>
         <Button
           variant="quiet"

@@ -882,7 +882,10 @@ export const useStore = create<State>()((set, get) => {
       await tracked(() => api.nxSetDomain(game.label, domain))
       set((s) => ({ nxDomainVersion: s.nxDomainVersion + 1 }))
       await loadDomain(game)
-      get().toast('success', domain ? `Saved Nexus domain ${domain}` : 'Cleared Nexus domain')
+      get().toast(
+        'success',
+        domain ? `Using nexusmods.com/${domain}` : 'Cleared the Nexus Mods page'
+      )
       await get().checkUpdates()
     },
 

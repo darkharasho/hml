@@ -5,6 +5,7 @@ import { api, errorMessage } from '../api'
 import { isNexusOnly, isSteamCandidate } from '../customView'
 import { formatCount } from '../nxView'
 import { useStore } from '../store'
+import { usedGameLabels } from '../titleView'
 import { AddGameDialog } from './AddGameDialog'
 import { GameCover } from './GameCover'
 import { Button, Icon } from './ui'
@@ -33,6 +34,23 @@ export function GamePicker(): React.JSX.Element {
   const [addRequest, setAddRequest] = useState<AddRequest | null>(null)
   // Re-run the search when the Steam folder changes, since install dirs depend on it.
   const steamRoot = useStore((s) => s.settings?.steamRootOverride)
+  const yourGames = useYourGames(reload)
+  // The game the user just left, so they can go straight back to it.
+  const lastGame = useStore((s) => s.settings?.lastGame)
+  const backTo = yourGames?.find((g) => g.label === lastGame) ?? null
+
+  useEffect(() => {
+    if (!backTo) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return
+      // Escape in a filled search box clears it first; a dialog takes its own Escape.
+      if (query || document.querySelector('dialog[open]')) return
+      e.preventDefault()
+      void selectGame(backTo)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [backTo, query, selectGame])
 
   useEffect(() => {
     let stale = false
@@ -126,12 +144,25 @@ export function GamePicker(): React.JSX.Element {
       onSetFolder={() => void setFolder(g)}
     />
   )
+  // Games the user has opened, above the full list while not searching.
+  const showYours = !query && yourGames !== null && yourGames.length > 0
   const grid = 'grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-x-4 gap-y-6'
 
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-4 border-b border-line px-6 py-4">
         {/* The HML logo and name are in the titlebar above. */}
+        {backTo && (
+          <Button
+            variant="quiet"
+            className="-ml-2 shrink-0"
+            title="Back (Esc)"
+            onClick={() => void selectGame(backTo)}
+          >
+            <Icon name="back" />
+            {backTo.displayName}
+          </Button>
+        )}
         <h1 className="shrink-0 text-base font-semibold tracking-tight">Choose a game</h1>
         <label className="relative flex-1">
           <span className="sr-only">Search games</span>
@@ -142,6 +173,7 @@ export function GamePicker(): React.JSX.Element {
           <input
             autoFocus
             type="search"
+            data-find
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search games"
@@ -176,15 +208,21 @@ export function GamePicker(): React.JSX.Element {
               {games.length} {games.length === 1 ? 'game' : 'games'}
               {installedCount > 0 && `, ${installedCount} installed on this PC`}
             </p>
-            {catalogGames.length > 0 && <ul className={grid}>{catalogGames.map(card)}</ul>}
+            {showYours && (
+              <section aria-labelledby="your-games" className="mb-8">
+                <SectionHeading id="your-games">Your games</SectionHeading>
+                <ul className={grid}>{yourGames.map(card)}</ul>
+              </section>
+            )}
+            {catalogGames.length > 0 && (
+              <section aria-labelledby="all-games">
+                {showYours && <SectionHeading id="all-games">All games</SectionHeading>}
+                <ul className={grid}>{catalogGames.map(card)}</ul>
+              </section>
+            )}
             {steamGames.length > 0 && (
               <section aria-labelledby="on-steam" className={catalogGames.length ? 'mt-8' : ''}>
-                <div className="mb-4 flex items-center gap-3">
-                  <h2 id="on-steam" className="shrink-0 text-sm font-semibold text-muted">
-                    Installed on Steam
-                  </h2>
-                  <span className="h-px flex-1 bg-line" aria-hidden="true" />
-                </div>
+                <SectionHeading id="on-steam">Installed on Steam</SectionHeading>
                 <ul className={grid}>{steamGames.map(card)}</ul>
               </section>
             )}
@@ -208,6 +246,41 @@ export function GamePicker(): React.JSX.Element {
   )
 }
 
+function SectionHeading({ id, children }: { id: string; children: string }): React.JSX.Element {
+  return (
+    <div className="mb-4 flex items-center gap-3">
+      <h2 id={id} className="shrink-0 text-sm font-semibold text-muted">
+        {children}
+      </h2>
+      <span className="h-px flex-1 bg-line" aria-hidden="true" />
+    </div>
+  )
+}
+
+/** The games the user has opened before, by name; null while loading. */
+function useYourGames(reload: number): GameSummary[] | null {
+  const settings = useStore((s) => s.settings)
+  const key = usedGameLabels(settings, null).join('\n')
+  const [games, setGames] = useState<GameSummary[] | null>(null)
+  useEffect(() => {
+    let live = true
+    const labels = key ? key.split('\n') : []
+    // A game that can't be looked up (a removed custom game) is left out.
+    void Promise.all(labels.map((l) => api.getGame(l).catch(() => null))).then((found) => {
+      if (!live) return
+      setGames(
+        found
+          .filter((g): g is GameSummary => g !== null)
+          .sort((a, b) => a.displayName.localeCompare(b.displayName))
+      )
+    })
+    return () => {
+      live = false
+    }
+  }, [key, reload])
+  return games
+}
+
 function GameCard({
   game,
   disabled,
@@ -228,7 +301,7 @@ function GameCard({
         type="button"
         disabled={disabled}
         onClick={onSelect}
-        className="relative block aspect-[3/4] overflow-hidden rounded-lg bg-raised ring-1 ring-line transition-[transform,box-shadow] duration-150 group-hover:-translate-y-0.5 group-hover:ring-ember/60 group-hover:shadow-[0_14px_30px_-12px_rgba(255,154,60,0.35)]"
+        className="relative block aspect-[3/4] overflow-hidden rounded-lg bg-raised ring-1 ring-line group-hover:ring-2 group-hover:ring-ember/70"
       >
         <GameCover game={game} />
         <span className="absolute inset-x-2 bottom-2 flex flex-wrap gap-1">
@@ -267,7 +340,8 @@ function GameCard({
           type="button"
           disabled={disabled}
           onClick={onSetFolder}
-          className="mt-0.5 self-start text-xs text-muted underline-offset-2 hover:text-ember hover:underline"
+          // Shown on hover or focus: almost every card has no folder, and few need one set by hand.
+          className="mt-0.5 self-start text-xs text-muted underline-offset-2 opacity-0 group-hover:opacity-100 hover:text-ember hover:underline focus-visible:opacity-100"
         >
           Set folder…
         </button>

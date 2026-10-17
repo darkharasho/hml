@@ -94,7 +94,7 @@ function PackageDoc({
   }, [fullName, version, kind, key])
 
   const shown = doc.key === key ? doc.doc : null
-  const frame = 'max-h-[50vh] overflow-y-auto rounded-lg border border-line bg-ink/40 px-4 py-3'
+  const frame = 'rounded-lg border border-line bg-ink/40 px-4 py-3'
   if (!shown) return <p className={frame}>Loading…</p>
   if ('error' in shown) {
     return (
@@ -178,7 +178,7 @@ export function PackageDetail({
         </div>
       }
     >
-      <div className="-mt-1 flex gap-4">
+      <div className="flex gap-4">
         <PackageIcon pkg={pkg} className="size-20" />
         <div className="min-w-0 flex-1">
           <p>
@@ -307,7 +307,7 @@ export function PackageDetail({
       <div role="tabpanel" className="mt-3">
         {tab === 'deps' ? (
           selected && selected.dependencies.length > 0 ? (
-            <ul className="max-h-[50vh] overflow-y-auto rounded-lg border border-line">
+            <ul className="rounded-lg border border-line">
               {selected.dependencies.map((dep) => {
                 const d = splitDependency(dep)
                 return (

@@ -136,7 +136,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     const found = await games.domainFor(def, settings)
     if (!found) {
       throw new Error(
-        `${def.displayName} isn't on Nexus Mods. Set its Nexus domain in the game's menu.`
+        `${def.displayName} isn't on Nexus Mods. Set its Nexus Mods page in the game's menu.`
       )
     }
     return found

@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
-import type { GhUpdate, InstalledMod, ModSource, ModUpdate, NxUpdate } from '../../../shared/types'
+import type {
+  GhUpdate,
+  InstalledMod,
+  ModSource,
+  ModUpdate,
+  NxMod,
+  NxUpdate,
+  TsPackage
+} from '../../../shared/types'
 import { api, errorMessage, pathForFile } from '../api'
 import { sourcesFor } from '../customView'
 import {
@@ -16,11 +24,15 @@ import { initials, UNSUPPORTED_LOADER } from '../tsView'
 import { useFallbackSrc } from '../useFallbackSrc'
 import { Browse } from './Browse'
 import { GithubDialog } from './GithubDialog'
-import { ProgressLine } from './PackageDetail'
+import { NexusDetail } from './NexusDetail'
+import { PackageDetail, ProgressLine } from './PackageDetail'
 import { Button, ConfirmDialog, Icon, Menu, type MenuItem } from './ui'
 
-const SOURCE_BADGE: Record<ModSource['kind'], { label: string; className: string }> = {
-  thunderstore: { label: 'Thunderstore', className: 'text-[#79b8ff] bg-[#79b8ff]/10' },
+/** Thunderstore is where most mods come from, so only the other sources get a badge. */
+const SOURCE_BADGE: Record<
+  Exclude<ModSource['kind'], 'thunderstore'>,
+  { label: string; className: string }
+> = {
   github: { label: 'GitHub', className: 'text-fg bg-fg/10' },
   nexus: { label: 'Nexus', className: 'text-warn bg-warn/10' },
   local: { label: 'Local file', className: 'text-muted bg-muted/10' }
@@ -29,6 +41,9 @@ const SOURCE_BADGE: Record<ModSource['kind'], { label: string; className: string
 const hasFiles = (e: DragEvent): boolean => e.dataTransfer.types.includes('Files')
 
 const NO_ICONS: string[] = []
+
+type Filter = 'all' | 'updates' | 'disabled'
+type Detail = { kind: 'ts'; pkg: TsPackage } | { kind: 'nx'; domain: string; mod: NxMod }
 const NO_ICON_MAP: Record<string, string[]> = {}
 
 /**
@@ -89,6 +104,9 @@ export function ModList(): React.JSX.Element | null {
   // dragenter/dragleave fire for every child element; count depth to know when we truly left.
   const depth = useRef(0)
   const icons = useModIcons(game?.label, profile?.id, profile?.mods)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<Filter>('all')
+  const [detail, setDetail] = useState<Detail | null>(null)
 
   if (!profile || !game) return null
   const updateById = new Map(updates.map((u) => [u.modId, u]))
@@ -124,6 +142,41 @@ export function ModList(): React.JSX.Element | null {
   )
   const mods = [...profile.mods].sort((a, b) => a.name.localeCompare(b.name))
   const enabledCount = mods.filter((m) => m.enabled).length
+  const hasUpdate = (m: InstalledMod): boolean =>
+    updateById.has(m.id) || ghUpdateById.has(m.id) || nxUpdateById.has(m.id)
+  const disabledCount = mods.length - enabledCount
+  // A quick filter whose count drops to zero (the last update installed) shows everything again.
+  const activeFilter =
+    (filter === 'updates' && updateCount === 0) || (filter === 'disabled' && disabledCount === 0)
+      ? 'all'
+      : filter
+  const needle = query.trim().toLowerCase()
+  const shown = mods.filter(
+    (m) =>
+      (activeFilter === 'all' || (activeFilter === 'updates' ? hasUpdate(m) : !m.enabled)) &&
+      (!needle || m.name.toLowerCase().includes(needle) || m.id.toLowerCase().includes(needle))
+  )
+  const browseOnline = (): void => {
+    setTab('online')
+    setOnlineOpened(true)
+  }
+
+  async function openDetail(mod: InstalledMod): Promise<void> {
+    const source = mod.source
+    if (!game) return
+    try {
+      if (source.kind === 'thunderstore') {
+        const pkg = await api.tsGetPackage(game.label, source.fullName)
+        if (pkg) setDetail({ kind: 'ts', pkg })
+        else toast('error', `${mod.name} is no longer listed on Thunderstore.`)
+      } else if (source.kind === 'nexus') {
+        const d = await api.nxGetMod(game.label, source.modId)
+        setDetail({ kind: 'nx', domain: d.domain, mod: d.mod })
+      }
+    } catch (e) {
+      toast('error', errorMessage(e))
+    }
+  }
 
   function onDrop(e: DragEvent): void {
     e.preventDefault()
@@ -170,13 +223,7 @@ export function ModList(): React.JSX.Element | null {
             <span className="ml-2 text-xs font-normal text-muted tabular-nums">{mods.length}</span>
           </TabButton>
           {hasOnline && (
-            <TabButton
-              selected={activeTab === 'online'}
-              onSelect={() => {
-                setTab('online')
-                setOnlineOpened(true)
-              }}
-            >
+            <TabButton selected={activeTab === 'online'} onSelect={browseOnline}>
               Online
             </TabButton>
           )}
@@ -213,6 +260,7 @@ export function ModList(): React.JSX.Element | null {
         <EmptyState
           onPick={() => void installFromFile()}
           onGithub={openGithub}
+          onBrowse={hasOnline ? browseOnline : undefined}
           supported={game.supported}
           busy={busy}
           custom={custom}
@@ -220,9 +268,40 @@ export function ModList(): React.JSX.Element | null {
         />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-3">
-          <div className="flex min-h-9 items-center justify-between gap-3 px-2 pb-2">
-            <p className="text-xs text-muted">
-              {enabledCount} of {mods.length} enabled. Drop .zip files anywhere here to install.
+          <div className="flex min-h-9 flex-wrap items-center gap-2 px-2 pb-2">
+            <label className="relative w-64">
+              <span className="sr-only">Filter installed mods</span>
+              <Icon
+                name="search"
+                className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted"
+              />
+              <input
+                type="search"
+                data-find
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Filter mods"
+                className="h-8 w-full rounded-md border border-line bg-panel pr-2 pl-8 text-sm text-fg placeholder:text-muted focus:border-ember/70 focus:outline-none"
+              />
+            </label>
+            {updateCount > 0 && (
+              <FilterChip
+                selected={activeFilter === 'updates'}
+                onToggle={() => setFilter(activeFilter === 'updates' ? 'all' : 'updates')}
+              >
+                Updates {updateCount}
+              </FilterChip>
+            )}
+            {disabledCount > 0 && (
+              <FilterChip
+                selected={activeFilter === 'disabled'}
+                onToggle={() => setFilter(activeFilter === 'disabled' ? 'all' : 'disabled')}
+              >
+                Disabled {disabledCount}
+              </FilterChip>
+            )}
+            <p className="ml-auto text-xs text-muted tabular-nums">
+              {enabledCount} of {mods.length} enabled
             </p>
             {updateCount > 0 && (
               <Button
@@ -236,20 +315,54 @@ export function ModList(): React.JSX.Element | null {
               </Button>
             )}
           </div>
-          <ul className="flex flex-col">
-            {mods.map((m) => (
-              <ModRow
-                key={m.id}
-                mod={m}
-                icons={icons[m.id] ?? NO_ICONS}
-                update={updateById.get(m.id)}
-                ghUpdate={ghUpdateById.get(m.id)}
-                nxUpdate={nxUpdateById.get(m.id)}
-                supported={game.supported}
-              />
-            ))}
-          </ul>
+          {shown.length === 0 ? (
+            <div className="px-2 py-10 text-center text-sm text-muted">
+              <p>{needle ? `No mods match “${query.trim()}”.` : 'No mods match this filter.'}</p>
+              <Button
+                variant="ghost"
+                className="mt-3"
+                onClick={() => {
+                  setQuery('')
+                  setFilter('all')
+                }}
+              >
+                Show all mods
+              </Button>
+            </div>
+          ) : (
+            <ul className="flex flex-col">
+              {shown.map((m) => (
+                <ModRow
+                  key={m.id}
+                  mod={m}
+                  icons={icons[m.id] ?? NO_ICONS}
+                  update={updateById.get(m.id)}
+                  ghUpdate={ghUpdateById.get(m.id)}
+                  nxUpdate={nxUpdateById.get(m.id)}
+                  supported={game.supported}
+                  onOpen={
+                    m.source.kind === 'thunderstore' || m.source.kind === 'nexus'
+                      ? () => void openDetail(m)
+                      : undefined
+                  }
+                />
+              ))}
+            </ul>
+          )}
         </div>
+      )}
+
+      {detail?.kind === 'ts' && (
+        <PackageDetail key={detail.pkg.fullName} pkg={detail.pkg} onClose={() => setDetail(null)} />
+      )}
+      {detail?.kind === 'nx' && (
+        <NexusDetail
+          key={detail.mod.modId}
+          game={game.label}
+          domain={detail.domain}
+          mod={detail.mod}
+          onClose={() => setDetail(null)}
+        />
       )}
 
       {githubOpen && <GithubDialog onClose={() => setGithubOpen(false)} />}
@@ -264,6 +377,31 @@ export function ModList(): React.JSX.Element | null {
         </div>
       )}
     </section>
+  )
+}
+
+function FilterChip({
+  selected,
+  onToggle,
+  children
+}: {
+  selected: boolean
+  onToggle(): void
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onToggle}
+      className={`h-8 rounded-md border px-2.5 text-xs font-medium tabular-nums transition-colors ${
+        selected
+          ? 'border-ember/60 bg-ember/15 text-fg'
+          : 'border-line text-muted hover:border-[#3a5664] hover:text-fg'
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -323,7 +461,8 @@ function ModRow({
   update,
   ghUpdate,
   nxUpdate,
-  supported
+  supported,
+  onOpen
 }: {
   mod: InstalledMod
   icons: string[]
@@ -331,6 +470,8 @@ function ModRow({
   ghUpdate?: GhUpdate
   nxUpdate?: NxUpdate
   supported: boolean
+  /** Opens the mod's details; missing for sources that have no details view. */
+  onOpen?(): void
 }): React.JSX.Element {
   const setModEnabled = useStore((s) => s.setModEnabled)
   const uninstallMod = useStore((s) => s.uninstallMod)
@@ -340,6 +481,7 @@ function ModRow({
   const setUpdateMode = useStore((s) => s.ghSetUpdateMode)
   const setPrereleases = useStore((s) => s.ghSetPrereleases)
   const toast = useStore((s) => s.toast)
+  const game = useStore((s) => s.currentGame?.label ?? '')
   const updating = useStore((s) =>
     mod.source.kind === 'thunderstore'
       ? s.tsInstalling.includes(mod.source.fullName)
@@ -348,7 +490,7 @@ function ModRow({
         : s.ghUpdating.includes(mod.id)
   )
   const [confirming, setConfirming] = useState(false)
-  const badge = SOURCE_BADGE[mod.source.kind]
+  const badge = mod.source.kind === 'thunderstore' ? null : SOURCE_BADGE[mod.source.kind]
   const canToggle = mod.disableable.length > 0
   const source = mod.source
   const latest = update?.latest ?? ghUpdate?.latest ?? nxUpdate?.latest
@@ -365,7 +507,16 @@ function ModRow({
     onSelect: () => setConfirming(true)
   }
   let menu: MenuItem[] = [uninstall]
-  if (source.kind === 'github') {
+  if (source.kind === 'thunderstore') {
+    menu = [
+      ...(onOpen ? [{ label: 'Details…', onSelect: onOpen }] : []),
+      {
+        label: 'Open on Thunderstore',
+        onSelect: () => void openOnThunderstore()
+      },
+      { ...uninstall, divider: true }
+    ]
+  } else if (source.kind === 'github') {
     const mode = mod.github?.updateMode ?? 'auto'
     menu = [
       {
@@ -404,22 +555,27 @@ function ModRow({
       { ...uninstall, divider: true }
     ]
   }
+  if (source.kind === 'nexus' && onOpen) menu = [{ label: 'Details…', onSelect: onOpen }, ...menu]
 
-  return (
-    <li className="group flex items-center gap-4 rounded-lg px-2 py-2.5 hover:bg-panel">
-      <Toggle
-        checked={mod.enabled}
-        disabled={!canToggle}
-        label={`${mod.enabled ? 'Disable' : 'Enable'} ${mod.name}`}
-        title={canToggle ? undefined : 'This mod has no files that can be switched off'}
-        onChange={(v) => void setModEnabled(mod.id, v)}
-      />
+  async function openOnThunderstore(): Promise<void> {
+    if (source.kind !== 'thunderstore') return
+    try {
+      const pkg = await api.tsGetPackage(game, source.fullName)
+      if (!pkg) throw new Error(`${mod.name} is no longer listed on Thunderstore.`)
+      await api.openExternal(pkg.packageUrl)
+    } catch (e) {
+      toast('error', errorMessage(e))
+    }
+  }
+
+  const summary = (
+    <>
       <div className={mod.enabled ? '' : 'opacity-55'}>
         <ModIcon name={mod.name} urls={icons} />
       </div>
       <div className={`min-w-0 flex-1 ${mod.enabled ? '' : 'opacity-55'}`}>
         <div className="flex items-baseline gap-2">
-          <span className="truncate font-medium">{mod.name}</span>
+          <span className="truncate font-medium text-fg">{mod.name}</span>
           <span className="shrink-0 text-xs text-muted tabular-nums">{mod.version}</span>
           {isPrereleaseInstall(mod) && (
             <span
@@ -434,8 +590,6 @@ function ModRow({
           <ProgressLine className="mt-0.5" />
         ) : source.kind === 'local' ? (
           <p className="truncate text-xs text-muted">{source.fileName}</p>
-        ) : source.kind === 'nexus' ? (
-          <p className="truncate text-xs text-muted">Nexus Mods · {mod.version}</p>
         ) : (
           source.kind === 'github' && (
             <p className="truncate text-xs text-muted">
@@ -444,6 +598,37 @@ function ModRow({
           )
         )}
       </div>
+    </>
+  )
+
+  return (
+    <li className="group flex items-center gap-4 rounded-lg px-2 py-2.5 hover:bg-panel">
+      {canToggle ? (
+        <Toggle
+          checked={mod.enabled}
+          label={`${mod.enabled ? 'Disable' : 'Enable'} ${mod.name}`}
+          onChange={(v) => void setModEnabled(mod.id, v)}
+        />
+      ) : (
+        <span
+          className="w-9 shrink-0 text-center text-[10px] leading-tight font-medium text-muted"
+          title="This mod has no files that can be switched off"
+        >
+          Always on
+        </span>
+      )}
+      {onOpen ? (
+        <button
+          type="button"
+          onClick={onOpen}
+          title={`Details for ${mod.name}`}
+          className="-my-1 flex min-w-0 flex-1 items-center gap-4 rounded-md py-1 text-left"
+        >
+          {summary}
+        </button>
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-4">{summary}</div>
+      )}
       {latest && (
         <Button
           className="h-7 px-2.5 text-xs"
@@ -454,9 +639,13 @@ function ModRow({
           {updating ? 'Updating…' : `Update to ${latest}`}
         </Button>
       )}
-      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${badge.className}`}>
-        {badge.label}
-      </span>
+      {badge && (
+        <span
+          className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${badge.className}`}
+        >
+          {badge.label}
+        </span>
+      )}
       <Menu label={`Actions for ${mod.name}`} items={menu} />
       {confirming && (
         <ConfirmDialog
@@ -509,6 +698,7 @@ function Toggle({
 function EmptyState({
   onPick,
   onGithub,
+  onBrowse,
   supported,
   busy,
   custom,
@@ -516,6 +706,8 @@ function EmptyState({
 }: {
   onPick(): void
   onGithub(): void
+  /** Opens the Online tab; missing when the game has no online catalog. */
+  onBrowse?(): void
   supported: boolean
   busy: boolean
   custom: boolean
@@ -523,7 +715,7 @@ function EmptyState({
 }): React.JSX.Element {
   const githubButton = (
     <Button
-      variant={githubPrimary ? 'primary' : 'ghost'}
+      variant={githubPrimary && !onBrowse ? 'primary' : 'ghost'}
       disabled={busy || !supported}
       title={supported ? undefined : UNSUPPORTED_LOADER}
       onClick={onGithub}
@@ -532,24 +724,35 @@ function EmptyState({
       Add from GitHub
     </Button>
   )
-  // Catalog games keep zip install as the primary action; for custom games it is the fallback.
+  // Browsing is the main way in when the game has a catalog; otherwise GitHub or a zip.
   const fileButton = (
-    <Button variant={custom ? (githubPrimary ? 'quiet' : 'ghost') : 'primary'} onClick={onPick}>
+    <Button
+      variant={onBrowse || githubPrimary ? 'quiet' : custom ? 'ghost' : 'primary'}
+      onClick={onPick}
+    >
       Install from file
     </Button>
   )
   return (
     <div className="grid flex-1 place-items-center p-8">
-      <div className="max-w-sm rounded-xl border border-dashed border-line px-8 py-10 text-center">
+      <div className="max-w-lg rounded-xl border border-dashed border-line px-8 py-10 text-center">
         <Icon name="upload" className="mx-auto size-7 text-muted" />
         <p className="mt-3 font-semibold">No mods in this profile yet</p>
-        <p className="mt-1 text-sm text-muted">
-          {custom
-            ? 'Add a mod from its GitHub repository, or drop a .zip here.'
-            : 'Drag mod .zip files here, pick them from disk, or add a mod from its GitHub repository. Start with BepInExPack if the game needs it.'}
+        <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
+          {onBrowse
+            ? 'Find mods in the Online tab, add one from its GitHub repository, or drop a .zip here.'
+            : custom
+              ? 'Add a mod from its GitHub repository, or drop a .zip here.'
+              : 'Drop mod .zip files here, pick them from disk, or add a mod from its GitHub repository.'}
         </p>
-        <div className="mt-5 flex justify-center gap-2">
-          {githubPrimary ? (
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          {onBrowse && (
+            <Button variant="primary" onClick={onBrowse}>
+              <Icon name="search" />
+              Browse mods
+            </Button>
+          )}
+          {githubPrimary || onBrowse ? (
             <>
               {githubButton}
               {fileButton}

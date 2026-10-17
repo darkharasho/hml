@@ -56,6 +56,7 @@ export function Modal({
 }): React.JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const closeRef = useRef(onClose)
   useEffect(() => {
@@ -69,8 +70,16 @@ export function Modal({
       document.activeElement instanceof HTMLElement ? document.activeElement : null
     modalLayers.open(layer)
     dialog.show()
+    // Chrome can focus the scrolling body itself; the first control inside it is more useful.
+    if (document.activeElement === bodyRef.current) {
+      const first = bodyRef.current?.querySelector<HTMLElement>(
+        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href]'
+      )
+      first?.focus()
+    }
     // Keep an autoFocus field's focus; otherwise focus the dialog so keys reach it.
-    if (!dialog.contains(document.activeElement)) dialog.focus()
+    if (!dialog.contains(document.activeElement) || document.activeElement === bodyRef.current)
+      dialog.focus()
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return
       if (modalLayers.isTop(layer)) {
@@ -92,7 +101,8 @@ export function Modal({
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
-      className="fixed inset-0 z-[55] flex bg-[#061014]/70 p-4 backdrop-blur-[2px]"
+      // The top padding keeps the dialog clear of the 38px titlebar, which sits above this layer.
+      className="fixed inset-0 z-[55] flex bg-[#061014]/70 p-4 pt-[54px] backdrop-blur-[2px]"
     >
       <dialog
         ref={dialogRef}
@@ -100,21 +110,36 @@ export function Modal({
         aria-labelledby={title ? titleId : undefined}
         aria-label={title ? undefined : 'Dialog'}
         tabIndex={-1}
-        className={`${width} relative m-auto max-h-full max-w-full overflow-auto rounded-xl border border-line bg-panel p-0 text-fg shadow-[0_24px_64px_-16px_rgba(0,0,0,0.7)] outline-none [animation:dialog-in_160ms_ease-out]`}
+        className={`${width} relative m-auto flex max-h-full max-w-full flex-col overflow-hidden rounded-xl border border-line bg-panel p-0 text-fg shadow-[0_24px_64px_-16px_rgba(0,0,0,0.7)] outline-none [animation:dialog-in_160ms_ease-out]`}
       >
-        <div className="px-5 pt-5 pb-4">
-          {title && (
-            <h2 id={titleId} className="text-base font-semibold tracking-tight">
-              {title}
-            </h2>
-          )}
-          <div className="mt-3 text-sm text-muted">{children}</div>
+        {/* The title and the buttons stay put; only the body scrolls. */}
+        <h2
+          id={titleId}
+          className="shrink-0 px-5 pt-5 pr-14 pb-1 text-base font-semibold tracking-tight"
+        >
+          {title}
+        </h2>
+        <div
+          ref={bodyRef}
+          className="min-h-0 flex-1 overflow-y-auto px-5 pt-2 pb-4 text-sm text-muted"
+        >
+          {children}
         </div>
         {footer && (
-          <div className="flex justify-end gap-2 border-t border-line bg-ink/40 px-5 py-3">
+          <div className="flex shrink-0 justify-end gap-2 border-t border-line bg-ink/40 px-5 py-3">
             {footer}
           </div>
         )}
+        {/* Last in tab order, so opening a dialog still focuses its first field. */}
+        <button
+          type="button"
+          aria-label="Close"
+          title="Close"
+          onClick={onClose}
+          className="absolute top-3.5 right-3.5 grid size-8 place-items-center rounded-md text-muted hover:bg-raised hover:text-fg"
+        >
+          <Icon name="close" />
+        </button>
       </dialog>
     </div>,
     document.body
@@ -165,6 +190,7 @@ const ICONS = {
     'M11 4a7 7 0 1 0 4.2 12.6l4.1 4.1 1.4-1.4-4.1-4.1A7 7 0 0 0 11 4Zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z',
   gear: 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.74 8.87a.47.47 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.47.47 0 0 0-.12-.61l-2.01-1.58ZM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2Z',
   plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z',
+  back: 'M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20v-2Z',
   dots: 'M12 7.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm0 6a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm0 6a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z',
   play: 'M8 5.5v13a.5.5 0 0 0 .8.4l10-6.5a.5.5 0 0 0 0-.8l-10-6.5a.5.5 0 0 0-.8.4Z',
   folder: 'M3 6a2 2 0 0 1 2-2h4.6l2 2H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z',

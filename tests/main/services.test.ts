@@ -3042,7 +3042,7 @@ describe('services', () => {
       return nx.installFromNxm as never
     }
     const withKey = async (): Promise<void> => void (await api.nxSetKey(KEY))
-    const NO_DOMAIN = "R.E.P.O. isn't on Nexus Mods. Set its Nexus domain in the game's menu."
+    const NO_DOMAIN = "R.E.P.O. isn't on Nexus Mods. Set its Nexus Mods page in the game's menu."
 
     test('setting the key validates, saves and reports the user without secrets', async () => {
       expect(await api.nxSetKey(`  ${KEY}\n`)).toEqual({ name: 'Haro', isPremium: true })

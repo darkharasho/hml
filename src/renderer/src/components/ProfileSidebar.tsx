@@ -22,6 +22,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const removeCustomGame = useStore((s) => s.removeCustomGame)
   const toast = useStore((s) => s.toast)
   const openSettings = useStore((s) => s.setSettingsOpen)
+  const pickGamePath = useStore((s) => s.pickGamePath)
   // Also opened by "New profile…" in the titlebar.
   const creating = useStore((s) => s.creatingProfile)
   const setCreating = useStore((s) => s.setCreatingProfile)
@@ -52,6 +53,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
   }, [gameLabel, isBepinex, manualPrompt])
 
   if (!game) return null
+  const activeProfile = profiles.find((p) => p.id === currentProfile) ?? null
 
   // Nexus-only games always use their own domain; catalog and custom games can set one.
   const menuItems: MenuItem[] = []
@@ -59,8 +61,11 @@ export function ProfileSidebar(): React.JSX.Element | null {
     label: 'Remove manual BepInEx install…',
     onSelect: () => setRemovingManual(true)
   }
+  // Custom games set their folder when they're added.
+  if (!game.custom)
+    menuItems.push({ label: 'Game folder…', onSelect: () => void pickGamePath(game.label) })
   if (!isNexusOnly(game))
-    menuItems.push({ label: 'Nexus domain…', onSelect: () => setDomainOpen(true) })
+    menuItems.push({ label: 'Nexus Mods page…', onSelect: () => setDomainOpen(true) })
   if (game.custom) {
     menuItems.push({ label: 'Rename…', onSelect: () => setEditOpen(true) })
     menuItems.push({ label: 'Change loader…', onSelect: () => setEditOpen(true) })
@@ -119,25 +124,15 @@ export function ProfileSidebar(): React.JSX.Element | null {
 
       <div className="flex items-center justify-between px-4 pt-4 pb-2">
         <h2 className="text-sm font-semibold text-muted">Profiles</h2>
-        <div className="flex items-center gap-0.5">
-          <button
-            type="button"
-            title="Import a shared profile"
-            onClick={() => setImportOpen(true)}
-            className="h-7 rounded-md px-2 text-xs font-medium text-muted hover:bg-raised hover:text-fg"
-          >
-            Import
-          </button>
-          <button
-            type="button"
-            aria-label="New profile"
-            title="New profile"
-            onClick={() => setCreating(true)}
-            className="grid size-7 place-items-center rounded-md text-muted hover:bg-raised hover:text-fg"
-          >
-            <Icon name="plus" />
-          </button>
-        </div>
+        <button
+          type="button"
+          aria-label="New profile"
+          title="New profile"
+          onClick={() => setCreating(true)}
+          className="grid size-7 place-items-center rounded-md text-muted hover:bg-raised hover:text-fg"
+        >
+          <Icon name="plus" />
+        </button>
       </div>
 
       <ul className="flex-1 overflow-y-auto px-2 pb-2">
@@ -205,7 +200,29 @@ export function ProfileSidebar(): React.JSX.Element | null {
         })}
       </ul>
 
-      <div className="border-t border-line p-2">
+      <div className="flex flex-col gap-1 border-t border-line p-2">
+        {/* Sharing is a headline feature, so it sits in plain view rather than only in a menu. */}
+        <div className="grid grid-cols-2 gap-1">
+          <Button
+            variant="quiet"
+            className="justify-start"
+            disabled={!activeProfile}
+            title={activeProfile ? `Share ${activeProfile.name} as a code or file` : undefined}
+            onClick={() => activeProfile && setSharing(activeProfile)}
+          >
+            <Icon name="upload" />
+            Share
+          </Button>
+          <Button
+            variant="quiet"
+            className="justify-start"
+            title="Import a profile from a share code or file, including r2modman"
+            onClick={() => setImportOpen(true)}
+          >
+            <Icon name="download" />
+            Import
+          </Button>
+        </div>
         <Button variant="quiet" className="w-full justify-start" onClick={() => openSettings(true)}>
           <Icon name="gear" />
           Settings
@@ -340,7 +357,7 @@ function NexusDomainDialog({
     current === undefined
       ? 'Looking up this game on Nexus Mods…'
       : lookupError
-        ? `Couldn't look up the domain: ${lookupError}`
+        ? `Couldn't look up the game on Nexus Mods: ${lookupError}`
         : current
           ? `Using nexusmods.com/${current}`
           : "HML didn't find this game on Nexus Mods."
@@ -358,7 +375,7 @@ function NexusDomainDialog({
 
   return (
     <Modal
-      title={`Nexus domain for ${displayName}`}
+      title={`Nexus Mods page for ${displayName}`}
       onClose={onClose}
       width="w-[480px]"
       footer={
@@ -392,12 +409,12 @@ function NexusDomainDialog({
           nexusmods.com/skyrimspecialedition. Clear goes back to finding it automatically.
         </p>
         <label className="mt-4 block">
-          <span className="sr-only">Nexus domain</span>
+          <span className="sr-only">Nexus Mods page name</span>
           <input
             autoFocus
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={current ?? 'Nexus domain'}
+            placeholder={current ?? 'Page name'}
             spellCheck={false}
             autoComplete="off"
             className="h-9 w-full rounded-md border border-line bg-ink px-3 text-sm text-fg placeholder:text-muted focus:border-ember/70 focus:outline-none"

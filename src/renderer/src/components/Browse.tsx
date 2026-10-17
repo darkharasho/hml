@@ -115,6 +115,7 @@ function ThunderstoreBrowse({
   const [loadingMore, setLoadingMore] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [detail, setDetail] = useState<TsPackage | null>(null)
+  const [allCategories, setAllCategories] = useState(false)
   const checkUpdates = useStore((s) => s.checkUpdates)
   const toast = useStore((s) => s.toast)
   // Every request takes a number; only the latest one may write results.
@@ -204,6 +205,7 @@ function ThunderstoreBrowse({
           />
           <input
             type="search"
+            data-find
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Search mods"
@@ -235,40 +237,68 @@ function ThunderstoreBrowse({
           variant="quiet"
           disabled={refreshing}
           onClick={() => void refresh()}
+          aria-label={refreshing ? 'Refreshing the package list' : 'Refresh the package list'}
           title="Download the latest package list from Thunderstore"
         >
           <Icon name="refresh" className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />
-          {refreshing ? 'Refreshing…' : 'Refresh'}
         </Button>
       </div>
 
       {page && page.categories.length > 0 && (
-        <div role="group" aria-label="Categories" className="flex flex-wrap gap-1.5 px-6 pt-3">
-          {page.categories.map((c) => {
-            const on = categories.includes(c)
-            return (
-              <button
-                key={c}
-                type="button"
-                aria-pressed={on}
-                onClick={() => toggleCategory(c)}
-                className={`h-7 rounded-full border px-2.5 text-xs transition-colors ${
-                  on
-                    ? 'border-ember bg-ember/15 text-ember'
-                    : 'border-line text-muted hover:border-[#3a5664] hover:text-fg'
-                }`}
-              >
-                {c}
-              </button>
-            )
-          })}
+        <div className="flex items-start gap-2 px-6 pt-3">
+          {/* One line of categories until expanded; chosen ones come first so they stay in view. */}
+          <div
+            role="group"
+            aria-label="Categories"
+            className={`flex flex-1 flex-wrap gap-1.5 ${allCategories ? '' : 'max-h-7 overflow-hidden'}`}
+          >
+            {[
+              ...page.categories.filter((c) => categories.includes(c)),
+              ...page.categories.filter((c) => !categories.includes(c))
+            ].map((c) => {
+              const on = categories.includes(c)
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleCategory(c)}
+                  className={`h-7 rounded-full border px-2.5 text-xs transition-colors ${
+                    on
+                      ? 'border-ember bg-ember/15 text-ember'
+                      : 'border-line text-muted hover:border-[#3a5664] hover:text-fg'
+                  }`}
+                >
+                  {c}
+                </button>
+              )
+            })}
+          </div>
+          {categories.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setCategories([])}
+              className="h-7 shrink-0 px-1 text-xs text-muted hover:text-fg"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            type="button"
+            aria-expanded={allCategories}
+            onClick={() => setAllCategories((v) => !v)}
+            className="h-7 shrink-0 px-1 text-xs font-medium text-muted hover:text-fg"
+          >
+            {allCategories ? 'Fewer categories' : 'All categories'}
+          </button>
         </div>
       )}
 
       {page?.stale && (
         <p className="mx-6 mt-3 flex items-center gap-2 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
           <Icon name="warn" className="size-3.5 shrink-0" />
-          Thunderstore is unreachable — showing the cached list from {relativeTime(page.fetchedAt)}
+          Thunderstore is unreachable, so this is the cached list from{' '}
+          {relativeTime(page.fetchedAt)}.
         </p>
       )}
 

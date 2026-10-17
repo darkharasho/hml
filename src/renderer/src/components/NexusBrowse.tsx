@@ -159,6 +159,7 @@ function NexusResults({
           />
           <input
             type="search"
+            data-find
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Search mods"
@@ -376,7 +377,7 @@ function NoDomain({ game, onSaved }: { game: string; onSaved(): void }): React.J
     setSaving(true)
     try {
       await api.nxSetDomain(game, value)
-      toast('success', `Saved Nexus domain ${value}`)
+      toast('success', `Using nexusmods.com/${value}`)
       onSaved()
     } catch (e) {
       toast('error', errorMessage(e))
@@ -401,11 +402,11 @@ function NoDomain({ game, onSaved }: { game: string; onSaved(): void }): React.J
         </p>
         <div className="mt-4 flex gap-2">
           <label className="min-w-0 flex-1">
-            <span className="sr-only">Nexus domain</span>
+            <span className="sr-only">Nexus Mods page name</span>
             <input
               value={domain}
               onChange={(e) => setDomain(e.target.value)}
-              placeholder="Nexus domain"
+              placeholder="Page name"
               spellCheck={false}
               autoComplete="off"
               className="h-9 w-full rounded-md border border-line bg-panel px-3 text-sm text-fg placeholder:text-muted focus:border-ember/60 focus:outline-none"
