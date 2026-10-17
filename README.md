@@ -72,6 +72,7 @@ HML works like [r2modman](https://github.com/ebkr/r2modmanPlus), with a modern i
 - Export a profile as a short code or a `.hml` file
 - Importing rebuilds the same mod list at the same versions
 - Covers Thunderstore, Nexus and GitHub mods
+- Imports r2modman codes and `.r2z` files too
 
 </td>
 <td valign="top">
