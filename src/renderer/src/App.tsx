@@ -5,6 +5,7 @@ import { ManualLoaderDialog } from './components/ManualLoaderDialog'
 import { ModList } from './components/ModList'
 import { ProfileSidebar } from './components/ProfileSidebar'
 import { SettingsDialog } from './components/SettingsDialog'
+import { TitleBar } from './components/TitleBar'
 import { Toasts } from './components/Toast'
 import { useStore } from './store'
 
@@ -28,19 +29,24 @@ function App(): React.JSX.Element {
 
   return (
     <>
-      {!ready ? (
-        <div className="grid h-full place-items-center text-sm text-muted">Loading…</div>
-      ) : game ? (
-        <div className="flex h-full">
-          <ProfileSidebar />
-          <div className="flex min-w-0 flex-1 flex-col">
-            <LaunchBar />
-            <ModList />
-          </div>
+      <div className="flex h-full flex-col">
+        <TitleBar />
+        <div className="min-h-0 flex-1" data-inert-under-modal>
+          {!ready ? (
+            <div className="grid h-full place-items-center text-sm text-muted">Loading…</div>
+          ) : game ? (
+            <div className="flex h-full">
+              <ProfileSidebar />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <LaunchBar />
+                <ModList />
+              </div>
+            </div>
+          ) : (
+            <GamePicker />
+          )}
         </div>
-      ) : (
-        <GamePicker />
-      )}
+      </div>
       <ManualLoaderDialog />
       <SettingsDialog />
       <Toasts />

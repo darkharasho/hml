@@ -1,6 +1,14 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { HmlEvent } from '../shared/types'
-import { HML_METHODS, channel, stripIpcErrorPrefix, type HmlApi } from '../shared/ipc'
+import {
+  HML_METHODS,
+  WINDOW_MAXIMIZED_EVENT,
+  WINDOW_METHODS,
+  channel,
+  stripIpcErrorPrefix,
+  windowChannel,
+  type HmlApi
+} from '../shared/ipc'
 
 const api = Object.fromEntries(
   HML_METHODS.map((m) => [
@@ -25,6 +33,18 @@ contextBridge.exposeInMainWorld('hmlPlatform', process.platform)
 // Dropped File objects carry no path under contextIsolation; Electron resolves it here.
 contextBridge.exposeInMainWorld('hmlFiles', {
   getPathForFile: (f: File) => webUtils.getPathForFile(f)
+})
+
+// The titlebar's window buttons, and maximize changes so its maximize/restore icon follows.
+contextBridge.exposeInMainWorld('hmlWindow', {
+  ...Object.fromEntries(WINDOW_METHODS.map((m) => [m, () => ipcRenderer.invoke(windowChannel(m))])),
+  onMaximizedChange(cb: (maximized: boolean) => void): () => void {
+    const listener = (_ev: unknown, maximized: boolean): void => cb(maximized)
+    ipcRenderer.on(WINDOW_MAXIMIZED_EVENT, listener)
+    return () => {
+      ipcRenderer.removeListener(WINDOW_MAXIMIZED_EVENT, listener)
+    }
+  }
 })
 
 // Main can emit before the renderer subscribes (an nxm:// link that launched HML is handled on

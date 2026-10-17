@@ -188,6 +188,12 @@ export interface ImportResult {
 
 export type LaunchMode = 'modded' | 'vanilla'
 
+/**
+ * How waiting for a launched game ended: seen running, not seen in time, not detectable,
+ * stopped by the user (or a new wait), or the program HML started exited first.
+ */
+export type LaunchWatchResult = 'running' | 'timeout' | 'unknown' | 'cancelled' | 'exited'
+
 /** Codes returned by getLaunchWarnings. Blockers stop a modded launch; the rest are advice. */
 export type LaunchWarning =
   | 'game-not-found'

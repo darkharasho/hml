@@ -106,12 +106,13 @@ export function disableDoorstopIni(text: string): string {
   return text.replace(/^(\s*enabled\s*=\s*)true\b/gim, '$1false')
 }
 
+/** Starts the plan; `exited` settles when the started program exits (or fails afterwards). */
 export async function launch(
   plan: LaunchPlan,
   profileDir: string,
   gameDir: string,
   spawnFn: typeof nodeSpawn = nodeSpawn
-): Promise<void> {
+): Promise<{ exited: Promise<void> }> {
   for (const rel of plan.copyToGameDir) {
     if (rel === '.' || rel === '..' || rel.includes('/') || rel.includes('\\')) {
       throw new Error(`Invalid copy entry: ${rel}`)
@@ -154,6 +155,11 @@ export async function launch(
         resolve()
       })
     })
+    const exited = new Promise<void>((resolve) => {
+      child.once('exit', () => resolve())
+      child.once('error', () => resolve())
+    })
+    return { exited }
   } catch (cause) {
     const msg = cause instanceof Error ? cause.message : String(cause)
     throw new Error(`Could not start ${plan.what}: ${msg}`, { cause })

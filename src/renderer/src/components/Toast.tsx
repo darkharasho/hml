@@ -13,6 +13,7 @@ export function Toasts(): React.JSX.Element {
   return (
     <div
       aria-live="polite"
+      data-inert-under-modal
       className="pointer-events-none fixed right-4 bottom-4 z-50 flex w-[360px] max-w-[calc(100vw-2rem)] flex-col gap-2"
     >
       {toasts.map((t) => (

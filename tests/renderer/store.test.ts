@@ -19,7 +19,10 @@ const api = vi.hoisted(() => ({
   getManualLoader: vi.fn(),
   keepManualLoader: vi.fn(),
   removeManualLoader: vi.fn(),
-  addCustomGame: vi.fn()
+  addCustomGame: vi.fn(),
+  launch: vi.fn(),
+  waitForGame: vi.fn(),
+  cancelWaitForGame: vi.fn()
 }))
 vi.mock('../../src/renderer/src/api', () => ({
   api,
@@ -416,5 +419,131 @@ describe('store manual BepInEx prompt', () => {
       .getState()
       .addCustomGame({ source: 'steam', steamAppId: '1', loaderChoice: 'none' })
     expect(useStore.getState().currentGame?.label).toBe('steam-1')
+  })
+})
+
+describe('store launch', () => {
+  const repo = { label: 'repo', displayName: 'R.E.P.O.', loader: 'bepinex' }
+  const messages = (): string[] => useStore.getState().toasts.map((t) => t.message)
+
+  beforeEach(() => {
+    api.launch.mockReset().mockResolvedValue(undefined)
+    api.waitForGame.mockReset()
+    api.cancelWaitForGame.mockReset().mockResolvedValue(undefined)
+    useStore.setState({
+      currentGame: repo as unknown as GameSummary,
+      currentProfile: 'p1',
+      launching: {},
+      toasts: []
+    })
+  })
+
+  test('marks the game launching until it is seen running', async () => {
+    let seen!: (r: 'running') => void
+    api.waitForGame.mockReturnValue(new Promise((r) => (seen = r)))
+    const run = useStore.getState().launch('modded')
+    await vi.waitFor(() => expect(api.waitForGame).toHaveBeenCalledWith('repo'))
+    expect(useStore.getState().launching).toEqual({ repo: 'modded' })
+    expect(useStore.getState().busy).toBe(false)
+    seen('running')
+    await run
+    expect(useStore.getState().launching).toEqual({})
+    expect(messages()).toEqual([])
+    expect(api.launch).toHaveBeenCalledWith('repo', 'p1', 'modded')
+  })
+
+  test('a second press while launching does nothing', async () => {
+    let seen!: (r: 'running') => void
+    api.waitForGame.mockReturnValue(new Promise((r) => (seen = r)))
+    const first = useStore.getState().launch('modded')
+    await useStore.getState().launch('vanilla')
+    expect(api.launch).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(api.waitForGame).toHaveBeenCalled())
+    seen('running')
+    await first
+  })
+
+  test('a timeout clears the state with an info toast', async () => {
+    api.waitForGame.mockResolvedValue('timeout')
+    await useStore.getState().launch('vanilla')
+    expect(useStore.getState().launching).toEqual({})
+    expect(useStore.getState().toasts).toEqual([
+      expect.objectContaining({
+        kind: 'info',
+        message: "Couldn't confirm R.E.P.O. started — it may still be loading"
+      })
+    ])
+  })
+
+  test('a failed launch clears the state, shows the error and does not wait', async () => {
+    api.launch.mockRejectedValue(new Error('Steam was not found.'))
+    await useStore.getState().launch('modded')
+    expect(useStore.getState().launching).toEqual({})
+    expect(api.waitForGame).not.toHaveBeenCalled()
+    expect(messages()).toEqual(['Steam was not found.'])
+  })
+
+  test('switching games while launching clears only the launched game', async () => {
+    let seen!: (r: 'running') => void
+    api.waitForGame.mockReturnValue(new Promise((r) => (seen = r)))
+    const run = useStore.getState().launch('modded')
+    await vi.waitFor(() => expect(api.waitForGame).toHaveBeenCalled())
+    useStore.setState({ currentGame: { ...repo, label: 'other' } as unknown as GameSummary })
+    expect(useStore.getState().launching).toEqual({ repo: 'modded' })
+    seen('running')
+    await run
+    expect(useStore.getState().launching).toEqual({})
+  })
+
+  test('cancelLaunch clears the state at once and stops the wait in main', async () => {
+    let settle!: (r: 'cancelled') => void
+    api.waitForGame.mockReturnValue(new Promise((r) => (settle = r)))
+    const run = useStore.getState().launch('modded')
+    await vi.waitFor(() => expect(api.waitForGame).toHaveBeenCalled())
+    useStore.getState().cancelLaunch('repo')
+    expect(useStore.getState().launching).toEqual({})
+    expect(api.cancelWaitForGame).toHaveBeenCalledWith('repo')
+    settle('cancelled')
+    await run
+    expect(messages()).toEqual([])
+  })
+
+  test('a launch pressed again after cancelling keeps its state when the old one ends', async () => {
+    const settles: ((r: 'cancelled' | 'running') => void)[] = []
+    api.waitForGame.mockImplementation(() => new Promise((r) => settles.push(r)))
+    const first = useStore.getState().launch('modded')
+    await vi.waitFor(() => expect(settles).toHaveLength(1))
+    useStore.getState().cancelLaunch('repo')
+    const second = useStore.getState().launch('vanilla')
+    await vi.waitFor(() => expect(settles).toHaveLength(2))
+    settles[0]('cancelled')
+    await first
+    expect(useStore.getState().launching).toEqual({ repo: 'vanilla' })
+    settles[1]('running')
+    await second
+    expect(useStore.getState().launching).toEqual({})
+  })
+
+  test('cancelling before the launch call returns skips the wait', async () => {
+    let started!: () => void
+    api.launch.mockReturnValue(new Promise<void>((r) => (started = r)))
+    const run = useStore.getState().launch('modded')
+    useStore.getState().cancelLaunch('repo')
+    started()
+    await run
+    expect(api.waitForGame).not.toHaveBeenCalled()
+    expect(useStore.getState().launching).toEqual({})
+  })
+
+  test('a game that exits before it is seen ends with an error toast', async () => {
+    api.waitForGame.mockResolvedValue('exited')
+    await useStore.getState().launch('modded')
+    expect(useStore.getState().launching).toEqual({})
+    expect(useStore.getState().toasts).toEqual([
+      expect.objectContaining({
+        kind: 'error',
+        message: 'R.E.P.O. closed before it finished starting.'
+      })
+    ])
   })
 })

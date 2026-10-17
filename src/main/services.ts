@@ -10,6 +10,7 @@ import type {
   LaunchMode,
   LaunchWarning,
   ProtonOptionsResult,
+  LaunchWatchResult,
   Settings,
   TsPackage
 } from '../shared/types'
@@ -38,11 +39,14 @@ import {
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
 import { buildDirectLaunchPlan, buildLaunchPlan, buildSteamPlainPlan } from './launch/launchPlan'
 import {
+  isGameProcessRunning,
   isGameRunning,
   isSteamProcess,
   linuxProcessNames,
   steamShutdownCommand,
-  waitForSteamExit
+  waitForGameStart,
+  waitForSteamExit,
+  type ProcFsPort
 } from './launch/processes'
 import { writeProtonLaunchOptions } from './steam/launchOptions'
 import {
@@ -140,6 +144,10 @@ export interface ServiceDeps {
   shareBaseUrl: string
   /** Folder of Flatpak's system-wide overrides; defaults to /var/lib/flatpak/overrides. */
   flatpakSystemOverridesDir?: string
+  /** Linux process list for confirming a launch; defaults to the real /proc. */
+  procFs?: ProcFsPort
+  /** Clock and timer for waitForGame; default to the real ones. */
+  launchWatch?: { now(): number; sleep(ms: number): Promise<void> }
 }
 
 interface LoadedIndex extends TsIndex {
@@ -182,6 +190,8 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   handleNxm(raw: string): Promise<void>
   /** Answers an `hml-art://` request (the protocol handler in index.ts). */
   serveArt(url: string): Promise<Response>
+  /** Stops every waitForGame (the window closed or reloaded, so nobody is waiting). */
+  cancelLaunchWatches(): void
 } {
   const { paths } = deps
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
@@ -833,6 +843,14 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     ghInstallWith
   })
 
+  /** Running waitForGame calls by game label. */
+  const launchWatches = new Map<string, AbortController>()
+  /**
+   * Exit of the program a direct launch started, by game label. Only folder games: a Steam
+   * launch's process hands off to Steam and exits at once.
+   */
+  const directExits = new Map<string, Promise<void>>()
+
   /** A folder-added custom game, which HML starts itself (no Steam). */
   const isFolderGame = (def: GameDef): boolean => def.custom?.source === 'folder'
 
@@ -875,7 +893,8 @@ export function createServices(deps: ServiceDeps): HmlApi & {
           }
         : null
     })
-    await launch(plan, profileDir, gameDir, deps.spawn)
+    const { exited } = await launch(plan, profileDir, gameDir, deps.spawn)
+    directExits.set(def.label, exited)
   }
 
   const listProcesses = deps.listProcesses ?? (() => linuxProcessNames())
@@ -1056,6 +1075,9 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     ...customApi,
     handleNxm,
     serveArt: (url) => serveArt(url, artSources),
+    cancelLaunchWatches() {
+      for (const watch of launchWatches.values()) watch.abort()
+    },
     getModIcons,
     // Replacing an installed mod under a running game is refused; a fresh install is allowed.
     ghInstall: (game, profileId, url, asset, opts) =>
@@ -1292,6 +1314,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
         throw new Error(`Unknown launch mode: ${String(mode)}`)
       }
       const def = await requireGame(game)
+      directExits.delete(def.label)
       if (isFolderGame(def)) return launchFolderGame(def, profileId, mode)
       if (def.loader === 'deploy' && def.custom?.source === 'steam' && def.steamAppId) {
         return launchSteamPlain({ ...def, steamAppId: def.steamAppId })
@@ -1359,6 +1382,31 @@ export function createServices(deps: ServiceDeps): HmlApi & {
         if (!exited) return 'steam-timeout'
       }
       return writeProtonOptions(root, appId)
+    },
+
+    async waitForGame(game: string): Promise<LaunchWatchResult> {
+      // A new wait for the same game replaces the old one.
+      launchWatches.get(game)?.abort()
+      const watch = new AbortController()
+      launchWatches.set(game, watch)
+      const exited = directExits.get(game)
+      try {
+        const def = await requireGame(game)
+        return await waitForGameStart({
+          check: () =>
+            isGameProcessRunning(deps.platform, deps.execFile, def.exeNames, deps.procFs),
+          signal: watch.signal,
+          exited,
+          ...deps.launchWatch
+        })
+      } finally {
+        if (launchWatches.get(game) === watch) launchWatches.delete(game)
+        if (exited && directExits.get(game) === exited) directExits.delete(game)
+      }
+    },
+
+    async cancelWaitForGame(game: string): Promise<void> {
+      launchWatches.get(game)?.abort()
     },
 
     async openProfileFolder(game: string, profileId: string): Promise<void> {

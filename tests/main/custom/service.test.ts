@@ -19,6 +19,8 @@ let deps: ServiceDeps
 let wineWorks: boolean
 let picked: string | null
 let spawned: { cmd: string; args: string[] }[]
+/** The fake children spawn returned, in order. */
+let children: EventEmitter[]
 let emitted: HmlEvent[]
 
 const LOADER_ZIP = zipSync({
@@ -121,6 +123,7 @@ beforeEach(() => {
   wineWorks = false
   picked = null
   spawned = []
+  children = []
   emitted = []
   const paths = makePaths(path.join(tmp, 'data'))
   mkdirSync(paths.root, { recursive: true })
@@ -155,6 +158,7 @@ beforeEach(() => {
       spawned.push({ cmd, args })
       const child = new EventEmitter() as EventEmitter & { unref(): void }
       child.unref = () => undefined
+      children.push(child)
       process.nextTick(() => child.emit('spawn'))
       return child
     }) as unknown as ServiceDeps['spawn']
@@ -739,6 +743,28 @@ describe('custom game loaders, launches and manual installs', () => {
     expect(spawned[0].args.slice(0, 2)).toEqual(['run', path.join(folder, 'Trash.exe')])
     expect(spawned[0].args).toContain('--doorstop-enable')
     expect(existsSync(deps.paths.winePrefix(game.label))).toBe(true)
+  })
+
+  test('waitForGame ends with exited when a folder game exits before it is seen', async () => {
+    serveBepInEx()
+    addProton()
+    const folder = gameFolder('Trash')
+    const api = createServices({
+      ...deps,
+      procFs: { readdir: async () => [], readFile: async () => '' }
+    })
+    const game = await api.addCustomGame({
+      source: 'folder',
+      folder,
+      displayName: 'Trash',
+      loaderChoice: 'bepinex5'
+    })
+    const profile = await api.createProfile(game.label, 'p')
+    await api.launch(game.label, profile.id, 'modded')
+    const wait = api.waitForGame(game.label)
+    await new Promise((r) => setTimeout(r, 10))
+    children[0].emit('exit', 1, null)
+    expect(await wait).toBe('exited')
   })
 
   test('a folder game on Linux without a runner warns and refuses to launch', async () => {

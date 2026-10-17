@@ -13,6 +13,7 @@ import type {
   InstalledMod,
   LaunchMode,
   LaunchWarning,
+  LaunchWatchResult,
   ModUpdate,
   NxInstallResult,
   NxModDetail,
@@ -66,6 +67,13 @@ export interface HmlApi {
   setProtonLaunchOptions(game: string): Promise<ProtonOptionsResult>
   /** Linux: asks Steam to shut down, waits for it to exit (about 30 s), then sets them. */
   closeSteamAndSet(game: string): Promise<ProtonOptionsResult>
+  /**
+   * After a launch, polls (about every second, for up to two minutes) until one of the game's
+   * exes is running. 'unknown' when HML can't detect the game's process.
+   */
+  waitForGame(game: string): Promise<LaunchWatchResult>
+  /** Ends the game's running waitForGame with 'cancelled' (the game itself is left alone). */
+  cancelWaitForGame(game: string): Promise<void>
   openProfileFolder(game: string, profileId: string): Promise<void>
   getSettings(): Promise<Settings>
   saveSettings(s: Settings): Promise<void>
@@ -193,6 +201,8 @@ const METHOD_TABLE = {
   launch: true,
   setProtonLaunchOptions: true,
   closeSteamAndSet: true,
+  waitForGame: true,
+  cancelWaitForGame: true,
   openProfileFolder: true,
   getSettings: true,
   saveSettings: true,
@@ -248,6 +258,31 @@ export const HML_METHODS = Object.keys(METHOD_TABLE) as (keyof HmlApi)[]
 export function channel(method: keyof HmlApi): string {
   return `hml:${method}`
 }
+
+/** The window's own controls, for the titlebar HML draws in place of the system frame. */
+export interface WindowApi {
+  minimize(): Promise<void>
+  /** Maximizes, or restores a maximized window. */
+  toggleMaximize(): Promise<void>
+  close(): Promise<void>
+  isMaximized(): Promise<boolean>
+}
+
+const WINDOW_METHOD_TABLE = {
+  minimize: true,
+  toggleMaximize: true,
+  close: true,
+  isMaximized: true
+} satisfies Record<keyof WindowApi, true>
+
+export const WINDOW_METHODS = Object.keys(WINDOW_METHOD_TABLE) as (keyof WindowApi)[]
+
+export function windowChannel(method: keyof WindowApi): string {
+  return `hml:window:${method}`
+}
+
+/** Main sends this with a boolean whenever the window is maximized or restored. */
+export const WINDOW_MAXIMIZED_EVENT = 'hml:window-maximized'
 
 /** Electron wraps handler errors as "Error invoking remote method 'ch': Error: msg". */
 export function stripIpcErrorPrefix(message: string): string {

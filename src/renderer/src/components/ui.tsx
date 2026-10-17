@@ -1,11 +1,14 @@
 import {
   Fragment,
   useEffect,
+  useId,
   useRef,
   useState,
   type ButtonHTMLAttributes,
   type ReactNode
 } from 'react'
+import { createPortal } from 'react-dom'
+import { createModalLayers, domModalHost } from '../modalLayers'
 
 type Variant = 'primary' | 'ghost' | 'quiet' | 'danger'
 
@@ -31,7 +34,13 @@ export function Button({
   )
 }
 
-/** Centered modal using the native <dialog>, so focus trapping and Escape come for free. */
+/** Open modals; see createModalLayers for why HML manages inertness itself. */
+const modalLayers = createModalLayers(domModalHost(document))
+
+/**
+ * Centered modal dialog: the rest of the window (except the titlebar) is inert while it is open,
+ * Escape and a click on the backdrop close it, and focus returns where it was.
+ */
 export function Modal({
   title,
   onClose,
@@ -45,34 +54,70 @@ export function Modal({
   footer?: ReactNode
   width?: string
 }): React.JSX.Element {
-  const ref = useRef<HTMLDialogElement>(null)
+  const layerRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const titleId = useId()
+  const closeRef = useRef(onClose)
   useEffect(() => {
-    const dialog = ref.current
-    dialog?.showModal()
-    return () => dialog?.close()
-  }, [])
-  return (
-    <dialog
-      ref={ref}
-      onCancel={(e) => {
+    closeRef.current = onClose
+  })
+  useEffect(() => {
+    const layer = layerRef.current
+    const dialog = dialogRef.current
+    if (!layer || !dialog) return
+    const returnFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    modalLayers.open(layer)
+    dialog.show()
+    // Keep an autoFocus field's focus; otherwise focus the dialog so keys reach it.
+    if (!dialog.contains(document.activeElement)) dialog.focus()
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return
+      if (modalLayers.isTop(layer)) {
         e.preventDefault()
-        onClose()
-      }}
+        closeRef.current()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      dialog.close()
+      modalLayers.close(layer)
+      if (returnFocus?.isConnected) returnFocus.focus()
+    }
+  }, [])
+  return createPortal(
+    <div
+      ref={layerRef}
       onClick={(e) => {
-        if (e.target === ref.current) onClose()
+        if (e.target === e.currentTarget) onClose()
       }}
-      className={`${width} max-w-[calc(100vw-2rem)] m-auto rounded-xl border border-line bg-panel text-fg p-0 shadow-[0_24px_64px_-16px_rgba(0,0,0,0.7)] backdrop:bg-[#061014]/70 backdrop:backdrop-blur-[2px] [animation:dialog-in_160ms_ease-out]`}
+      className="fixed inset-0 z-[55] flex bg-[#061014]/70 p-4 backdrop-blur-[2px]"
     >
-      <div className="px-5 pt-5 pb-4">
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-        <div className="mt-3 text-sm text-muted">{children}</div>
-      </div>
-      {footer && (
-        <div className="flex justify-end gap-2 border-t border-line bg-ink/40 px-5 py-3">
-          {footer}
+      <dialog
+        ref={dialogRef}
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : 'Dialog'}
+        tabIndex={-1}
+        className={`${width} relative m-auto max-h-full max-w-full overflow-auto rounded-xl border border-line bg-panel p-0 text-fg shadow-[0_24px_64px_-16px_rgba(0,0,0,0.7)] outline-none [animation:dialog-in_160ms_ease-out]`}
+      >
+        <div className="px-5 pt-5 pb-4">
+          {title && (
+            <h2 id={titleId} className="text-base font-semibold tracking-tight">
+              {title}
+            </h2>
+          )}
+          <div className="mt-3 text-sm text-muted">{children}</div>
         </div>
-      )}
-    </dialog>
+        {footer && (
+          <div className="flex justify-end gap-2 border-t border-line bg-ink/40 px-5 py-3">
+            {footer}
+          </div>
+        )}
+      </dialog>
+    </div>,
+    document.body
   )
 }
 
@@ -165,6 +210,16 @@ export function Icon({
   )
 }
 
+/** A small spinning ring in the current text color, for buttons that are waiting. */
+export function Spinner({ className = 'size-4' }: { className?: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={`animate-spin ${className}`}>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export interface MenuItem {
   label: string
   onSelect(): void
@@ -175,6 +230,10 @@ export interface MenuItem {
   toggle?: boolean
   /** Draws a divider above the item to start a new group. */
   divider?: boolean
+  /** Shown before the label, e.g. a small game cover. */
+  icon?: ReactNode
+  /** React key when labels can repeat; defaults to the label. */
+  id?: string
 }
 
 /** A small popover menu anchored to a trigger; closes on outside click or Escape. */
@@ -182,13 +241,22 @@ export function Menu({
   label,
   items,
   className = '',
-  position = 'relative'
+  position = 'relative',
+  trigger,
+  triggerClassName,
+  align = 'auto'
 }: {
   label: string
   items: MenuItem[]
   className?: string
   /** Tailwind position class for the trigger; an absolute one is still the dropdown's anchor. */
   position?: string
+  /** Contents of the trigger in place of the ⋮ icon. */
+  trigger?: ReactNode
+  /** Classes for the trigger in place of the icon button's. */
+  triggerClassName?: string
+  /** Which edge of the trigger the dropdown lines up with; auto avoids clipping on the left. */
+  align?: 'auto' | 'left'
 }): React.JSX.Element {
   const [up, setUp] = useState(false)
   const [alignLeft, setAlignLeft] = useState(false)
@@ -221,16 +289,19 @@ export function Menu({
           setUp(r.bottom > window.innerHeight * 0.6)
           // A wide menu near the window's left edge opens rightward instead of being clipped.
           const menuWidth = menuRef.current?.offsetWidth ?? 0
-          setAlignLeft(r.right - menuWidth < 0)
+          setAlignLeft(align === 'left' || r.right - menuWidth < 0)
         }
       }}
     >
       <summary
         aria-label={label}
         title={label}
-        className="grid size-8 cursor-pointer list-none place-items-center rounded-md text-muted hover:bg-raised hover:text-fg [&::-webkit-details-marker]:hidden"
+        className={`cursor-pointer list-none [&::-webkit-details-marker]:hidden ${
+          triggerClassName ??
+          'grid size-8 place-items-center rounded-md text-muted hover:bg-raised hover:text-fg'
+        }`}
       >
-        <Icon name="dots" />
+        {trigger ?? <Icon name="dots" />}
       </summary>
       <div
         ref={menuRef}
@@ -240,7 +311,7 @@ export function Menu({
         }`}
       >
         {items.map((item) => (
-          <Fragment key={item.label}>
+          <Fragment key={item.id ?? item.label}>
             {item.divider && <div role="separator" className="my-1 h-px bg-line" />}
             <button
               type="button"
@@ -265,6 +336,7 @@ export function Menu({
                   {item.checked && <Icon name="check" className="size-3.5" />}
                 </span>
               )}
+              {item.icon}
               {item.label}
             </button>
           </Fragment>

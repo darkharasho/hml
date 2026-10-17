@@ -22,7 +22,9 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const removeCustomGame = useStore((s) => s.removeCustomGame)
   const toast = useStore((s) => s.toast)
   const openSettings = useStore((s) => s.setSettingsOpen)
-  const [creating, setCreating] = useState(false)
+  // Also opened by "New profile…" in the titlebar.
+  const creating = useStore((s) => s.creatingProfile)
+  const setCreating = useStore((s) => s.setCreatingProfile)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<ProfileManifest | null>(null)
   const [domainOpen, setDomainOpen] = useState(false)

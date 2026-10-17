@@ -702,6 +702,115 @@ describe('services', () => {
     expect(await api.getLaunchWarnings('repo', profile.id)).not.toContain('flatpak-filesystem')
   })
 
+  test("waitForGame resolves running once the game's exe appears in /proc", async () => {
+    let polls = 0
+    const api = createServices({
+      ...deps,
+      procFs: {
+        readdir: async () => {
+          polls++
+          return polls < 3 ? ['1'] : ['1', '2']
+        },
+        readFile: async (file) =>
+          file === '/proc/2/stat'
+            ? '2 (REPO.exe) S 1'
+            : file.endsWith('stat')
+              ? '1 (bash) S 0'
+              : '/bin/bash'
+      },
+      launchWatch: { now: () => polls * 1000, sleep: async () => undefined }
+    })
+    expect(await api.waitForGame('repo')).toBe('running')
+    expect(polls).toBe(3)
+  })
+
+  test('waitForGame times out when the exe never appears', async () => {
+    let t = 0
+    const api = createServices({
+      ...deps,
+      procFs: { readdir: async () => [], readFile: async () => '' },
+      launchWatch: {
+        now: () => t,
+        sleep: async (ms) => {
+          t += ms
+        }
+      }
+    })
+    expect(await api.waitForGame('repo')).toBe('timeout')
+    expect(t).toBe(120_000)
+  })
+
+  test('cancelWaitForGame ends a running wait with cancelled', async () => {
+    const api = createServices({
+      ...deps,
+      procFs: { readdir: async () => [], readFile: async () => '' }
+    })
+    const wait = api.waitForGame('repo')
+    await new Promise((r) => setTimeout(r, 10))
+    await api.cancelWaitForGame('repo')
+    expect(await wait).toBe('cancelled')
+  })
+
+  test('a new wait for the same game cancels the old one', async () => {
+    const api = createServices({
+      ...deps,
+      procFs: { readdir: async () => [], readFile: async () => '' }
+    })
+    const first = api.waitForGame('repo')
+    await new Promise((r) => setTimeout(r, 10))
+    const second = api.waitForGame('repo')
+    expect(await first).toBe('cancelled')
+    await api.cancelWaitForGame('repo')
+    expect(await second).toBe('cancelled')
+  })
+
+  test('cancelLaunchWatches stops every wait (window closed or reloaded)', async () => {
+    const api = createServices({
+      ...deps,
+      procFs: { readdir: async () => [], readFile: async () => '' }
+    })
+    const wait = api.waitForGame('repo')
+    await new Promise((r) => setTimeout(r, 10))
+    api.cancelLaunchWatches()
+    expect(await wait).toBe('cancelled')
+  })
+
+  test("Steam exiting after handing the launch off doesn't end the wait", async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    let t = 0
+    const children: EventEmitter[] = []
+    const api = createServices({
+      ...deps,
+      spawn: ((cmd: string, args: string[]) => {
+        spawned.push({ cmd, args })
+        const child = new EventEmitter() as EventEmitter & { unref(): void }
+        child.unref = () => undefined
+        children.push(child)
+        process.nextTick(() => child.emit('spawn'))
+        return child
+      }) as unknown as ServiceDeps['spawn'],
+      procFs: { readdir: async () => [], readFile: async () => '' },
+      launchWatch: {
+        now: () => t,
+        sleep: async (ms) => {
+          t += ms
+        }
+      }
+    })
+    await api.launch('repo', null, 'vanilla')
+    children[0].emit('exit', 0, null)
+    expect(await api.waitForGame('repo')).toBe('timeout')
+  })
+
+  test("waitForGame is unknown on a platform HML can't list processes on", async () => {
+    const api = createServices({
+      ...deps,
+      platform: 'darwin',
+      launchWatch: { now: () => 0, sleep: async () => undefined }
+    })
+    expect(await api.waitForGame('repo')).toBe('unknown')
+  })
+
   test('launch modded without a profile is a readable error', async () => {
     await expect(createServices(deps).launch('repo', null, 'modded')).rejects.toThrow(/profile/i)
     expect(spawned).toHaveLength(0)
@@ -1511,10 +1620,9 @@ describe('services', () => {
   })
 
   test('HML_METHODS covers every HmlApi key', () => {
-    // ghAutoUpdateAll, handleNxm and serveArt are for the main process, not IPC methods.
-    const keys = Object.keys(createServices(deps)).filter(
-      (k) => k !== 'ghAutoUpdateAll' && k !== 'handleNxm' && k !== 'serveArt'
-    )
+    // These are for the main process, not IPC methods.
+    const mainOnly = ['ghAutoUpdateAll', 'handleNxm', 'serveArt', 'cancelLaunchWatches']
+    const keys = Object.keys(createServices(deps)).filter((k) => !mainOnly.includes(k))
     expect([...HML_METHODS].sort()).toEqual(keys.sort())
   })
 

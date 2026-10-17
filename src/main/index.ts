@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { isAllowedNavigation, parseAllowedExternalUrl } from './security'
 import { registerIpc } from './ipc'
+import { registerWindowIpc, reportMaximized, titlebarOptions } from './window'
 import { createServices } from './services'
 import { findNxmArg, linuxDesktopEntry, type HandlerPort } from './nexus/nxm'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
@@ -109,6 +110,8 @@ function createWindow(): void {
     backgroundColor: '#0f191d',
     show: false,
     autoHideMenuBar: true,
+    // HML draws its own titlebar (TitleBar.tsx).
+    ...titlebarOptions(process.platform),
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -120,6 +123,7 @@ function createWindow(): void {
 
   mainWindowRef = mainWindow
   rendererLoaded = false
+  reportMaximized(mainWindow)
   mainWindow.webContents.on('did-finish-load', () => {
     if (mainWindowRef !== mainWindow) return
     rendererLoaded = true
@@ -131,6 +135,11 @@ function createWindow(): void {
       rendererLoaded = false
     }
   })
+  // A reloaded, crashed or closed renderer no longer waits for a launched game.
+  const stopLaunchWatches = (): void => services?.cancelLaunchWatches()
+  mainWindow.webContents.on('did-start-loading', stopLaunchWatches)
+  mainWindow.webContents.on('render-process-gone', stopLaunchWatches)
+  mainWindow.on('closed', stopLaunchWatches)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -230,6 +239,7 @@ if (hasLock)
     })
     const ready = services
     registerIpc(ready)
+    registerWindowIpc()
     protocol.handle(ART_SCHEME, (request) => ready.serveArt(request.url))
 
     // A link that launched HML is handled once the renderer can receive the event.
