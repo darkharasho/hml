@@ -7,10 +7,10 @@ files:
   - '!src/*'
   - '!resources/ecosystem-snapshot.json'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md,RELEASE_NOTES.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-  - '!{tests,worker,docs,.superpowers}/**'
+  - '!{tests,worker,docs,scripts,.github,.superpowers}/**'
   - '!{vitest.config.mts,CLAUDE.md,.editorconfig,electron-builder.yml}'
 extraResources:
   - from: resources/ecosystem-snapshot.json
@@ -18,20 +18,44 @@ extraResources:
 asarUnpack:
   - resources/**
   - node_modules/7zip-bin/**
+# Each build uploads to a draft GitHub release for its tag; the release workflow publishes it.
+# electron-updater reads the latest*.yml files uploaded alongside.
+publish:
+  - provider: github
+    owner: darkharasho
+    repo: hml
+    releaseType: draft
 win:
   executableName: hml
+  target:
+    - nsis
 mac:
   # Padded to Apple's icon grid; electron-builder turns it into the .icns.
   icon: build/icon-mac.png
+  category: public.app-category.utilities
+  # The arch keeps the x64 and arm64 files apart on the shared release.
+  artifactName: ${name}-${version}-mac-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    # electron-updater installs mac updates from the zip.
+    - target: zip
+      arch: [x64, arm64]
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+  differentialPackage: true
 linux:
+  # electron-updater can only update the AppImage.
   target:
     - AppImage
-    - deb
   maintainer: darkharasho
   category: Utility
 appImage:
