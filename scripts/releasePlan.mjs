@@ -30,12 +30,20 @@ export function parsePorcelainZ(out) {
  *   version: string
  *   hasNotes: boolean
  *   localTags: string[]
+ *   localTagAtHead: boolean
  *   remoteTagExists: boolean
  * }} RepoState
  *
  * @typedef {{ ok: false; error: string }
  *   | { ok: true; tag: string; done: true; message: string }
- *   | { ok: true; tag: string; done: false; commitNotes: boolean; tagAction: 'create' | 'push' }
+ *   | {
+ *       ok: true
+ *       tag: string
+ *       done: false
+ *       commitNotes: boolean
+ *       pushBranch: string
+ *       tagAction: 'create' | 'push'
+ *     }
  * } ReleasePlan
  */
 
@@ -86,5 +94,22 @@ export function planRelease(state) {
         `include. Delete it (git tag -d ${tag}) and re-run.`
     }
   }
-  return { ok: true, tag, done: false, commitNotes, tagAction: localTag ? 'push' : 'create' }
+  if (localTag && !state.localTagAtHead) {
+    return {
+      ok: false,
+      error:
+        `Tag ${tag} exists locally on a commit other than HEAD. ` +
+        `Delete it (git tag -d ${tag}) and re-run.`
+    }
+  }
+  // main is always pushed before the tag: unpushed commits land on origin, and a main that is
+  // behind origin fails there, before anything is tagged.
+  return {
+    ok: true,
+    tag,
+    done: false,
+    commitNotes,
+    pushBranch: RELEASE_BRANCH,
+    tagAction: localTag ? 'push' : 'create'
+  }
 }

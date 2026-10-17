@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { releaseNotesSection } from './releaseNotes.mjs'
-import { NOTES_FILE, RELEASE_BRANCH, planRelease } from './releasePlan.mjs'
+import { NOTES_FILE, planRelease } from './releasePlan.mjs'
 
 // Cuts a release: validates that RELEASE_NOTES.md has a section for the current
 // package.json version, then commits it (if changed), tags v<version>, and pushes
@@ -34,14 +34,19 @@ const notes = fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8') : ''
 let plan
 try {
   const tag = `v${version}`
+  const localTags = git('tag', '--list', tag)
+    .split('\n')
+    .map((t) => t.trim())
+  const localTagAtHead =
+    localTags.includes(tag) &&
+    git('rev-parse', `${tag}^{commit}`).trim() === git('rev-parse', 'HEAD').trim()
   plan = planRelease({
     branch: git('branch', '--show-current').trim(),
     porcelainZ: git('status', '--porcelain=v1', '-z'),
     version,
     hasNotes: releaseNotesSection(notes, tag) !== null,
-    localTags: git('tag', '--list', tag)
-      .split('\n')
-      .map((t) => t.trim()),
+    localTags,
+    localTagAtHead,
     remoteTagExists: git('ls-remote', '--tags', 'origin', `refs/tags/${tag}`).trim() !== ''
   })
 } catch (err) {
@@ -58,13 +63,20 @@ if (plan.commitNotes) {
   try {
     git('add', '--', NOTES_FILE)
     git('commit', '-m', `Release notes ${plan.tag}`, '--', NOTES_FILE)
-    git('push', 'origin', RELEASE_BRANCH)
-    console.log(`Committed and pushed ${NOTES_FILE}.`)
+    console.log(`Committed ${NOTES_FILE}.`)
   } catch (err) {
-    fail(`Failed to commit/push ${NOTES_FILE}:`, err)
+    fail(`Failed to commit ${NOTES_FILE}:`, err)
   }
 } else {
   console.log(`${NOTES_FILE} already committed.`)
+}
+
+// Before the tag, so a main that is behind origin stops the release here.
+try {
+  git('push', 'origin', plan.pushBranch)
+  console.log(`Pushed ${plan.pushBranch}.`)
+} catch (err) {
+  fail(`Failed to push ${plan.pushBranch} (pull first if origin is ahead):`, err)
 }
 
 try {

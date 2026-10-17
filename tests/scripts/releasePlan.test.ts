@@ -7,6 +7,7 @@ const state = (over: Partial<RepoState> = {}): RepoState => ({
   version: '1.0.0',
   hasNotes: true,
   localTags: [],
+  localTagAtHead: false,
   remoteTagExists: false,
   ...over
 })
@@ -30,6 +31,7 @@ describe('planRelease', () => {
       tag: 'v1.0.0',
       done: false,
       commitNotes: false,
+      pushBranch: 'main',
       tagAction: 'create'
     })
   })
@@ -80,16 +82,32 @@ describe('planRelease', () => {
     }
   })
 
-  test('a local-only tag is pushed', () => {
-    expect(planRelease(state({ localTags: ['v1.0.0'] }))).toMatchObject({
+  test('a local-only tag on HEAD is pushed, after main', () => {
+    expect(planRelease(state({ localTags: ['v1.0.0'], localTagAtHead: true }))).toMatchObject({
       ok: true,
       done: false,
+      pushBranch: 'main',
       tagAction: 'push'
     })
   })
 
+  test('a local-only tag on another commit is refused', () => {
+    const r = planRelease(state({ localTags: ['v1.0.0'], localTagAtHead: false }))
+    expect(!r.ok && r.error).toContain('git tag -d v1.0.0')
+  })
+
+  test('main is pushed whether or not the notes need committing', () => {
+    expect(planRelease(state())).toMatchObject({ commitNotes: false, pushBranch: 'main' })
+    expect(planRelease(state({ porcelainZ: ' M RELEASE_NOTES.md\0' }))).toMatchObject({
+      commitNotes: true,
+      pushBranch: 'main'
+    })
+  })
+
   test("a local-only tag won't be pushed past uncommitted notes", () => {
-    const r = planRelease(state({ localTags: ['v1.0.0'], porcelainZ: ' M RELEASE_NOTES.md\0' }))
+    const r = planRelease(
+      state({ localTags: ['v1.0.0'], localTagAtHead: true, porcelainZ: ' M RELEASE_NOTES.md\0' })
+    )
     expect(!r.ok && r.error).toContain('git tag -d v1.0.0')
   })
 
