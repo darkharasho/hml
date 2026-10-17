@@ -197,7 +197,7 @@ function ThunderstoreBrowse({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-2 px-6 pt-3">
         {leading}
-        <label className="relative min-w-56 flex-1">
+        <label className="relative min-w-44 flex-1">
           <span className="sr-only">Search Thunderstore</span>
           <Icon
             name="search"
