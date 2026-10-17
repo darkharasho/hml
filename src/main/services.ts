@@ -77,6 +77,9 @@ import { createShareServices } from './share/service'
 import { gameByDomain } from './nexus/api'
 import { parseNxm, type HandlerPort } from './nexus/nxm'
 import { findInstalledMod, providesPackage } from '../shared/modIdentity'
+import { createSteamArt, findLibraryCover } from './art/steamArt'
+import { createTsIcons, modIconCandidates, modIconPath } from './art/modIcons'
+import { serveArt, type ArtSources } from './art/protocol'
 
 export interface DialogPort {
   pickFiles(opts: {
@@ -162,9 +165,12 @@ async function assertZipFile(file: string): Promise<void> {
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export function createServices(
-  deps: ServiceDeps
-): HmlApi & { ghAutoUpdateAll(): Promise<void>; handleNxm(raw: string): Promise<void> } {
+export function createServices(deps: ServiceDeps): HmlApi & {
+  ghAutoUpdateAll(): Promise<void>
+  handleNxm(raw: string): Promise<void>
+  /** Answers an `hml-art://` request (the protocol handler in index.ts). */
+  serveArt(url: string): Promise<Response>
+} {
   const { paths } = deps
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
   const now = deps.now ?? Date.now
@@ -257,6 +263,31 @@ export function createServices(
     )
     steamRootPromise = p
     return p
+  }
+
+  const steamArt = createSteamArt({
+    fetch: deps.fetch,
+    getSteamRoot: () => getSteamRoot(),
+    cacheFile: paths.steamArtCache,
+    now
+  })
+  const tsIcons = createTsIcons({ fetch: deps.fetch, cacheFile: paths.tsIconCache, now })
+
+  /**
+   * Gives custom Steam games and installed Steam games in search the best Steam cover there is,
+   * with one store lookup for all of them. A cover the user chose stays first.
+   */
+  async function withArt(games: GameSummary[]): Promise<GameSummary[]> {
+    const ids = games.flatMap((g) => (g.custom && g.steamAppId ? [g.steamAppId] : []))
+    if (ids.length === 0) return games
+    const covers = await steamArt.covers(ids)
+    return games.map((g) => {
+      const art = g.custom && g.steamAppId ? covers.get(g.steamAppId) : undefined
+      if (!art || art.length === 0) return g
+      return g.custom?.image
+        ? { ...g, iconFallbacks: art }
+        : { ...g, iconUrl: art[0], iconFallbacks: art.slice(1) }
+    })
   }
 
   /** Whether the user's Flatpak overrides already give Steam access to HML's games folder. */
@@ -767,14 +798,21 @@ export function createServices(
     }
   }
 
-  const { steamCandidates, ...customApi } = createCustomGameServices({
+  const { steamCandidates, customCoverFile, ...customApi } = createCustomGameServices({
     deps,
     customGames,
     getCatalog,
     getBaseCatalog,
     getSteamRoot,
-    summarize: async (def) =>
-      summarize(def, await getCatalog(), await loadSettings(paths), await getSteamRoot()),
+    summarize: async (def) => {
+      const summary = await summarize(
+        def,
+        await getCatalog(),
+        await loadSettings(paths),
+        await getSteamRoot()
+      )
+      return (await withArt([summary]))[0]
+    },
     nexus,
     requireGame,
     serialize,
@@ -898,6 +936,41 @@ export function createServices(
     }
   })
 
+  const artSources: ArtSources = {
+    async steamCover(appId) {
+      const root = await getSteamRoot().catch(() => null)
+      return root ? findLibraryCover(root, appId) : null
+    },
+    customCover: customCoverFile,
+    // getProfile refuses unsafe game and profile ids; the file comes from the mod's record.
+    async modIcon(game, profileId, modId) {
+      const mod = (await getProfile(paths, game, profileId)).mods.find((m) => m.id === modId)
+      return mod ? modIconPath(paths.profileDir(game, profileId), mod) : null
+    }
+  }
+
+  async function getModIcons(game: string, profileId: string): Promise<Record<string, string[]>> {
+    const def = await requireGame(game)
+    const { mods } = await getProfile(paths, game, profileId)
+    const idx = def.packageIndex !== null ? await loadIndex(def, false).catch(() => null) : null
+    // Without an index (custom games, or offline), packages are looked up one by one.
+    const remote = idx
+      ? new Map<string, string>()
+      : await tsIcons.icons(
+          mods.flatMap((m) =>
+            m.source.kind === 'thunderstore' ? [m.source.fullName] : (m.provides ?? [])
+          )
+        )
+    const tsIcon = (fullName: string): string | undefined =>
+      idx?.byName.get(fullName)?.iconUrl || remote.get(fullName)
+    const out: Record<string, string[]> = {}
+    for (const m of mods) {
+      const urls = modIconCandidates(game, profileId, m, tsIcon)
+      if (urls.length > 0) out[m.id] = urls
+    }
+    return out
+  }
+
   /** Handles an `nxm://` link end to end. Never throws: the outcome is an event. */
   async function handleNxm(raw: string): Promise<void> {
     try {
@@ -927,6 +1000,8 @@ export function createServices(
     ...shareApi,
     ...customApi,
     handleNxm,
+    serveArt: (url) => serveArt(url, artSources),
+    getModIcons,
     // Replacing an installed mod under a running game is refused; a fresh install is allowed.
     ghInstall: (game, profileId, url, asset) =>
       ghInstallWith(game, profileId, url, asset, { beforeReplacing: assertGameClosed }),
@@ -956,14 +1031,15 @@ export function createServices(
       const extra = await nexus.searchExtra(query, catalog, settings)
       const extras = await Promise.all(extra.map((g) => summarize(g, catalog, settings, steamRoot)))
       const installed = await steamCandidates(query, catalog, steamRoot)
-      return [...sorted, ...installed, ...extras]
+      return withArt([...sorted, ...installed, ...extras])
     },
 
     async getGame(label: string): Promise<GameSummary | null> {
       const catalog = await getCatalog()
       const def = catalog.games.find((g) => g.label === label)
       if (!def) return null
-      return summarize(def, catalog, await loadSettings(paths), await getSteamRoot())
+      const summary = await summarize(def, catalog, await loadSettings(paths), await getSteamRoot())
+      return (await withArt([summary]))[0]
     },
 
     addNexusGame,

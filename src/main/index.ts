@@ -1,4 +1,4 @@
-import { app, shell, dialog, BrowserWindow, safeStorage } from 'electron'
+import { app, shell, dialog, BrowserWindow, protocol, safeStorage } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir, release as osRelease, type as osType } from 'node:os'
@@ -13,6 +13,7 @@ import { findNxmArg, linuxDesktopEntry, type HandlerPort } from './nexus/nxm'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
 import { makePaths } from './store/paths'
 import { resolveSnapshotPath } from './snapshotPath'
+import { ART_SCHEME } from './art/protocol'
 import icon from '../../resources/icon.png?asset'
 import devSnapshotPath from '../../resources/ecosystem-snapshot.json?asset'
 
@@ -62,6 +63,12 @@ const nxmHandler: HandlerPort = {
     await execFileAsync('xdg-mime', ['default', NXM_DESKTOP, 'x-scheme-handler/nxm'])
   }
 }
+
+// Local art (Steam's cached covers, custom game images, mod icons) reaches the renderer through
+// hml-art://, which main answers from files it looks up itself. Must be registered before ready.
+protocol.registerSchemesAsPrivileged([
+  { scheme: ART_SCHEME, privileges: { standard: true, secure: true } }
+])
 
 // One running HML receives every nxm:// link; a second launch hands its argv over and exits.
 const hasLock = app.requestSingleInstanceLock()
@@ -223,6 +230,7 @@ if (hasLock)
     })
     const ready = services
     registerIpc(ready)
+    protocol.handle(ART_SCHEME, (request) => ready.serveArt(request.url))
 
     // A link that launched HML is handled once the renderer can receive the event.
     const launchLink = findNxmArg(process.argv)

@@ -180,6 +180,110 @@ describe('custom game services', () => {
     expect(labels.at(-1)).toBe('steam-999')
   })
 
+  test('Steam search results and added Steam games get Steam cover art in order', async () => {
+    const capsule = path.join(steamRoot, 'appcache', 'librarycache', '3314580', 'abc')
+    mkdirSync(capsule, { recursive: true })
+    writeFileSync(path.join(capsule, 'library_capsule.jpg'), 'JPG')
+    const storeCalls: string[] = []
+    deps.fetch = (async (url: string) => {
+      const u = new URL(url)
+      if (u.host === 'api.steampowered.com') {
+        storeCalls.push(url)
+        return new Response(
+          JSON.stringify({
+            response: {
+              store_items: [
+                {
+                  appid: 3314580,
+                  assets: {
+                    asset_url_format: 'steam/apps/3314580/${FILENAME}?t=1',
+                    library_capsule: 'h/library_capsule.jpg'
+                  }
+                }
+              ]
+            }
+          })
+        )
+      }
+      return { ok: true, json: async () => fixture }
+    }) as unknown as typeof fetch
+    const api = createServices(deps)
+    const store =
+      'https://shared.steamstatic.com/store_item_assets/steam/apps/3314580/h/library_capsule.jpg?t=1'
+    const cdn = 'https://cdn.cloudflare.steamstatic.com/steam/apps/3314580/library_600x900.jpg'
+    const found = (await api.searchGames('trash')).find((g) => g.label === 'steam-3314580')
+    expect(found).toMatchObject({ iconUrl: 'hml-art://steam/3314580', iconFallbacks: [store, cdn] })
+    await api.searchGames('trash d')
+    expect(storeCalls).toHaveLength(1)
+    const added = await api.addCustomGame({
+      source: 'steam',
+      steamAppId: '3314580',
+      loaderChoice: 'none'
+    })
+    expect(added.iconUrl).toBe('hml-art://steam/3314580')
+    const res = await api.serveArt('hml-art://steam/3314580')
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('JPG')
+    expect((await api.serveArt('hml-art://steam/42')).status).toBe(404)
+  })
+
+  test('a chosen cover image is copied in, served, replaced, removed and deleted with the game', async () => {
+    const img = path.join(tmp, 'Cover.PNG')
+    writeFileSync(img, 'PNG1')
+    deps.dialog.pickFiles = async () => [img]
+    const api = createServices(deps)
+    const pick = await api.pickCustomGameImage()
+    expect(pick?.preview).toBe(`data:image/png;base64,${Buffer.from('PNG1').toString('base64')}`)
+    const folder = gameFolder('Trash Folder')
+    const added = await api.addCustomGame({
+      source: 'folder',
+      folder,
+      displayName: 'Trash',
+      loaderChoice: 'none',
+      runner: null,
+      image: pick!.token
+    })
+    expect(added.iconUrl).toMatch(/^hml-art:\/\/custom\/custom-trash-folder\?v=\d+$/)
+    expect(added.custom?.image).toBe(true)
+    const cover = path.join(deps.paths.gameDir(added.label), 'cover.png')
+    expect(readFileSync(cover, 'utf8')).toBe('PNG1')
+    expect(await (await api.serveArt(added.iconUrl!)).text()).toBe('PNG1')
+    expect((await api.serveArt('hml-art://custom/custom-unknown')).status).toBe(404)
+    // A token is used once.
+    await expect(api.updateCustomGame(added.label, { image: pick!.token })).rejects.toThrow(
+      'Choose the image again.'
+    )
+
+    const webp = path.join(tmp, 'b.webp')
+    writeFileSync(webp, 'WEBP')
+    deps.dialog.pickFiles = async () => [webp]
+    const next = await api.pickCustomGameImage()
+    await api.updateCustomGame(added.label, { image: next!.token })
+    expect(existsSync(cover)).toBe(false)
+    expect(readFileSync(path.join(deps.paths.gameDir(added.label), 'cover.webp'), 'utf8')).toBe(
+      'WEBP'
+    )
+
+    const removed = await api.updateCustomGame(added.label, { image: null })
+    expect(removed.iconUrl).toBeNull()
+    expect(removed.custom?.image).toBe(false)
+    expect(existsSync(path.join(deps.paths.gameDir(added.label), 'cover.webp'))).toBe(false)
+
+    const again = await api.pickCustomGameImage()
+    await api.updateCustomGame(added.label, { image: again!.token })
+    await api.removeCustomGame(added.label)
+    expect(existsSync(path.join(deps.paths.gameDir(added.label), 'cover.webp'))).toBe(false)
+  })
+
+  test('picking a cover can be cancelled and refuses other file types', async () => {
+    const api = createServices(deps)
+    expect(await api.pickCustomGameImage()).toBeNull()
+    const gif = path.join(tmp, 'a.gif')
+    writeFileSync(gif, 'GIF')
+    deps.dialog.pickFiles = async () => [gif]
+    await expect(api.pickCustomGameImage()).rejects.toThrow(/PNG, JPEG or WebP/)
+  })
+
   test('an installed game that is a catalog game is not listed twice', async () => {
     manifest('3241660', 'Trash Repo', 'TrashRepo', true)
     const api = createServices(deps)
@@ -466,6 +570,32 @@ describe('custom game loaders, launches and manual installs', () => {
         path.join(deps.paths.profileDir(label, profile.id), 'BepInEx/core/BepInEx.Preloader.dll')
       )
     ).toBe(true)
+  })
+
+  test("the loader gets a readable name and its BepInEx package's Thunderstore icon", async () => {
+    serveBepInEx()
+    const github = deps.fetch
+    const asked: string[] = []
+    deps.fetch = (async (url: string, init?: RequestInit) => {
+      if (url.startsWith('https://thunderstore.io/api/experimental/package/')) {
+        asked.push(url)
+        return new Response(
+          JSON.stringify({ latest: { icon: 'https://ccdn.thunderstore.io/bep.png' } })
+        )
+      }
+      return github(url, init)
+    }) as unknown as typeof fetch
+    const api = createServices(deps)
+    await addTrash(api, 'bepinex5')
+    const profile = await api.createProfile(label, 'p')
+    const [loader] = profile.mods
+    expect(loader.name).toBe('BepInEx 5 (Mono)')
+    // The loader stands in for the catalog's first BepInEx package (bbepis-BepInExPack here).
+    expect(loader.provides).toEqual(['bbepis-BepInExPack'])
+    expect(await api.getModIcons(label, profile.id)).toEqual({
+      [loader.id]: ['https://ccdn.thunderstore.io/bep.png']
+    })
+    expect(asked).toEqual(['https://thunderstore.io/api/experimental/package/bbepis/BepInExPack/'])
   })
 
   test('a failed loader download still creates the profile and reports it', async () => {

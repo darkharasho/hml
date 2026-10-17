@@ -984,6 +984,36 @@ describe('services', () => {
       expect(progress[0].message).toBe('Installing Lib 1.0.0')
     })
 
+    test("mod icons: the installed icon.png first, then the package index's icon", async () => {
+      blobs.set(
+        dl('Own-Mod', '1.0.0'),
+        zipSync({
+          'manifest.json': strToU8(JSON.stringify({ name: 'Mod', version_number: '1.0.0' })),
+          'icon.png': strToU8('ICON'),
+          'Mod.dll': strToU8('dll')
+        })
+      )
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      const icons = await api.getModIcons('repo', profile.id)
+      const own = `hml-art://mod/repo/${profile.id}/Own-Mod?v=1.0.0`
+      expect(icons).toEqual({ 'Own-Mod': [own, 'x'], 'Dep-Lib': ['x'] })
+      expect(await (await api.serveArt(own)).text()).toBe('ICON')
+      // A disabled mod's icon.png is renamed with .old and still served.
+      await api.setModEnabled('repo', profile.id, 'Own-Mod', false)
+      expect(await (await api.serveArt(own)).text()).toBe('ICON')
+      for (const bad of [
+        `hml-art://mod/repo/${profile.id}/Dep-Lib`,
+        `hml-art://mod/repo/${profile.id}/Nope`,
+        'hml-art://mod/repo/nope/Own-Mod',
+        `hml-art://mod/..%2E/${profile.id}/Own-Mod`,
+        `hml-art://mod/repo/${profile.id}%2F..%2F..%2F/Own-Mod`
+      ]) {
+        expect((await api.serveArt(bad)).status).toBe(404)
+      }
+    })
+
     test('a failing second download names the package and keeps the first', async () => {
       blobs.set(dl('Own-Mod', '1.0.0'), 404)
       const api = make()
@@ -1469,9 +1499,9 @@ describe('services', () => {
   })
 
   test('HML_METHODS covers every HmlApi key', () => {
-    // ghAutoUpdateAll and handleNxm are for the main process, not IPC methods.
+    // ghAutoUpdateAll, handleNxm and serveArt are for the main process, not IPC methods.
     const keys = Object.keys(createServices(deps)).filter(
-      (k) => k !== 'ghAutoUpdateAll' && k !== 'handleNxm'
+      (k) => k !== 'ghAutoUpdateAll' && k !== 'handleNxm' && k !== 'serveArt'
     )
     expect([...HML_METHODS].sort()).toEqual(keys.sort())
   })
