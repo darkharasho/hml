@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { UpdateCheckResult } from '../../../shared/ipc'
 import type { NxStatus } from '../../../shared/types'
 import { noSecureStorage } from '../../../shared/messages'
 import { api, errorMessage } from '../api'
 import { NX_API_KEY_PAGE } from '../nxView'
 import { useStore } from '../store'
-import { Button, Modal } from './ui'
+import { updateStatusText } from '../updateView'
+import { Button, Modal, Spinner } from './ui'
+import { useUpdateState } from '../useUpdateState'
 
 export function SettingsDialog(): React.JSX.Element | null {
   const open = useStore((s) => s.settingsOpen)
@@ -47,6 +50,8 @@ function SettingsForm({ onClose }: { onClose(): void }): React.JSX.Element {
         <GithubTokenField />
 
         <NexusSection />
+
+        <UpdateSection />
       </div>
     </Modal>
   )
@@ -313,6 +318,57 @@ function NexusSection(): React.JSX.Element {
           Use HML for Nexus downloads
         </Button>
       </div>
+    </div>
+  )
+}
+
+function UpdateSection(): React.JSX.Element {
+  const state = useUpdateState()
+  const [version, setVersion] = useState<string | null>(null)
+  const [asked, setAsked] = useState(false)
+  const [result, setResult] = useState<UpdateCheckResult | null>(null)
+
+  useEffect(() => {
+    let live = true
+    window.hmlUpdate.getVersion().then(
+      (v) => live && setVersion(v),
+      () => undefined
+    )
+    return () => {
+      live = false
+    }
+  }, [])
+
+  async function check(): Promise<void> {
+    setAsked(true)
+    setResult(null)
+    try {
+      setResult(await window.hmlUpdate.check())
+    } catch (e) {
+      setResult({ ok: false, error: errorMessage(e) })
+    }
+  }
+
+  const checking = asked && result === null
+  const status = updateStatusText(state, asked, result)
+  return (
+    <div className="flex items-center justify-between gap-4 border-t border-line pt-5">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-fg">HML {version ? `v${version}` : ''}</p>
+        <p className="mt-0.5 text-xs break-words text-muted" aria-live="polite">
+          {status ?? 'Updates download in the background and install when HML restarts.'}
+        </p>
+      </div>
+      {state.status === 'downloaded' ? (
+        <Button variant="primary" onClick={() => void window.hmlUpdate.restart()}>
+          Restart to update
+        </Button>
+      ) : (
+        <Button disabled={checking || state.status === 'downloading'} onClick={() => void check()}>
+          {checking && <Spinner className="size-3.5" />}
+          Check for updates
+        </Button>
+      )}
     </div>
   )
 }

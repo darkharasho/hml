@@ -5,13 +5,17 @@ import { useCurrentProfile, useStore } from '../store'
 import { sortMenuGames, usedGameLabels } from '../titleView'
 import { GameCover } from './GameCover'
 import { Menu, type MenuItem } from './ui'
+import { UpdatePill } from './UpdatePill'
 
 /** Keep in step with TITLEBAR_HEIGHT in src/main/windowFrame.ts (macOS centers its lights on it). */
 const HEIGHT = 'h-[38px]'
 const NO_DRAG = '[-webkit-app-region:no-drag]'
 const isMac = window.hmlPlatform === 'darwin'
 
-/** HML's titlebar: logo, game and profile dropdowns, and (off macOS) the window buttons. */
+/**
+ * HML's titlebar: logo, game and profile dropdowns, the update pill, and (off macOS) the window
+ * buttons.
+ */
 export function TitleBar(): React.JSX.Element {
   const game = useStore((s) => s.currentGame)
   const maximized = useMaximized()
@@ -30,6 +34,10 @@ export function TitleBar(): React.JSX.Element {
         <span className="font-bold tracking-tight text-ember">HML</span>
       </div>
       {game && <Crumbs game={game} />}
+      {/* Restarting for an update under an open dialog would drop whatever it was doing. */}
+      <div className="flex shrink-0 items-center" data-inert-under-modal>
+        <UpdatePill className={`ml-2 ${NO_DRAG}`} />
+      </div>
       <div className="h-full min-w-4 flex-1" />
       {!isMac && <WindowButtons maximized={maximized} />}
     </header>
