@@ -180,14 +180,14 @@ describe('store ghSetPrereleases', () => {
   })
 
   test('turning on installs an auto-mode update right away', async () => {
-    api.ghSetPrereleases.mockResolvedValue(update('auto'))
+    api.ghSetPrereleases.mockResolvedValue({ update: update('auto') })
     await useStore.getState().ghSetPrereleases('o-r', true)
     expect(api.ghSetPrereleases).toHaveBeenCalledWith('repo', 'p', 'o-r', true)
     expect(api.ghUpdate).toHaveBeenCalledWith('repo', 'p', ['o-r'])
   })
 
   test('turning on announces a notify-mode update without installing it', async () => {
-    api.ghSetPrereleases.mockResolvedValue(update('notify'))
+    api.ghSetPrereleases.mockResolvedValue({ update: update('notify') })
     await useStore.getState().ghSetPrereleases('o-r', true)
     expect(api.ghUpdate).not.toHaveBeenCalled()
     expect(api.ghCheckUpdates).toHaveBeenCalledWith('repo', 'p')
@@ -197,11 +197,28 @@ describe('store ghSetPrereleases', () => {
   })
 
   test('turning off only saves and refreshes the update list', async () => {
-    api.ghSetPrereleases.mockResolvedValue(null)
+    api.ghSetPrereleases.mockResolvedValue({ update: null })
     await useStore.getState().ghSetPrereleases('o-r', false)
     expect(api.ghUpdate).not.toHaveBeenCalled()
     expect(api.ghCheckUpdates).toHaveBeenCalledWith('repo', 'p')
     expect(useStore.getState().toasts).toEqual([])
+  })
+
+  test('turning off on a prerelease-only repo says the mod waits for a stable release', async () => {
+    const profile = {
+      id: 'p',
+      name: 'P',
+      mods: [{ id: 'o-r', source: { kind: 'github', owner: 'o', repo: 'r' } }]
+    }
+    api.listProfiles.mockResolvedValue([profile])
+    api.ghSetPrereleases.mockResolvedValue({ update: null, prereleaseOnly: true })
+    await useStore.getState().ghSetPrereleases('o-r', false)
+    expect(useStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([
+      [
+        'info',
+        "o/r only publishes pre-releases, so it won't update until it publishes a stable release."
+      ]
+    ])
   })
 })
 

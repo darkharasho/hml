@@ -269,6 +269,13 @@ export interface GhModConfig {
   /** The installed pre-release's publish date, set with installedPrerelease. */
   installedPublishedAt?: string
 }
+/** What turning a GitHub mod's pre-releases on or off found. */
+export interface GhPrereleaseResult {
+  /** The update turning it on revealed (not installed yet); null when none or when off. */
+  update: GhUpdate | null
+  /** Off, and the repo only publishes pre-releases: the mod won't update until a stable one. */
+  prereleaseOnly?: true
+}
 /** Options of an Add from GitHub install. */
 export interface GhInstallRequest {
   /** Install and follow the newest release even when it is a pre-release. */

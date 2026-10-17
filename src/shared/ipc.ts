@@ -5,6 +5,7 @@ import type {
   GameDetection,
   GhInstallRequest,
   GhInstallResult,
+  GhPrereleaseResult,
   GhUpdate,
   GhUpdateMode,
   DeploymentStatus,
@@ -84,13 +85,13 @@ export interface HmlApi {
   ghCheckUpdates(game: string, profileId: string): Promise<GhUpdate[]>
   ghUpdate(game: string, profileId: string, modIds: string[]): Promise<InstalledMod[]>
   ghSetUpdateMode(game: string, profileId: string, modId: string, mode: GhUpdateMode): Promise<void>
-  /** Saves the mod's pre-release setting; turning it on checks the mod and returns its update. */
+  /** Saves the mod's pre-release setting and checks the mod (pinned mods aren't checked). */
   ghSetPrereleases(
     game: string,
     profileId: string,
     modId: string,
     on: boolean
-  ): Promise<GhUpdate | null>
+  ): Promise<GhPrereleaseResult>
   /** Saves (after verifying) or, with null/empty, removes the GitHub token. Never returns it. */
   ghSetToken(token: string | null): Promise<{ login: string | null }>
   ghTokenStatus(): Promise<{ set: boolean; encryptionAvailable: boolean }>

@@ -724,12 +724,13 @@ export const useStore = create<State>()((set, get) => {
     async ghSetPrereleases(modId, on) {
       const { currentGame, currentProfile } = get()
       if (!currentGame || !currentProfile) return
-      const found = await busy(async () => {
-        const u = await api.ghSetPrereleases(currentGame.label, currentProfile, modId, on)
+      const result = await busy(async () => {
+        const r = await api.ghSetPrereleases(currentGame.label, currentProfile, modId, on)
         await reloadProfiles()
-        return u
+        return r
       })
-      if (found === failed) return
+      if (result === failed) return
+      const found = result.update
       // An auto-mode update installs now (ghUpdate checks again when it is done); notify mode
       // announces it the way the background check does.
       if (found?.mode === 'auto') return get().ghUpdate([found])
@@ -738,6 +739,15 @@ export const useStore = create<State>()((set, get) => {
         get().toast(
           'info',
           `${found.owner}/${found.repo} has an update to ${found.latest}. Use Update to install it.`
+        )
+      } else if (result.prereleaseOnly) {
+        const source = get()
+          .profiles.find((p) => p.id === currentProfile)
+          ?.mods.find((m) => m.id === modId)?.source
+        const name = source?.kind === 'github' ? `${source.owner}/${source.repo}` : modId
+        get().toast(
+          'info',
+          `${name} only publishes pre-releases, so it won't update until it publishes a stable release.`
         )
       }
     },
