@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 16-32px variant of icon.svg: no inner border, heavier hex and H so they survive downscaling. -->
+  <rect width="1024" height="1024" rx="200" fill="#0f191d"/>
+  <path d="M512 120 856 318v388L512 904 168 706V318z" fill="none" stroke="#ff9a3c" stroke-width="112" stroke-linejoin="round"/>
+  <path d="M340 320h120v136h104V320h120v384H564V560H460v144H340z" fill="#e3ece9"/>
+</svg>

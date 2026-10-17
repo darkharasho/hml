@@ -20,6 +20,9 @@ asarUnpack:
   - node_modules/7zip-bin/**
 win:
   executableName: hml
+mac:
+  # Padded to Apple's icon grid; electron-builder turns it into the .icns.
+  icon: build/icon-mac.png
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
