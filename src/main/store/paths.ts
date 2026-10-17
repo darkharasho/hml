@@ -11,6 +11,10 @@ export interface AppPaths {
   nxGames: string
   nxAddedGames: string
   customGames: string
+  /** Steam store cover URLs by app id. */
+  steamArtCache: string
+  /** Thunderstore package icon URLs by fullName, for games without a package index. */
+  tsIconCache: string
   tsIndexCache(label: string): string
   /** Parent of every per-game dir. */
   gamesDir: string
@@ -38,6 +42,8 @@ export function makePaths(root: string): AppPaths {
     nxGames: path.join(root, 'cache', 'nexus-games.json'),
     nxAddedGames: path.join(root, 'nexus-added-games.json'),
     customGames: path.join(root, 'custom-games.json'),
+    steamArtCache: path.join(root, 'cache', 'steam-art.json'),
+    tsIconCache: path.join(root, 'cache', 'thunderstore-icons.json'),
     tsIndexCache: (label) => path.join(root, 'cache', 'thunderstore', `${label}.json`),
     gamesDir,
     gameDir,

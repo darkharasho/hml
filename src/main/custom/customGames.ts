@@ -1,6 +1,9 @@
 import type { AppPaths } from '../store/paths'
 import { readJson, writeJsonAtomic } from '../store/json'
 import type { GameDef, InstallRule, LoaderChoice, Runner } from '../../shared/types'
+import { customArtUrl } from '../art/protocol'
+import { steamCdnCover } from '../art/steamArt'
+import { isCoverRef, type CoverRef } from './cover'
 
 export const STEAM_PREFIX = 'steam-'
 export const CUSTOM_PREFIX = 'custom-'
@@ -14,6 +17,8 @@ export interface StoredCustomGame {
   exeName: string | null
   dataFolderName: string
   runner?: Runner | null
+  /** The cover image the user chose, in the game's data dir. */
+  cover?: CoverRef | null
 }
 
 const rule = (
@@ -66,15 +71,20 @@ export function customGameDef(g: StoredCustomGame): GameDef {
     installRules: none ? [] : BEPINEX_INSTALL_RULES,
     packageIndex: null,
     searchStrings: [g.displayName],
-    iconUrl: g.steamAppId
-      ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${g.steamAppId}/library_600x900.jpg`
-      : null,
+    // A chosen image comes first; services.ts adds the better Steam art after summarizing.
+    iconUrl: g.cover
+      ? customArtUrl(g.label, g.cover.at)
+      : g.steamAppId
+        ? steamCdnCover(g.steamAppId)
+        : null,
+    ...(g.cover && g.steamAppId ? { iconFallbacks: [steamCdnCover(g.steamAppId)] } : {}),
     supported: true,
     custom: {
       source: g.source,
       loaderChoice: g.loaderChoice,
       runner: g.runner ?? null,
-      added: true
+      added: true,
+      image: !!g.cover
     }
   }
 }
@@ -114,7 +124,11 @@ export function createCustomGames(paths: AppPaths): CustomGames {
   }
   const read = async (): Promise<StoredCustomGame[]> => {
     const stored = await readJson<unknown>(paths.customGames)
-    return Array.isArray(stored) ? stored.filter(valid) : []
+    if (!Array.isArray(stored)) return []
+    // A bad cover record loses the cover, not the game.
+    return stored
+      .filter(valid)
+      .map((g) => (g.cover == null || isCoverRef(g.cover) ? g : { ...g, cover: undefined }))
   }
   return {
     list: () => locked(read),

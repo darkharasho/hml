@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   coverExt,
   coverPath,
+  coverPreview,
   isCoverRef,
   removeCovers,
   saveCover
@@ -69,5 +70,12 @@ describe('saveCover / removeCovers', () => {
     expect(existsSync(coverPath(paths, 'custom-x', cover))).toBe(false)
     expect(existsSync(keep)).toBe(true)
     await removeCovers(paths, 'custom-never')
+  })
+})
+
+describe('coverPreview', () => {
+  it('returns a data URL of the image', async () => {
+    expect(await coverPreview(src('a.png', 'hi'))).toBe('data:image/png;base64,aGk=')
+    await expect(coverPreview(src('a.txt'))).rejects.toThrow(/PNG/)
   })
 })

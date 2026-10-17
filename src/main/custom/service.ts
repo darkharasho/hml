@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type {
@@ -23,6 +24,8 @@ import { loadSettings, resolveGameDir, updateSettings } from '../store/settings'
 import { detectGameFolder } from './detect'
 import { findLoaderMod, loaderMatches, loaderSpec, type LoaderSpec } from './loaders'
 import { backupStamp, findManualLoader, moveToBackup } from './manualInstall'
+import { steamCdnCover } from '../art/steamArt'
+import { COVER_EXTS, coverPath, coverPreview, removeCovers, saveCover } from './cover'
 import {
   customGameDef,
   folderLabel,
@@ -64,6 +67,7 @@ type CustomApi = Pick<
   | 'getManualLoader'
   | 'removeManualLoader'
   | 'keepManualLoader'
+  | 'pickCustomGameImage'
 >
 
 const CHOICES: LoaderChoice[] = ['bepinex5', 'bepinex6-mono', 'bepinex6-il2cpp', 'none']
@@ -99,9 +103,43 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
     catalog: Catalog,
     steamRoot?: string | null
   ): Promise<GameSummary[]>
+  /** The custom game's chosen cover file (for the art protocol); null when it has none. */
+  customCoverFile(label: string): Promise<string | null>
 } {
   const { deps, customGames, nexus } = ctx
   const { paths } = deps
+  const now = deps.now ?? Date.now
+
+  /** Images picked in the dialog, by token, until the game is saved with one. */
+  const pickedImages = new Map<string, string>()
+  const PICKED_MAX = 8
+
+  async function pickCustomGameImage(): Promise<{ token: string; preview: string } | null> {
+    const [file] = await deps.dialog.pickFiles({
+      title: 'Choose a cover image',
+      filters: [{ name: 'Images', extensions: [...COVER_EXTS] }]
+    })
+    if (!file) return null
+    const preview = await coverPreview(file)
+    const token = randomUUID()
+    pickedImages.set(token, file)
+    while (pickedImages.size > PICKED_MAX) pickedImages.delete(pickedImages.keys().next().value!)
+    return { token, preview }
+  }
+
+  /** Copies a picked image in as the game's cover. */
+  async function applyImage(label: string, token: unknown): Promise<StoredCustomGame['cover']> {
+    const file = typeof token === 'string' ? pickedImages.get(token) : undefined
+    if (!file) throw new Error('Choose the image again.')
+    const cover = await saveCover(paths, label, file, now())
+    pickedImages.delete(token as string)
+    return cover
+  }
+
+  async function customCoverFile(label: string): Promise<string | null> {
+    const game = await customGames.get(label)
+    return game?.cover ? coverPath(paths, label, game.cover) : null
+  }
 
   async function listRunners(): Promise<Runner[]> {
     if (deps.platform === 'win32') return []
@@ -237,6 +275,11 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
   async function addCustomGame(input: AddCustomGameInput): Promise<GameSummary> {
     checkChoice(input.loaderChoice)
     const game = input.source === 'steam' ? await addSteam(input) : await addFolder(input)
+    // Adding a game again keeps the image it had unless a new one was picked.
+    game.cover =
+      input.image !== undefined
+        ? await applyImage(game.label, input.image)
+        : ((await customGames.get(game.label))?.cover ?? null)
     if (input.source === 'folder') {
       await updateSettings(paths, (s) => ({
         ...s,
@@ -266,6 +309,12 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
       next.displayName = name
     }
     if (patch.runner !== undefined) next.runner = patch.runner
+    if (patch.image === null) {
+      await removeCovers(paths, label)
+      next.cover = null
+    } else if (patch.image !== undefined) {
+      next.cover = await applyImage(label, patch.image)
+    }
     await customGames.put(next)
     return ctx.summarize(customGameDef(next))
   }
@@ -277,6 +326,7 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
       throw new Error('Remove the deployed mods from the game folder first.')
     }
     await customGames.remove(label)
+    await removeCovers(paths, label).catch(() => undefined)
     await updateSettings(paths, (s) => {
       const gamePathOverrides = { ...s.gamePathOverrides }
       const nexusDomainOverrides = { ...s.nexusDomainOverrides }
@@ -394,7 +444,7 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
           installRules: [],
           packageIndex: null,
           searchStrings: [],
-          iconUrl: `https://cdn.cloudflare.steamstatic.com/steam/apps/${a.appId}/library_600x900.jpg`,
+          iconUrl: steamCdnCover(a.appId),
           supported: true,
           loaderPackageIds: [],
           custom: { source: 'steam' as const, loaderChoice: 'none' as const, added: false }
@@ -415,6 +465,8 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
     getManualLoader,
     removeManualLoader,
     keepManualLoader,
-    steamCandidates
+    pickCustomGameImage,
+    steamCandidates,
+    customCoverFile
   }
 }

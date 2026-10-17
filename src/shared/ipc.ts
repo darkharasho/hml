@@ -142,6 +142,13 @@ export interface HmlApi {
   removeManualLoader(game: string): Promise<string>
   /** Remembers "Keep" for this game. */
   keepManualLoader(game: string): Promise<void>
+  /**
+   * Image dialog for a custom game's cover; null when cancelled. The token goes to addCustomGame
+   * or updateCustomGame as `image`; the preview is a data: URL of the image.
+   */
+  pickCustomGameImage(): Promise<{ token: string; preview: string } | null>
+  /** Icon URLs to try in order for each installed mod (by id); a mod without any is left out. */
+  getModIcons(game: string, profileId: string): Promise<Record<string, string[]>>
 }
 
 // `satisfies` makes the compiler reject a missing or unknown method name.
@@ -205,7 +212,9 @@ const METHOD_TABLE = {
   installLoader: true,
   getManualLoader: true,
   removeManualLoader: true,
-  keepManualLoader: true
+  keepManualLoader: true,
+  pickCustomGameImage: true,
+  getModIcons: true
 } satisfies Record<keyof HmlApi, true>
 
 export const HML_METHODS = Object.keys(METHOD_TABLE) as (keyof HmlApi)[]

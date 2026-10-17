@@ -53,6 +53,24 @@ describe('customGameDef', () => {
     expect(d.installRules).toEqual(BEPINEX_INSTALL_RULES)
     expect(d.iconUrl).toContain('/3314580/library_600x900.jpg')
   })
+  it('uses a chosen cover image first, then the Steam art', () => {
+    const d = customGameDef({ ...trash, cover: { ext: 'png', at: 42 } })
+    expect(d.iconUrl).toBe('hml-art://custom/steam-3314580?v=42')
+    expect(d.iconFallbacks).toEqual([
+      'https://cdn.cloudflare.steamstatic.com/steam/apps/3314580/library_600x900.jpg'
+    ])
+    expect(d.custom?.image).toBe(true)
+    const folder = customGameDef({
+      ...trash,
+      label: 'custom-x',
+      source: 'folder',
+      steamAppId: null,
+      cover: { ext: 'jpg', at: 1 }
+    })
+    expect(folder.iconUrl).toBe('hml-art://custom/custom-x?v=1')
+    expect(folder.iconFallbacks).toBeUndefined()
+    expect(customGameDef(trash).custom?.image).toBe(false)
+  })
   it('maps a no-loader game to deploy', () => {
     const d = customGameDef({ ...trash, loaderChoice: 'none' })
     expect(d.loader).toBe('deploy')
@@ -79,5 +97,12 @@ describe('store', () => {
       JSON.stringify([{ label: 'x' }, trash, { ...trash, label: 'steam-1', loaderChoice: 'melon' }])
     )
     expect(await createCustomGames(paths).list()).toEqual([trash])
+  })
+  it('list keeps a game whose cover record is malformed, without the cover', async () => {
+    await fs.writeFile(
+      paths.customGames,
+      JSON.stringify([{ ...trash, cover: { ext: '../../x', at: 1 } }])
+    )
+    expect((await createCustomGames(paths).list())[0].cover).toBeUndefined()
   })
 })

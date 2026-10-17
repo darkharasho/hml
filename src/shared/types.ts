@@ -15,6 +15,8 @@ export interface CustomGameInfo {
   runner?: Runner | null
   /** False only for an installed Steam game shown in search that isn't added yet. */
   added: boolean
+  /** The user chose a cover image for the game (it is the game's iconUrl). */
+  image?: boolean
 }
 export interface GameDetection {
   exeName: string | null
@@ -25,18 +27,28 @@ export interface GameDetection {
   suggested: LoaderChoice
 }
 export type AddCustomGameInput =
-  | { source: 'steam'; steamAppId: string; loaderChoice: LoaderChoice; displayName?: string }
+  | {
+      source: 'steam'
+      steamAppId: string
+      loaderChoice: LoaderChoice
+      displayName?: string
+      /** A pickCustomGameImage token: the image becomes the game's cover. */
+      image?: string
+    }
   | {
       source: 'folder'
       folder: string
       displayName: string
       loaderChoice: LoaderChoice
       runner?: Runner | null
+      image?: string
     }
 export interface CustomGameUpdate {
   displayName?: string
   loaderChoice?: LoaderChoice
   runner?: Runner | null
+  /** A pickCustomGameImage token sets the cover image; null removes it. */
+  image?: string | null
 }
 export interface GhTrack {
   major: number
@@ -61,6 +73,8 @@ export interface GameDef {
   packageIndex: string | null
   searchStrings: string[]
   iconUrl: string | null
+  /** More cover URLs to try, in order, when iconUrl fails to load. */
+  iconFallbacks?: string[]
   supported: boolean
   /** Nexus-only search results: the game's mod count on Nexus Mods. */
   nexusModCount?: number
