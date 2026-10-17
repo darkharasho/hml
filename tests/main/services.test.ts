@@ -1014,6 +1014,18 @@ describe('services', () => {
       }
     })
 
+    test('mod icons of an indexed game never fall back to per-package lookups', async () => {
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      offline = true
+      await fsPromises.rm(deps.paths.tsIndexCache('repo'), { force: true })
+      expect(await make().getModIcons('repo', profile.id)).toEqual({})
+      expect(
+        tsFetch.mock.calls.some(([u]) => String(u).includes('/api/experimental/package/'))
+      ).toBe(false)
+    })
+
     test('a failing second download names the package and keeps the first', async () => {
       blobs.set(dl('Own-Mod', '1.0.0'), 404)
       const api = make()

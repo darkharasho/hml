@@ -953,9 +953,11 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   async function getModIcons(game: string, profileId: string): Promise<Record<string, string[]>> {
     const def = await requireGame(game)
     const { mods } = await getProfile(paths, game, profileId)
-    const idx = def.packageIndex !== null ? await loadIndex(def, false).catch(() => null) : null
-    // Without an index (custom games, or offline), packages are looked up one by one.
-    const remote = idx
+    const indexed = def.packageIndex !== null
+    const idx = indexed ? await loadIndex(def, false).catch(() => null) : null
+    // Games without a package index (custom games) look packages up one by one. An indexed game
+    // whose index failed to load (offline) goes without remote icons this time.
+    const remote = indexed
       ? new Map<string, string>()
       : await tsIcons.icons(
           mods.flatMap((m) =>

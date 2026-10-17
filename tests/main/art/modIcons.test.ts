@@ -157,4 +157,31 @@ describe('createTsIcons', () => {
     await again.icons(['Other-Pack'])
     expect(calls.length).toBe(4)
   })
+  const names = Array.from({ length: 10 }, (_, i) => `Owner-Pack${i}`)
+  it('asks for at most 4 packages at a time', async () => {
+    let active = 0
+    let most = 0
+    const fetch = (async () => {
+      active++
+      most = Math.max(most, active)
+      await new Promise((r) => setTimeout(r, 5))
+      active--
+      return new Response(
+        JSON.stringify({ latest: { icon: 'https://ccdn.thunderstore.io/i.png' } })
+      )
+    }) as unknown as typeof globalThis.fetch
+    const icons = createTsIcons({ fetch, cacheFile: path.join(tmp, 'c.json') })
+    expect((await icons.icons(names)).size).toBe(10)
+    expect(most).toBe(4)
+  })
+  it('stops the batch after the first failure', async () => {
+    let calls = 0
+    const fetch = (async () => {
+      calls++
+      throw new Error('offline')
+    }) as unknown as typeof globalThis.fetch
+    const icons = createTsIcons({ fetch, cacheFile: path.join(tmp, 'c.json') })
+    expect((await icons.icons(names)).size).toBe(0)
+    expect(calls).toBeLessThanOrEqual(4)
+  })
 })

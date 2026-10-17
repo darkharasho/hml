@@ -63,6 +63,8 @@ export function modIconCandidates(
 const TS_PACKAGE_API = 'https://thunderstore.io/api/experimental/package/'
 const ICON_MAX_AGE_MS = 7 * 86_400_000
 const FAILED_RETRY_MS = 60_000
+/** Package lookups running at once. */
+const TS_CONCURRENCY = 4
 const FULL_NAME = /^([A-Za-z0-9_]+)-([A-Za-z0-9_]+)$/
 
 /** A package's icon from Thunderstore's package API, or null for anything unexpected. */
@@ -105,18 +107,25 @@ export function createTsIcons(opts: {
     async icons(fullNames) {
       const cache = await store.load()
       const wanted = [...new Set(fullNames.filter((n) => FULL_NAME.test(n)))]
-      await Promise.all(
-        wanted.map((n) => {
-          const pending = inFlight.get(n)
-          if (pending) return pending
-          const hit = cache.get(n)
-          if (hit && now() - hit.at < ICON_MAX_AGE_MS) return undefined
-          if (now() - failedAt < FAILED_RETRY_MS) return undefined
-          const p = fetchOne(n, cache).finally(() => inFlight.delete(n))
-          inFlight.set(n, p)
-          return p
-        })
-      )
+      const shared = wanted.flatMap((n) => inFlight.get(n) ?? [])
+      const queue = wanted.filter((n) => {
+        const hit = cache.get(n)
+        return !inFlight.has(n) && !(hit && now() - hit.at < ICON_MAX_AGE_MS)
+      })
+      // A few workers take packages off the queue; a failure (offline) stops them all.
+      const worker = async (): Promise<void> => {
+        for (let n = queue.shift(); n; n = queue.shift()) {
+          if (now() - failedAt < FAILED_RETRY_MS) return
+          const name = n
+          const p = fetchOne(name, cache).finally(() => inFlight.delete(name))
+          inFlight.set(name, p)
+          await p
+        }
+      }
+      await Promise.all([
+        ...shared,
+        ...Array.from({ length: Math.min(TS_CONCURRENCY, queue.length) }, worker)
+      ])
       const out = new Map<string, string>()
       for (const n of wanted) {
         const url = cache.get(n)?.url
