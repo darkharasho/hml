@@ -4459,3 +4459,82 @@ describe('services launch, folders and domains', () => {
     expect(mods.find((m) => m.id === 'Lockless')?.enabled).toBe(false)
   })
 })
+
+describe('Steam launch options for Proton', () => {
+  const localconfig = (): string =>
+    path.join(steamRoot, 'userdata', '5', 'config', 'localconfig.vdf')
+  const BEFORE =
+    '"UserLocalConfigStore"\n{\n\t"Software"\n\t{\n\t\t"Valve"\n\t\t{\n\t\t\t"Steam"\n\t\t\t{\n\t\t\t\t"apps"\n\t\t\t\t{\n\t\t\t\t\t"3241660"\n\t\t\t\t\t{\n\t\t\t\t\t\t"LaunchOptions"\t\t"-windowed"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n'
+  let processes: string[][]
+  let clock: number
+  beforeEach(() => {
+    mkdirSync(path.dirname(localconfig()), { recursive: true })
+    writeFileSync(localconfig(), BEFORE)
+    processes = []
+    clock = 0
+    deps.listProcesses = async () => processes.shift() ?? []
+    deps.now = () => clock
+    deps.sleep = async (ms) => {
+      clock += ms
+    }
+  })
+
+  test('writes the merged option when Steam is not running', async () => {
+    const api = createServices(deps)
+    expect(await api.setProtonLaunchOptions('repo')).toBe('set')
+    expect(readFileSync(localconfig(), 'utf8')).toContain(
+      '"LaunchOptions"\t\t"WINEDLLOVERRIDES=\\"winhttp=n,b\\" %command% -windowed"'
+    )
+    expect(await api.setProtonLaunchOptions('repo')).toBe('already-set')
+  })
+
+  test('refuses to write while Steam is running', async () => {
+    processes = [['systemd', 'steamwebhelper']]
+    const api = createServices(deps)
+    expect(await api.setProtonLaunchOptions('repo')).toBe('steam-running')
+    expect(readFileSync(localconfig(), 'utf8')).toBe(BEFORE)
+    expect(spawned).toEqual([])
+  })
+
+  test('closeSteamAndSet asks Steam to shut down, waits for it, then writes', async () => {
+    processes = [['steam'], ['steam', 'reaper'], ['bash']]
+    const api = createServices(deps)
+    expect(await api.closeSteamAndSet('repo')).toBe('set')
+    expect(spawned).toEqual([{ cmd: 'steam', args: ['-shutdown'] }])
+    expect(readFileSync(localconfig(), 'utf8')).toContain('winhttp=n,b')
+  })
+
+  test('closeSteamAndSet uses flatpak for Flatpak Steam', async () => {
+    const flatpakRoot = path.join(tmp, '.var', 'app', 'com.valvesoftware.Steam', 'data', 'Steam')
+    mkdirSync(path.dirname(flatpakRoot), { recursive: true })
+    await fsPromises.rename(steamRoot, flatpakRoot)
+    writeFileSync(deps.paths.settings, JSON.stringify({ steamRootOverride: flatpakRoot }))
+    processes = [['steam'], []]
+    const api = createServices(deps)
+    expect(await api.closeSteamAndSet('repo')).toBe('set')
+    expect(spawned).toEqual([
+      { cmd: 'flatpak', args: ['run', 'com.valvesoftware.Steam', '-shutdown'] }
+    ])
+  })
+
+  test('closeSteamAndSet times out without writing when Steam stays up', async () => {
+    deps.listProcesses = async () => ['steam']
+    const api = createServices(deps)
+    expect(await api.closeSteamAndSet('repo')).toBe('steam-timeout')
+    expect(clock).toBeGreaterThanOrEqual(30_000)
+    expect(readFileSync(localconfig(), 'utf8')).toBe(BEFORE)
+  })
+
+  test('closeSteamAndSet does not spawn anything when Steam is already closed', async () => {
+    const api = createServices(deps)
+    expect(await api.closeSteamAndSet('repo')).toBe('set')
+    expect(spawned).toEqual([])
+  })
+
+  test('only on Linux', async () => {
+    deps.platform = 'win32'
+    const api = createServices(deps)
+    await expect(api.setProtonLaunchOptions('repo')).rejects.toThrow(/Linux/)
+    await expect(api.closeSteamAndSet('repo')).rejects.toThrow(/Linux/)
+  })
+})
