@@ -9,6 +9,8 @@ const api = vi.hoisted(() => ({
   removeDeployment: vi.fn(),
   listProfiles: vi.fn(),
   ghCheckUpdates: vi.fn(),
+  ghSetPrereleases: vi.fn(),
+  ghUpdate: vi.fn(),
   nxInstall: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
@@ -147,6 +149,58 @@ describe('store notify-mode GitHub updates', () => {
       .handleEvent({ type: 'github-updates-available', game: 'repo', profileId: 'q', count: 1 })
     await settle()
     expect(api.ghCheckUpdates).not.toHaveBeenCalled()
+    expect(useStore.getState().toasts).toEqual([])
+  })
+})
+
+describe('store ghSetPrereleases', () => {
+  const repo = { label: 'repo', displayName: 'R.E.P.O.', loader: 'bepinex', packageIndex: null }
+  const update = (mode: GhUpdate['mode']): GhUpdate => ({
+    modId: 'o-r',
+    owner: 'o',
+    repo: 'r',
+    current: 'v1.0.0',
+    latest: 'v1.1.0-beta.1',
+    mode
+  })
+  beforeEach(() => {
+    api.ghSetPrereleases.mockReset()
+    api.ghUpdate.mockReset().mockResolvedValue([])
+    api.ghCheckUpdates.mockReset().mockResolvedValue([])
+    api.listProfiles.mockReset().mockResolvedValue([])
+    api.getLaunchWarnings.mockReset().mockResolvedValue([])
+    useStore.setState({
+      currentGame: repo as unknown as GameSummary,
+      currentProfile: 'p',
+      profiles: [],
+      ghUpdates: [],
+      ghUpdating: [],
+      toasts: []
+    })
+  })
+
+  test('turning on installs an auto-mode update right away', async () => {
+    api.ghSetPrereleases.mockResolvedValue(update('auto'))
+    await useStore.getState().ghSetPrereleases('o-r', true)
+    expect(api.ghSetPrereleases).toHaveBeenCalledWith('repo', 'p', 'o-r', true)
+    expect(api.ghUpdate).toHaveBeenCalledWith('repo', 'p', ['o-r'])
+  })
+
+  test('turning on announces a notify-mode update without installing it', async () => {
+    api.ghSetPrereleases.mockResolvedValue(update('notify'))
+    await useStore.getState().ghSetPrereleases('o-r', true)
+    expect(api.ghUpdate).not.toHaveBeenCalled()
+    expect(api.ghCheckUpdates).toHaveBeenCalledWith('repo', 'p')
+    expect(useStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([
+      ['info', 'o/r has an update to v1.1.0-beta.1. Use Update to install it.']
+    ])
+  })
+
+  test('turning off only saves and refreshes the update list', async () => {
+    api.ghSetPrereleases.mockResolvedValue(null)
+    await useStore.getState().ghSetPrereleases('o-r', false)
+    expect(api.ghUpdate).not.toHaveBeenCalled()
+    expect(api.ghCheckUpdates).toHaveBeenCalledWith('repo', 'p')
     expect(useStore.getState().toasts).toEqual([])
   })
 })

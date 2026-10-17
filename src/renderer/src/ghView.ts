@@ -55,3 +55,13 @@ export function ghUpdatedToast(mods: { name: string; tag: string }[]): string {
     ? `Updated ${mods[0].name} to ${mods[0].tag}`
     : `Updated ${mods.length} GitHub mods`
 }
+
+/** True when the mod's installed GitHub release is a pre-release (older installs don't say). */
+export function isPrereleaseInstall(mod: InstalledMod): boolean {
+  return mod.source.kind === 'github' && mod.github?.installedPrerelease === true
+}
+
+/** True for GitHub mods that can follow pre-releases: not loader mods on a release track. */
+export function canFollowPrereleases(mod: InstalledMod): boolean {
+  return mod.source.kind === 'github' && !mod.github?.track
+}

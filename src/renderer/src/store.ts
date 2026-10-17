@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { GameSummary } from '../../shared/ipc'
 import type {
   DeploymentStatus,
+  GhInstallRequest,
   GhInstallResult,
   GhUpdate,
   GhUpdateMode,
@@ -102,9 +103,11 @@ interface State {
   tsInstall(pkg: { fullName: string; name: string }, version?: string): Promise<void>
   tsUpdate(updates: ModUpdate[]): Promise<void>
   /** Throws on failure so the GitHub dialog can show the error inline. */
-  ghInstall(url: string, asset?: string): Promise<GhInstallResult>
+  ghInstall(url: string, asset?: string, opts?: GhInstallRequest): Promise<GhInstallResult>
   ghUpdate(updates: GhUpdate[]): Promise<void>
   ghSetUpdateMode(modId: string, mode: GhUpdateMode): Promise<void>
+  /** Saves a GitHub mod's pre-release setting; an update it reveals is applied per update mode. */
+  ghSetPrereleases(modId: string, on: boolean): Promise<void>
   /** Saves a token, or removes it with null. Resolves false when that failed. */
   ghSetToken(token: string | null): Promise<boolean>
   /**
@@ -658,7 +661,7 @@ export const useStore = create<State>()((set, get) => {
       get().toast(t.kind, t.message)
     },
 
-    async ghInstall(url, asset) {
+    async ghInstall(url, asset, opts) {
       const { currentGame, currentProfile } = get()
       if (!currentGame || !currentProfile) throw new Error('Pick a profile first.')
       set((s) => ({ ghInstalling: s.ghInstalling + 1 }))
@@ -666,7 +669,7 @@ export const useStore = create<State>()((set, get) => {
       try {
         result = await tracked(async () => {
           try {
-            return await api.ghInstall(currentGame.label, currentProfile, url, asset)
+            return await api.ghInstall(currentGame.label, currentProfile, url, asset, opts)
           } finally {
             await reloadProfiles()
           }
@@ -716,6 +719,27 @@ export const useStore = create<State>()((set, get) => {
         await reloadProfiles()
       })
       if (ok !== failed) await get().checkUpdates()
+    },
+
+    async ghSetPrereleases(modId, on) {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) return
+      const found = await busy(async () => {
+        const u = await api.ghSetPrereleases(currentGame.label, currentProfile, modId, on)
+        await reloadProfiles()
+        return u
+      })
+      if (found === failed) return
+      // An auto-mode update installs now (ghUpdate checks again when it is done); notify mode
+      // announces it the way the background check does.
+      if (found?.mode === 'auto') return get().ghUpdate([found])
+      await get().checkUpdates()
+      if (found) {
+        get().toast(
+          'info',
+          `${found.owner}/${found.repo} has an update to ${found.latest}. Use Update to install it.`
+        )
+      }
     },
 
     async ghSetToken(token) {

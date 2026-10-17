@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { GhUpdateMode, InstalledMod } from '../../src/shared/types'
 import {
+  canFollowPrereleases,
   formatBytes,
+  isPrereleaseInstall,
   ghInstallToast,
   ghSubline,
   ghUpdatedToast,
@@ -98,5 +100,38 @@ describe('ghUpdatedToast', () => {
         { name: 'B', tag: 'v2' }
       ])
     ).toBe('Updated 2 GitHub mods')
+  })
+})
+
+describe('pre-release helpers', () => {
+  const base = ghMod('auto')
+  const withConfig = (github: InstalledMod['github']): InstalledMod => ({ ...base, github })
+
+  it('isPrereleaseInstall is true only when the install recorded a pre-release', () => {
+    expect(
+      isPrereleaseInstall(
+        withConfig({ updateMode: 'auto', assetPattern: null, installedPrerelease: true })
+      )
+    ).toBe(true)
+    expect(isPrereleaseInstall(base)).toBe(false)
+    expect(isPrereleaseInstall(withConfig(undefined))).toBe(false)
+    const local: InstalledMod = { ...base, source: { kind: 'local', fileName: 'f', sha256: '' } }
+    expect(isPrereleaseInstall(local)).toBe(false)
+  })
+
+  it('canFollowPrereleases excludes loader mods on a release track and non-GitHub mods', () => {
+    expect(canFollowPrereleases(base)).toBe(true)
+    expect(canFollowPrereleases(withConfig(undefined))).toBe(true)
+    expect(
+      canFollowPrereleases(
+        withConfig({
+          updateMode: 'auto',
+          assetPattern: null,
+          track: { major: 5, prerelease: false }
+        })
+      )
+    ).toBe(false)
+    const ts: InstalledMod = { ...base, source: { kind: 'thunderstore', fullName: 'a-b' } }
+    expect(canFollowPrereleases(ts)).toBe(false)
   })
 })
