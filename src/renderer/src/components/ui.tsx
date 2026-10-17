@@ -1,12 +1,14 @@
 import {
   Fragment,
   useEffect,
+  useId,
   useRef,
   useState,
   type ButtonHTMLAttributes,
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
+import { createModalLayers, domModalHost } from '../modalLayers'
 
 type Variant = 'primary' | 'ghost' | 'quiet' | 'danger'
 
@@ -32,23 +34,8 @@ export function Button({
   )
 }
 
-/**
- * Open modals, innermost last. A native showModal() would make everything else inert, the
- * titlebar's window buttons included, so modals are plain dialogs above a backdrop and the app
- * marks what they cover inert itself: every `data-inert-under-modal` element, and any modal
- * under the top one.
- */
-const openModals: HTMLElement[] = []
-
-function syncModalInert(): void {
-  const open = openModals.length > 0
-  document.querySelectorAll<HTMLElement>('[data-inert-under-modal]').forEach((el) => {
-    el.inert = open
-  })
-  openModals.forEach((el, i) => {
-    el.inert = i !== openModals.length - 1
-  })
-}
+/** Open modals; see createModalLayers for why HML manages inertness itself. */
+const modalLayers = createModalLayers(domModalHost(document))
 
 /**
  * Centered modal dialog: the rest of the window (except the titlebar) is inert while it is open,
@@ -69,6 +56,7 @@ export function Modal({
 }): React.JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const titleId = useId()
   const closeRef = useRef(onClose)
   useEffect(() => {
     closeRef.current = onClose
@@ -79,13 +67,13 @@ export function Modal({
     if (!layer || !dialog) return
     const returnFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null
-    openModals.push(layer)
-    syncModalInert()
+    modalLayers.open(layer)
     dialog.show()
     // Keep an autoFocus field's focus; otherwise focus the dialog so keys reach it.
     if (!dialog.contains(document.activeElement)) dialog.focus()
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && openModals[openModals.length - 1] === layer) {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return
+      if (modalLayers.isTop(layer)) {
         e.preventDefault()
         closeRef.current()
       }
@@ -94,8 +82,7 @@ export function Modal({
     return () => {
       document.removeEventListener('keydown', onKey)
       dialog.close()
-      openModals.splice(openModals.indexOf(layer), 1)
-      syncModalInert()
+      modalLayers.close(layer)
       if (returnFocus?.isConnected) returnFocus.focus()
     }
   }, [])
@@ -110,12 +97,17 @@ export function Modal({
       <dialog
         ref={dialogRef}
         aria-modal="true"
-        aria-label={title}
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : 'Dialog'}
         tabIndex={-1}
         className={`${width} relative m-auto max-h-full max-w-full overflow-auto rounded-xl border border-line bg-panel p-0 text-fg shadow-[0_24px_64px_-16px_rgba(0,0,0,0.7)] outline-none [animation:dialog-in_160ms_ease-out]`}
       >
         <div className="px-5 pt-5 pb-4">
-          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+          {title && (
+            <h2 id={titleId} className="text-base font-semibold tracking-tight">
+              {title}
+            </h2>
+          )}
           <div className="mt-3 text-sm text-muted">{children}</div>
         </div>
         {footer && (
