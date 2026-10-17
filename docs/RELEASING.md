@@ -34,10 +34,10 @@ version and release again.
 
 ## Required secrets / variables (GitHub repo settings)
 
-The macOS signing secrets are **not yet set** on `darkharasho/hml`. Until they
-are, the `build-mac` job fails at "Verify macOS signing identity is visible" and
-the release stays a draft (the publish job needs every build). Add them once
-from 1Password with `gh secret set` (see below).
+The macOS signing secrets are **already set** on `darkharasho/hml` (loaded from
+1Password with `gh secret set`, see below). If they go missing, the `build-mac`
+job fails at "Verify macOS signing identity is visible" and the release stays a
+draft (the publish job needs every build).
 
 | Name | Type | Purpose |
 | --- | --- | --- |
