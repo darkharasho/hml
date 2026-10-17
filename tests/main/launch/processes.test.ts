@@ -94,11 +94,12 @@ describe('Steam processes', () => {
     expect((await linuxProcessNames(proc)).sort()).toEqual(['steamwebhelper', 'systemd'])
   })
 
-  test('isSteamProcess matches steam, steam.sh, steamwebhelper and reaper only', () => {
-    for (const n of ['steam', 'steam.sh', 'steamwebhelper', 'reaper']) {
+  test('isSteamProcess matches steam, steam.sh and steamwebhelper only', () => {
+    for (const n of ['steam', 'steam.sh', 'steamwebhelper']) {
       expect(isSteamProcess(n)).toBe(true)
     }
-    for (const n of ['steamos-session', 'hml', 'Steam.exe', 'bash']) {
+    // REAPER (the DAW) shares a name with Steam's game reaper, which never runs without Steam.
+    for (const n of ['reaper', 'steamos-session', 'hml', 'Steam.exe', 'bash']) {
       expect(isSteamProcess(n)).toBe(false)
     }
   })

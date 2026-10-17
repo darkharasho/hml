@@ -37,7 +37,7 @@ export async function isGameRunning(
 }
 
 /** Process names (`/proc/<pid>/comm`) of a running Steam client, native or Flatpak. */
-const STEAM_PROCESSES = new Set(['steam', 'steam.sh', 'steamwebhelper', 'reaper'])
+const STEAM_PROCESSES = new Set(['steam', 'steam.sh', 'steamwebhelper'])
 
 export const isSteamProcess = (name: string): boolean => STEAM_PROCESSES.has(name)
 
