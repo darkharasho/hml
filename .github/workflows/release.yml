@@ -13,6 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # electron-builder names the release after package.json's version, so a tag that doesn't
+      # match would publish files under a different release than the tag.
+      - name: Check the tag matches package.json
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="$(jq -r .version package.json)"
+          if [ "$tag" != "v$version" ]; then
+            echo "::error::Tag $tag doesn't match package.json version $version (expected v$version)."
+            exit 1
+          fi
       - uses: actions/setup-node@v4
         with:
           # vitest 5 needs Node ^22.12; electron-vite 6 and vite 8 need >=22.12 too.
@@ -26,9 +36,24 @@ jobs:
       - name: Unit tests
         run: npm test
 
+  # One draft for every builder to upload into. Without it the parallel builds can each create
+  # their own draft for the tag. electron-builder (releaseType: draft) uploads into an existing
+  # draft whose tag_name matches (electron-publish GitHubPublisher.getOrCreateRelease).
+  draft:
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --draft --title "$tag" --notes ""
+
   # Linux + Windows need no code-signing.
   build:
-    needs: [test]
+    needs: [draft]
     strategy:
       fail-fast: false
       matrix:
@@ -58,7 +83,7 @@ jobs:
   # (CSC_LINK = base64 of the .p12; see docs/RELEASING.md). electron-builder
   # reads them from the environment.
   build-mac:
-    needs: [test]
+    needs: [draft]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -109,6 +134,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       # Same parser scripts/release.mjs checks with before it tags.
       - name: Set release notes from RELEASE_NOTES.md
