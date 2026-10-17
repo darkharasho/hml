@@ -1,11 +1,12 @@
-import { useRef, useState, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 import type { GhUpdate, InstalledMod, ModSource, ModUpdate, NxUpdate } from '../../../shared/types'
 import { api, errorMessage, pathForFile } from '../api'
 import { sourcesFor } from '../customView'
 import { ghSubline, githubRepoUrl, UPDATE_MODES, updateModeLabel } from '../ghView'
 import { nexusModUrl } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
-import { UNSUPPORTED_LOADER } from '../tsView'
+import { initials, UNSUPPORTED_LOADER } from '../tsView'
+import { useFallbackSrc } from '../useFallbackSrc'
 import { Browse } from './Browse'
 import { GithubDialog } from './GithubDialog'
 import { ProgressLine } from './PackageDetail'
@@ -19,6 +20,37 @@ const SOURCE_BADGE: Record<ModSource['kind'], { label: string; className: string
 }
 
 const hasFiles = (e: DragEvent): boolean => e.dataTransfer.types.includes('Files')
+
+const NO_ICONS: string[] = []
+
+/**
+ * Icon URLs for each installed mod, fetched again when the mod set or a version changes. Empty
+ * until main answers (rows show their letter tile meanwhile) or when the lookup fails.
+ */
+function useModIcons(
+  game: string | undefined,
+  profileId: string | undefined,
+  mods: InstalledMod[] | undefined
+): Record<string, string[]> {
+  const key = `${game}/${profileId}/${(mods ?? []).map((m) => `${m.id}@${m.version}`).join('|')}`
+  const [icons, setIcons] = useState<Record<string, string[]>>({})
+  useEffect(() => {
+    if (!game || !profileId) return
+    let live = true
+    api.getModIcons(game, profileId).then(
+      (urls) => live && setIcons(urls),
+      () => undefined
+    )
+    return () => {
+      live = false
+    }
+    // key covers game, profileId and the mods.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  // The previous answer stands in until the new one arrives, so installing a mod doesn't make
+  // every other row flash back to its letter tile.
+  return icons
+}
 
 export function ModList(): React.JSX.Element | null {
   const profile = useCurrentProfile()
@@ -43,6 +75,7 @@ export function ModList(): React.JSX.Element | null {
   const [dragging, setDragging] = useState(false)
   // dragenter/dragleave fire for every child element; count depth to know when we truly left.
   const depth = useRef(0)
+  const icons = useModIcons(game?.label, profile?.id, profile?.mods)
 
   if (!profile || !game) return null
   const updateById = new Map(updates.map((u) => [u.modId, u]))
@@ -195,6 +228,7 @@ export function ModList(): React.JSX.Element | null {
               <ModRow
                 key={m.id}
                 mod={m}
+                icons={icons[m.id] ?? NO_ICONS}
                 update={updateById.get(m.id)}
                 ghUpdate={ghUpdateById.get(m.id)}
                 nxUpdate={nxUpdateById.get(m.id)}
@@ -244,14 +278,42 @@ function TabButton({
   )
 }
 
+/** A mod's icon, trying each URL in turn, with a letter tile when none loads. */
+function ModIcon({ name, urls }: { name: string; urls: string[] }): React.JSX.Element {
+  const { src, onError } = useFallbackSrc(urls)
+  const shape = 'size-12 shrink-0 overflow-hidden rounded-md bg-raised'
+  if (src) {
+    return (
+      <img
+        key={src}
+        src={src}
+        alt=""
+        loading="lazy"
+        draggable={false}
+        onError={onError}
+        className={`${shape} object-cover`}
+      />
+    )
+  }
+  return (
+    <span
+      className={`${shape} grid place-items-center bg-[linear-gradient(160deg,#1f3a43,#132329)] text-sm font-bold text-muted`}
+    >
+      {initials(name)}
+    </span>
+  )
+}
+
 function ModRow({
   mod,
+  icons,
   update,
   ghUpdate,
   nxUpdate,
   supported
 }: {
   mod: InstalledMod
+  icons: string[]
   update?: ModUpdate
   ghUpdate?: GhUpdate
   nxUpdate?: NxUpdate
@@ -327,6 +389,9 @@ function ModRow({
         title={canToggle ? undefined : 'This mod has no files that can be switched off'}
         onChange={(v) => void setModEnabled(mod.id, v)}
       />
+      <div className={mod.enabled ? '' : 'opacity-55'}>
+        <ModIcon name={mod.name} urls={icons} />
+      </div>
       <div className={`min-w-0 flex-1 ${mod.enabled ? '' : 'opacity-55'}`}>
         <div className="flex items-baseline gap-2">
           <span className="truncate font-medium">{mod.name}</span>
