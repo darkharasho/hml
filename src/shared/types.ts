@@ -188,6 +188,9 @@ export interface ImportResult {
 
 export type LaunchMode = 'modded' | 'vanilla'
 
+/** How waiting for a launched game ended: seen running, not seen in time, or not detectable. */
+export type LaunchWatchResult = 'running' | 'timeout' | 'unknown'
+
 /** Codes returned by getLaunchWarnings. Blockers stop a modded launch; the rest are advice. */
 export type LaunchWarning =
   | 'game-not-found'

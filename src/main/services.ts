@@ -9,6 +9,7 @@ import type {
   InstalledMod,
   LaunchMode,
   LaunchWarning,
+  LaunchWatchResult,
   Settings,
   TsPackage
 } from '../shared/types'
@@ -36,7 +37,12 @@ import {
 } from './profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
 import { buildDirectLaunchPlan, buildLaunchPlan, buildSteamPlainPlan } from './launch/launchPlan'
-import { isGameRunning } from './launch/processes'
+import {
+  isGameProcessRunning,
+  isGameRunning,
+  waitForGameStart,
+  type ProcFsPort
+} from './launch/processes'
 import {
   detectDoorstopVersion,
   findPreloader,
@@ -128,6 +134,10 @@ export interface ServiceDeps {
   shareBaseUrl: string
   /** Folder of Flatpak's system-wide overrides; defaults to /var/lib/flatpak/overrides. */
   flatpakSystemOverridesDir?: string
+  /** Linux process list for confirming a launch; defaults to the real /proc. */
+  procFs?: ProcFsPort
+  /** Clock and timer for waitForGame; default to the real ones. */
+  launchWatch?: { now(): number; sleep(ms: number): Promise<void> }
 }
 
 interface LoadedIndex extends TsIndex {
@@ -1285,6 +1295,14 @@ export function createServices(deps: ServiceDeps): HmlApi & {
         doorstop: await detectDoorstopVersion(modded ? profileDir : gameDir)
       })
       await launch(plan, profileDir, gameDir, deps.spawn)
+    },
+
+    async waitForGame(game: string): Promise<LaunchWatchResult> {
+      const def = await requireGame(game)
+      return waitForGameStart({
+        check: () => isGameProcessRunning(deps.platform, deps.execFile, def.exeNames, deps.procFs),
+        ...deps.launchWatch
+      })
     },
 
     async openProfileFolder(game: string, profileId: string): Promise<void> {

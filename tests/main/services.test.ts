@@ -702,6 +702,49 @@ describe('services', () => {
     expect(await api.getLaunchWarnings('repo', profile.id)).not.toContain('flatpak-filesystem')
   })
 
+  test("waitForGame resolves running once the game's exe appears in /proc", async () => {
+    let polls = 0
+    const api = createServices({
+      ...deps,
+      procFs: {
+        readdir: async () => {
+          polls++
+          return polls < 3 ? ['1'] : ['1', '2']
+        },
+        readFile: async (file) =>
+          file.startsWith('/proc/2/') ? 'REPO.exe' : file.endsWith('comm') ? 'bash' : '/bin/bash'
+      },
+      launchWatch: { now: () => polls * 1000, sleep: async () => undefined }
+    })
+    expect(await api.waitForGame('repo')).toBe('running')
+    expect(polls).toBe(3)
+  })
+
+  test('waitForGame times out when the exe never appears', async () => {
+    let t = 0
+    const api = createServices({
+      ...deps,
+      procFs: { readdir: async () => [], readFile: async () => '' },
+      launchWatch: {
+        now: () => t,
+        sleep: async (ms) => {
+          t += ms
+        }
+      }
+    })
+    expect(await api.waitForGame('repo')).toBe('timeout')
+    expect(t).toBe(120_000)
+  })
+
+  test("waitForGame is unknown on a platform HML can't list processes on", async () => {
+    const api = createServices({
+      ...deps,
+      platform: 'darwin',
+      launchWatch: { now: () => 0, sleep: async () => undefined }
+    })
+    expect(await api.waitForGame('repo')).toBe('unknown')
+  })
+
   test('launch modded without a profile is a readable error', async () => {
     await expect(createServices(deps).launch('repo', null, 'modded')).rejects.toThrow(/profile/i)
     expect(spawned).toHaveLength(0)

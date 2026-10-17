@@ -13,6 +13,7 @@ import type {
   InstalledMod,
   LaunchMode,
   LaunchWarning,
+  LaunchWatchResult,
   ModUpdate,
   NxInstallResult,
   NxModDetail,
@@ -58,6 +59,11 @@ export interface HmlApi {
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
   getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]>
   launch(game: string, profileId: string | null, mode: LaunchMode): Promise<void>
+  /**
+   * After a launch, polls (about every second, for up to two minutes) until one of the game's
+   * exes is running. 'unknown' when HML can't detect the game's process.
+   */
+  waitForGame(game: string): Promise<LaunchWatchResult>
   openProfileFolder(game: string, profileId: string): Promise<void>
   getSettings(): Promise<Settings>
   saveSettings(s: Settings): Promise<void>
@@ -183,6 +189,7 @@ const METHOD_TABLE = {
   uninstallMod: true,
   getLaunchWarnings: true,
   launch: true,
+  waitForGame: true,
   openProfileFolder: true,
   getSettings: true,
   saveSettings: true,
