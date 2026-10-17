@@ -5,7 +5,6 @@ import {
   isSteamCandidate,
   loaderChoicesFor,
   loaderOptionLabel,
-  protonOptionsToast,
   runnerLabel,
   sourcesFor
 } from '../../src/renderer/src/customView'
@@ -111,21 +110,5 @@ describe('platform and runner helpers', () => {
         githubPrimary: false
       })
     })
-  })
-})
-
-describe('protonOptionsToast', () => {
-  test('success when set, info when already there, error on timeout, none while Steam runs', () => {
-    expect(protonOptionsToast('set', 'R.E.P.O.')).toEqual({
-      kind: 'success',
-      message: 'Launch options set for R.E.P.O.'
-    })
-    expect(protonOptionsToast('already-set', 'R.E.P.O.')?.kind).toBe('info')
-    expect(protonOptionsToast('steam-timeout', 'R.E.P.O.')).toEqual({
-      kind: 'error',
-      message:
-        "Steam didn't close within 30 seconds. Close Steam yourself, then choose Set it for me again."
-    })
-    expect(protonOptionsToast('steam-running', 'R.E.P.O.')).toBeNull()
   })
 })

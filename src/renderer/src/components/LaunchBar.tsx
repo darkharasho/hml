@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
-import { PROTON_LAUNCH_OPTIONS } from '../../../shared/protonOptions'
 import type { LaunchWarning } from '../../../shared/types'
 import { api, errorMessage } from '../api'
-import { installedLoaderLabel, isLinux, shortLoaderLabel } from '../customView'
+import { installedLoaderLabel, shortLoaderLabel } from '../customView'
 import { deploymentLabel } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
 import { EditGameDialog } from './AddGameDialog'
-import { Button, ConfirmDialog, Icon, Modal, Spinner } from './ui'
+import { Button, Icon, Modal, Spinner } from './ui'
 
 /** Single-quotes a path for the shell only when it needs it. */
 function shellQuote(p: string): string {
@@ -17,7 +16,7 @@ function flatpakOverrideCommand(gamesDir: string): string {
   return `flatpak override --user --filesystem=${shellQuote(gamesDir)} com.valvesoftware.Steam`
 }
 
-type WarningAction = 'settings' | 'proton' | 'flatpak' | null
+type WarningAction = 'settings' | 'flatpak' | null
 
 const WARNINGS: Record<LaunchWarning, { label: string; detail: string; action: WarningAction }> = {
   'game-not-found': {
@@ -40,10 +39,11 @@ const WARNINGS: Record<LaunchWarning, { label: string; detail: string; action: W
     detail: 'Install BepInExPack into this profile so mods can load.',
     action: null
   },
-  'proton-launch-options': {
-    label: 'Steam launch options needed',
-    detail: 'This game runs through Proton and needs a launch option so mods load.',
-    action: 'proton'
+  'proton-first-run': {
+    label: 'Start the game once first',
+    detail:
+      'Proton sets this game up the first time it starts. Start it once (vanilla is fine), then HML can load mods.',
+    action: null
   },
   'native-linux-unsupported': {
     label: 'Native Linux game',
@@ -80,9 +80,6 @@ export function LaunchBar(): React.JSX.Element | null {
   const installLoader = useStore((s) => s.installLoader)
   const removeDeployment = useStore((s) => s.removeDeployment)
   const openSettings = useStore((s) => s.setSettingsOpen)
-  const setProtonOptions = useStore((s) => s.setProtonLaunchOptions)
-  const [protonOpen, setProtonOpen] = useState(false)
-  const [steamConfirm, setSteamConfirm] = useState(false)
   const [flatpakOpen, setFlatpakOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
 
@@ -118,16 +115,8 @@ export function LaunchBar(): React.JSX.Element | null {
     return null
   }
 
-  /** "Set it for me": writes Steam's launch options, asking to close Steam when it's open. */
-  async function setForMe(closeSteam = false): Promise<void> {
-    const result = await setProtonOptions(closeSteam)
-    if (result === 'steam-running') setSteamConfirm(true)
-    else if (result === 'set' || result === 'already-set') setProtonOpen(false)
-  }
-
   function runAction(action: WarningAction): void {
     if (action === 'settings') openSettings(true)
-    if (action === 'proton') setProtonOpen(true)
     if (action === 'flatpak') setFlatpakOpen(true)
   }
 
@@ -140,28 +129,6 @@ export function LaunchBar(): React.JSX.Element | null {
           const w = extra ? { ...base, detail: extra.detail } : base
           const chip =
             'inline-flex items-center gap-1.5 rounded-full border border-warn/40 bg-warn/10 px-2.5 py-1 text-xs font-medium text-warn'
-          if (code === 'proton-launch-options' && isLinux())
-            return (
-              <span key={code} className={chip}>
-                <button
-                  type="button"
-                  title={w.detail}
-                  onClick={() => runAction(w.action)}
-                  className="inline-flex items-center gap-1.5 hover:underline"
-                >
-                  <Icon name="warn" className="size-3" />
-                  {w.label}
-                </button>
-                <Button
-                  variant="quiet"
-                  disabled={busy}
-                  onClick={() => void setForMe()}
-                  className="h-6 px-2 text-xs"
-                >
-                  Set it for me
-                </Button>
-              </span>
-            )
           if (extra?.button)
             return (
               <span key={code} className={chip}>
@@ -259,22 +226,6 @@ export function LaunchBar(): React.JSX.Element | null {
         </>
       )}
 
-      {protonOpen && (
-        <ProtonDialog
-          onClose={() => setProtonOpen(false)}
-          onSetForMe={isLinux() ? () => void setForMe() : undefined}
-          busy={busy}
-        />
-      )}
-      {steamConfirm && (
-        <ConfirmDialog
-          title="Close Steam?"
-          body="Steam is running and would overwrite this when it closes. Close Steam and set it? Steam will close; HML's Start buttons will start it again."
-          confirmLabel="Close Steam and set it"
-          onConfirm={() => void setForMe(true)}
-          onClose={() => setSteamConfirm(false)}
-        />
-      )}
       {editOpen && <EditGameDialog game={game} onClose={() => setEditOpen(false)} />}
       {flatpakOpen && <FlatpakDialog onClose={() => setFlatpakOpen(false)} />}
     </header>
@@ -335,52 +286,6 @@ function CopyField({ text }: { text: string }): React.JSX.Element {
         {copied ? 'Copied' : 'Copy'}
       </Button>
     </div>
-  )
-}
-
-function ProtonDialog({
-  onClose,
-  onSetForMe,
-  busy
-}: {
-  onClose(): void
-  /** Writes the option into Steam's config; absent where HML can't (not Linux). */
-  onSetForMe?: () => void
-  busy: boolean
-}): React.JSX.Element {
-  return (
-    <Modal
-      title="Add Steam launch options"
-      onClose={onClose}
-      width="w-[520px]"
-      footer={
-        onSetForMe ? (
-          <>
-            <Button variant="quiet" onClick={onClose}>
-              Done
-            </Button>
-            <Button variant="primary" disabled={busy} onClick={onSetForMe}>
-              Set it for me
-            </Button>
-          </>
-        ) : (
-          <Button variant="primary" onClick={onClose}>
-            Done
-          </Button>
-        )
-      }
-    >
-      <p>
-        This game runs through Proton, which ignores the mod loader unless Steam tells it to. In
-        Steam, right-click the game, open Properties, and paste this into Launch options:
-      </p>
-      <CopyField text={PROTON_LAUNCH_OPTIONS} />
-      <p className="mt-3">
-        Vanilla launches keep working with this option set.
-        {onSetForMe &&
-          ' Set it for me adds it to your existing launch options in Steam (Steam has to be closed).'}
-      </p>
-    </Modal>
   )
 }
 

@@ -82,15 +82,24 @@ describe('launchWarnings', () => {
     steamRoot
   })
 
-  test('proton warning when launch options missing', async () => {
+  test('first-run warning while the prefix is missing and launch options lack winhttp', async () => {
     await addPreloader()
     await fs.writeFile(path.join(gameDir, 'REPO.exe'), '')
-    expect(await launchWarnings(input())).toEqual(['proton-launch-options'])
+    expect(await launchWarnings(input())).toEqual(['proton-first-run'])
     await writeLaunchOptions('-foo')
-    expect(await launchWarnings(input())).toEqual(['proton-launch-options'])
+    expect(await launchWarnings(input())).toEqual(['proton-first-run'])
     // After %command% it is a game argument, which Proton never sees.
     await writeLaunchOptions('%command% WINEDLLOVERRIDES=winhttp=n,b')
-    expect(await launchWarnings(input())).toEqual(['proton-launch-options'])
+    expect(await launchWarnings(input())).toEqual(['proton-first-run'])
+  })
+
+  test('no first-run warning once the game has a Proton prefix', async () => {
+    await addPreloader()
+    await fs.writeFile(path.join(gameDir, 'REPO.exe'), '')
+    const reg = path.join(steamRoot, 'steamapps', 'compatdata', '3241660', 'pfx', 'user.reg')
+    await fs.mkdir(path.dirname(reg), { recursive: true })
+    await fs.writeFile(reg, 'WINE REGISTRY Version 2\n')
+    expect(await launchWarnings(input())).toEqual([])
   })
 
   test('no warning when present', async () => {

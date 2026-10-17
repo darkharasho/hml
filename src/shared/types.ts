@@ -199,17 +199,12 @@ export type LaunchWarning =
   | 'game-not-found'
   | 'loader-unsupported'
   | 'no-bepinex'
-  | 'proton-launch-options'
+  | 'proton-first-run'
   | 'steam-not-found'
   | 'flatpak-filesystem'
   | 'native-linux-unsupported'
   | 'loader-mismatch'
   | 'no-runner'
-/**
- * Outcome of setting a game's Proton launch options: written, already there, refused because
- * Steam is running (it rewrites the file on exit), or Steam didn't close in time.
- */
-export type ProtonOptionsResult = 'set' | 'already-set' | 'steam-running' | 'steam-timeout'
 export type DoorstopVersion = 3 | 4
 
 export interface TsVersion {

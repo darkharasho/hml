@@ -16,13 +16,11 @@ import type {
   NxInstallResult,
   NxUpdate,
   ProfileManifest,
-  ProtonOptionsResult,
   Settings
 } from '../../shared/types'
 import { api, errorMessage } from './api'
 import { isGhAccessError } from '../../shared/messages'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
-import { protonOptionsToast } from './customView'
 import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
 import { displayName, installToast, progressLabel } from './tsView'
 
@@ -143,11 +141,6 @@ interface State {
   handleEvent(e: HmlEvent): void
   /** Starts the current game; resolves once it's seen running, HML gives up, or it failed. */
   launch(mode: LaunchMode): Promise<void>
-  /**
-   * Sets the current game's Proton launch options in Steam (Linux); with `closeSteam`, shuts
-   * Steam down first. Toasts the outcome and answers it, or null when it failed (toasted too).
-   */
-  setProtonLaunchOptions(closeSteam?: boolean): Promise<ProtonOptionsResult | null>
   /** Stops waiting for a game to start (the game itself is left alone) and frees its buttons. */
   cancelLaunch(game: string): void
   saveSteamPath(dir: string | null): Promise<void>
@@ -998,20 +991,6 @@ export const useStore = create<State>()((set, get) => {
       if (e.type === 'nexus-failed') return get().toast('error', e.message)
       if (progressIdle(get())) return
       set({ progress: progressLabel(e) })
-    },
-
-    async setProtonLaunchOptions(closeSteam = false) {
-      const game = get().currentGame
-      if (!game) return null
-      if (closeSteam) get().toast('info', 'Closing Steam...')
-      const result = await busy(() =>
-        closeSteam ? api.closeSteamAndSet(game.label) : api.setProtonLaunchOptions(game.label)
-      )
-      if (result === failed) return null
-      const t = protonOptionsToast(result, game.displayName)
-      if (t) get().toast(t.kind, t.message)
-      if (result === 'set' || result === 'already-set') await refreshWarnings()
-      return result
     },
 
     async launch(mode) {

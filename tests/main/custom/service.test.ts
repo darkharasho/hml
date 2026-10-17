@@ -733,7 +733,7 @@ describe('custom game loaders, launches and manual installs', () => {
     const profile = await api.createProfile(game.label, 'p')
     const warnings = await api.getLaunchWarnings(game.label, profile.id)
     expect(warnings).not.toContain('steam-not-found')
-    expect(warnings).not.toContain('proton-launch-options')
+    expect(warnings).not.toContain('proton-first-run')
     expect(warnings).not.toContain('native-linux-unsupported')
     expect(warnings).not.toContain('no-runner')
     expect(warnings).not.toContain('no-bepinex')

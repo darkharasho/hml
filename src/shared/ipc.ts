@@ -23,7 +23,6 @@ import type {
   NxUpdate,
   NxUser,
   ProfileManifest,
-  ProtonOptionsResult,
   Runner,
   Settings,
   SharePreview,
@@ -61,13 +60,6 @@ export interface HmlApi {
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
   getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]>
   launch(game: string, profileId: string | null, mode: LaunchMode): Promise<void>
-  /**
-   * Linux: adds `WINEDLLOVERRIDES="winhttp=n,b"` to the game's Steam launch options, merged with
-   * the user's. Answers `steam-running` (writing nothing) while Steam is open.
-   */
-  setProtonLaunchOptions(game: string): Promise<ProtonOptionsResult>
-  /** Linux: asks Steam to shut down, waits for it to exit (about 30 s), then sets them. */
-  closeSteamAndSet(game: string): Promise<ProtonOptionsResult>
   /**
    * After a launch, polls (about every second, for up to two minutes) until one of the game's
    * exes is running. 'unknown' when HML can't detect the game's process.
@@ -202,8 +194,6 @@ const METHOD_TABLE = {
   uninstallMod: true,
   getLaunchWarnings: true,
   launch: true,
-  setProtonLaunchOptions: true,
-  closeSteamAndSet: true,
   waitForGame: true,
   cancelWaitForGame: true,
   openProfileFolder: true,

@@ -1,18 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { promises as fs } from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
+import { describe, expect, test } from 'vitest'
 import {
   isGameProcessRunning,
   isGameRunning,
-  isSteamProcess,
-  linuxProcessNames,
   matchesGameExe,
   parseTasklist,
   PROC_SCAN_CONCURRENCY,
-  steamShutdownCommand,
   waitForGameStart,
-  waitForSteamExit,
   type ProcFsPort
 } from '../../../src/main/launch/processes'
 
@@ -323,83 +316,5 @@ describe('waitForGameStart', () => {
     up = true
     exit()
     expect(await result).toBe('running')
-  })
-})
-
-describe('Steam processes', () => {
-  let proc: string
-  beforeEach(async () => {
-    proc = await fs.mkdtemp(path.join(os.tmpdir(), 'hml-proc-'))
-  })
-  afterEach(async () => {
-    await fs.rm(proc, { recursive: true, force: true })
-  })
-  async function addProc(pid: string, comm: string | null): Promise<void> {
-    await fs.mkdir(path.join(proc, pid), { recursive: true })
-    if (comm !== null) await fs.writeFile(path.join(proc, pid, 'comm'), comm + '\n')
-  }
-
-  test('linuxProcessNames reads each numeric pid comm, skipping unreadable ones', async () => {
-    await addProc('1', 'systemd')
-    await addProc('42', 'steamwebhelper')
-    await addProc('43', null)
-    await addProc('self', 'nope')
-    expect((await linuxProcessNames(proc)).sort()).toEqual(['steamwebhelper', 'systemd'])
-  })
-
-  test('isSteamProcess matches steam, steam.sh and steamwebhelper only', () => {
-    for (const n of ['steam', 'steam.sh', 'steamwebhelper']) {
-      expect(isSteamProcess(n)).toBe(true)
-    }
-    // REAPER (the DAW) shares a name with Steam's game reaper, which never runs without Steam.
-    for (const n of ['reaper', 'steamos-session', 'hml', 'Steam.exe', 'bash']) {
-      expect(isSteamProcess(n)).toBe(false)
-    }
-  })
-
-  test('steamShutdownCommand uses flatpak run for Flatpak Steam', () => {
-    expect(steamShutdownCommand(false)).toEqual({ command: 'steam', args: ['-shutdown'] })
-    expect(steamShutdownCommand(true)).toEqual({
-      command: 'flatpak',
-      args: ['run', 'com.valvesoftware.Steam', '-shutdown']
-    })
-  })
-
-  test('waitForSteamExit polls until Steam is gone', async () => {
-    let t = 0
-    const answers = [true, true, false]
-    const sleeps: number[] = []
-    const gone = await waitForSteamExit(async () => answers.shift()!, {
-      timeoutMs: 30_000,
-      intervalMs: 500,
-      now: () => t,
-      sleep: async (ms) => {
-        sleeps.push(ms)
-        t += ms
-      }
-    })
-    expect(gone).toBe(true)
-    expect(sleeps).toEqual([500, 500])
-  })
-
-  test('waitForSteamExit gives up after the timeout', async () => {
-    let t = 0
-    let checks = 0
-    const gone = await waitForSteamExit(
-      async () => {
-        checks++
-        return true
-      },
-      {
-        timeoutMs: 30_000,
-        intervalMs: 1000,
-        now: () => t,
-        sleep: async (ms) => {
-          t += ms
-        }
-      }
-    )
-    expect(gone).toBe(false)
-    expect(checks).toBe(31)
   })
 })

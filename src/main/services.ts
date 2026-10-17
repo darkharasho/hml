@@ -9,7 +9,6 @@ import type {
   InstalledMod,
   LaunchMode,
   LaunchWarning,
-  ProtonOptionsResult,
   LaunchWatchResult,
   Settings,
   TsPackage
@@ -41,14 +40,9 @@ import { buildDirectLaunchPlan, buildLaunchPlan, buildSteamPlainPlan } from './l
 import {
   isGameProcessRunning,
   isGameRunning,
-  isSteamProcess,
-  linuxProcessNames,
-  steamShutdownCommand,
   waitForGameStart,
-  waitForSteamExit,
   type ProcFsPort
 } from './launch/processes'
-import { writeProtonLaunchOptions } from './steam/launchOptions'
 import {
   detectDoorstopVersion,
   findPreloader,
@@ -91,6 +85,7 @@ import { parseNxm, type HandlerPort } from './nexus/nxm'
 import { findInstalledMod, providesPackage } from '../shared/modIdentity'
 import { createSteamArt, findLibraryCover } from './art/steamArt'
 import { createTsIcons, modIconCandidates, modIconPath } from './art/modIcons'
+import { ensureWinhttpOverride } from './steam/protonPrefix'
 import { createTsDocs } from './thunderstore/docs'
 import { serveArt, type ArtSources } from './art/protocol'
 
@@ -131,8 +126,6 @@ export interface ServiceDeps {
   secrets: SecretPort
   /** Clock for index freshness; defaults to Date.now. */
   now?: () => number
-  /** Running process names (Linux), to tell whether Steam is open; defaults to /proc. */
-  listProcesses?: () => Promise<string[]>
   /** Waits between checks while Steam shuts down; defaults to a timer. */
   sleep?: (ms: number) => Promise<void>
   /** HML's version, sent to Nexus Mods in request headers. */
@@ -899,42 +892,21 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     directExits.set(def.label, exited)
   }
 
-  const listProcesses = deps.listProcesses ?? (() => linuxProcessNames())
-  const steamRunning = async (): Promise<boolean> => (await listProcesses()).some(isSteamProcess)
-
-  /** The Steam root and app id whose launch options to set; Linux and Steam games only. */
-  async function protonOptionsTarget(game: string): Promise<{ root: string; appId: string }> {
-    if (platform !== 'linux') throw new Error('Steam launch options only need setting on Linux.')
-    const def = await requireGame(game)
-    if (!def.steamAppId) throw new Error(`${def.displayName} is not a Steam game.`)
-    const root = await getSteamRoot()
-    if (!root) throw new Error('Steam was not found. Set the Steam folder in settings.')
-    return { root, appId: def.steamAppId }
-  }
-
-  async function writeProtonOptions(root: string, appId: string): Promise<ProtonOptionsResult> {
-    const changed = await writeProtonLaunchOptions(root, appId)
-    return changed.length > 0 ? 'set' : 'already-set'
-  }
-
-  /** Runs `steam -shutdown` (or the Flatpak equivalent) and resolves once it has started. */
-  async function requestSteamShutdown(root: string): Promise<void> {
-    const { command, args } = steamShutdownCommand(isFlatpakSteam(root))
+  /**
+   * Makes the game's Proton prefix load BepInEx's winhttp.dll, so mods load without Steam launch
+   * options. Before the first launch there is no prefix yet; the proton-first-run warning covers it.
+   */
+  async function prepareProtonPrefix(
+    def: GameDef,
+    steamRoot: string,
+    appId: string
+  ): Promise<void> {
     try {
-      const child = deps.spawn(command, args, { detached: true, stdio: 'ignore', shell: false })
-      await new Promise<void>((resolve, reject) => {
-        child.once('error', reject)
-        child.once('spawn', () => {
-          child.unref()
-          resolve()
-        })
-      })
+      await ensureWinhttpOverride(steamRoot, appId, Math.floor(now() / 1000))
     } catch (cause) {
       throw new Error(
-        `Couldn't ask Steam to close (${errMsg(cause)}). Close Steam and try again.`,
-        {
-          cause
-        }
+        `Couldn't set up ${def.displayName}'s Proton prefix for mods (${errMsg(cause)}).`,
+        { cause }
       )
     }
   }
@@ -1362,29 +1334,8 @@ export function createServices(deps: ServiceDeps): HmlApi & {
         preloaderRelPath: preloader,
         doorstop: await detectDoorstopVersion(modded ? profileDir : gameDir)
       })
+      if (modded && proton) await prepareProtonPrefix(def, steamRoot, def.steamAppId)
       await launch(plan, profileDir, gameDir, deps.spawn)
-    },
-
-    async setProtonLaunchOptions(game) {
-      const { root, appId } = await protonOptionsTarget(game)
-      // Steam rewrites localconfig.vdf when it exits, which would undo the change.
-      if (await steamRunning()) return 'steam-running'
-      return writeProtonOptions(root, appId)
-    },
-
-    async closeSteamAndSet(game) {
-      const { root, appId } = await protonOptionsTarget(game)
-      if (await steamRunning()) {
-        await requestSteamShutdown(root)
-        const exited = await waitForSteamExit(steamRunning, {
-          timeoutMs: 30_000,
-          intervalMs: 500,
-          now,
-          sleep: deps.sleep
-        })
-        if (!exited) return 'steam-timeout'
-      }
-      return writeProtonOptions(root, appId)
     },
 
     async waitForGame(game: string): Promise<LaunchWatchResult> {

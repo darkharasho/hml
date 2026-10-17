@@ -1,12 +1,5 @@
 import type { GameSummary } from '../../shared/ipc'
-import type {
-  GameDef,
-  GameDetection,
-  InstalledMod,
-  LoaderChoice,
-  ProtonOptionsResult,
-  Runner
-} from '../../shared/types'
+import type { GameDef, GameDetection, InstalledMod, LoaderChoice, Runner } from '../../shared/types'
 
 /** Nexus-only games come from a Nexus Mods search; their label says so (a loader of `deploy` can also be a folder game's). */
 export const isNexusOnly = (g: GameDef): boolean => g.label.startsWith('nexus-')
@@ -37,27 +30,6 @@ export const runnerLabel = (r: Runner): string => (r.kind === 'proton' ? r.name 
 /** True on Linux. Reads the platform the preload exposes; false when it is absent (tests). */
 export function isLinux(platform: string | undefined = globalThis.window?.hmlPlatform): boolean {
   return platform === 'linux'
-}
-
-/** The toast for a "Set it for me" result; null for `steam-running` (a confirm asks instead). */
-export function protonOptionsToast(
-  result: ProtonOptionsResult,
-  gameName: string
-): { kind: 'success' | 'info' | 'error'; message: string } | null {
-  switch (result) {
-    case 'set':
-      return { kind: 'success', message: `Launch options set for ${gameName}` }
-    case 'already-set':
-      return { kind: 'info', message: `${gameName} already has the launch options` }
-    case 'steam-timeout':
-      return {
-        kind: 'error',
-        message:
-          "Steam didn't close within 30 seconds. Close Steam yourself, then choose Set it for me again."
-      }
-    case 'steam-running':
-      return null
-  }
 }
 
 /** Index of the runner in the list that matches `current` (same kind and path/name); 0 if none does. */

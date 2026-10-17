@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { DoorstopVersion, GameDef, LaunchWarning, Runner } from '../../shared/types'
 import { hasProtonOverride } from '../../shared/protonOptions'
 import { isFlatpakSteam, readLaunchOptions } from '../steam/steam'
+import { findProtonUserReg } from '../steam/protonPrefix'
 import type { LaunchPlan } from './launchPlan'
 
 export const NATIVE_LINUX_UNSUPPORTED =
@@ -87,8 +88,15 @@ export async function launchWarnings(input: {
     const proton = await isProtonGame(input.platform, input.gameDir, input.game.exeNames)
     if (input.platform === 'linux' && !proton) warnings.push('native-linux-unsupported')
     if (proton && input.game.steamAppId) {
+      // Start modded sets winhttp up in the game's Proton prefix, which exists after the first
+      // launch; launch options that already set it work from the start.
       const opts = await readLaunchOptions(input.steamRoot, input.game.steamAppId)
-      if (!hasProtonOverride(opts)) warnings.push('proton-launch-options')
+      if (
+        !hasProtonOverride(opts) &&
+        !(await findProtonUserReg(input.steamRoot, input.game.steamAppId))
+      ) {
+        warnings.push('proton-first-run')
+      }
     }
   }
   if (
