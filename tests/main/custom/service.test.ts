@@ -3,10 +3,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { strToU8, zipSync } from 'fflate'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createServices, type ServiceDeps } from '../../../src/main/services'
 import { makePaths } from '../../../src/main/store/paths'
 import type { HmlEvent } from '../../../src/shared/types'
+import type { GameSummary } from '../../../src/shared/ipc'
 
 const fixture = JSON.parse(
   readFileSync(path.join(__dirname, '../../fixtures/ecosystem-min.json'), 'utf8')
@@ -180,15 +181,18 @@ describe('custom game services', () => {
     expect(labels.at(-1)).toBe('steam-999')
   })
 
-  test('Steam search results and added Steam games get Steam cover art in order', async () => {
+  test('Steam search results get Steam cover art without waiting for the store', async () => {
     const capsule = path.join(steamRoot, 'appcache', 'librarycache', '3314580', 'abc')
     mkdirSync(capsule, { recursive: true })
     writeFileSync(path.join(capsule, 'library_capsule.jpg'), 'JPG')
     const storeCalls: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
     deps.fetch = (async (url: string) => {
       const u = new URL(url)
       if (u.host === 'api.steampowered.com') {
         storeCalls.push(url)
+        await gate
         return new Response(
           JSON.stringify({
             response: {
@@ -211,9 +215,15 @@ describe('custom game services', () => {
     const store =
       'https://shared.steamstatic.com/store_item_assets/steam/apps/3314580/h/library_capsule.jpg?t=1'
     const cdn = 'https://cdn.cloudflare.steamstatic.com/steam/apps/3314580/library_600x900.jpg'
-    const found = (await api.searchGames('trash')).find((g) => g.label === 'steam-3314580')
-    expect(found).toMatchObject({ iconUrl: 'hml-art://steam/3314580', iconFallbacks: [store, cdn] })
-    await api.searchGames('trash d')
+    const trash = async (): Promise<GameSummary | undefined> =>
+      (await api.searchGames('trash')).find((g) => g.label === 'steam-3314580')
+    // The store hasn't answered: search returns anyway, with the local cover and the CDN URL.
+    expect(await trash()).toMatchObject({
+      iconUrl: 'hml-art://steam/3314580',
+      iconFallbacks: [cdn]
+    })
+    release()
+    await vi.waitFor(async () => expect((await trash())?.iconFallbacks).toEqual([store, cdn]))
     expect(storeCalls).toHaveLength(1)
     const added = await api.addCustomGame({
       source: 'steam',

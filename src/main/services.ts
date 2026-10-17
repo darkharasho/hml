@@ -274,8 +274,9 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   const tsIcons = createTsIcons({ fetch: deps.fetch, cacheFile: paths.tsIconCache, now })
 
   /**
-   * Gives custom Steam games and installed Steam games in search the best Steam cover there is,
-   * with one store lookup for all of them. A cover the user chose stays first.
+   * Gives custom Steam games and installed Steam games in search the best Steam cover known now.
+   * Store capsules not cached yet are looked up in the background (one batched request) and show
+   * from the next search on, so search never waits for the store. A cover the user chose stays first.
    */
   async function withArt(games: GameSummary[]): Promise<GameSummary[]> {
     const ids = games.flatMap((g) => (g.custom && g.steamAppId ? [g.steamAppId] : []))

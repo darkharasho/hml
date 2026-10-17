@@ -119,7 +119,9 @@ describe('createSteamArt', () => {
   const storeUrl = (id: string): string =>
     `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/c.jpg`
 
-  function art(opts: { fail?: boolean; root?: string | null; now?: () => number } = {}): {
+  function art(
+    opts: { fail?: boolean; root?: string | null; now?: () => number; gate?: Promise<void> } = {}
+  ): {
     art: ReturnType<typeof createSteamArt>
     calls: string[][]
   } {
@@ -129,6 +131,7 @@ describe('createSteamArt', () => {
         ids: { appid: number }[]
       }
       calls.push(input.ids.map((i) => String(i.appid)))
+      await opts.gate
       if (opts.fail) throw new Error('offline')
       return new Response(
         JSON.stringify({ response: { store_items: input.ids.map((i) => storeItem(i.appid)) } }),
@@ -146,39 +149,57 @@ describe('createSteamArt', () => {
     }
   }
 
-  it('orders local cache, store capsule, then the CDN URL', async () => {
+  it('answers at once from what is cached, fetching the store capsule in the background', async () => {
     put('10/abc/library_capsule.jpg')
-    const { art: a } = art()
-    const covers = await a.covers(['10', '20'])
-    expect(covers.get('10')).toEqual(['hml-art://steam/10', storeUrl('10'), steamCdnCover('10')])
-    expect(covers.get('20')).toEqual([storeUrl('20'), steamCdnCover('20')])
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const { art: a, calls } = art({ gate })
+    const first = await a.covers(['10', '20'])
+    expect(first.get('10')).toEqual(['hml-art://steam/10', steamCdnCover('10')])
+    expect(first.get('20')).toEqual([steamCdnCover('20')])
+    expect(calls).toEqual([['10', '20']])
+    release()
+    await a.idle()
+    const next = await a.covers(['10', '20'])
+    expect(next.get('10')).toEqual(['hml-art://steam/10', storeUrl('10'), steamCdnCover('10')])
+    expect(next.get('20')).toEqual([storeUrl('20'), steamCdnCover('20')])
   })
   it('batches uncached ids and fetches each once', async () => {
     const { art: a, calls } = art()
     await a.covers(['10', '20'])
+    await a.idle()
     await a.covers(['20', '30'])
+    await a.idle()
     await a.covers(['10', '30'])
+    await a.idle()
     expect(calls).toEqual([['10', '20'], ['30']])
   })
   it('shares an in-flight fetch', async () => {
     const { art: a, calls } = art()
     await Promise.all([a.covers(['10']), a.covers(['10'])])
+    await a.idle()
     expect(calls).toEqual([['10']])
   })
   it('persists results across instances', async () => {
-    await art().art.covers(['10'])
+    const first = art().art
+    await first.covers(['10'])
+    await first.idle()
     const second = art()
     expect((await second.art.covers(['10'])).get('10')).toContain(storeUrl('10'))
+    await second.art.idle()
     expect(second.calls).toEqual([])
   })
   it('falls back silently when the store is unreachable, and backs off', async () => {
     let t = 1_000_000
     const { art: a, calls } = art({ fail: true, root: null, now: () => t })
     expect((await a.covers(['10'])).get('10')).toEqual([steamCdnCover('10')])
-    await a.covers(['10'])
+    await a.idle()
+    expect((await a.covers(['10'])).get('10')).toEqual([steamCdnCover('10')])
+    await a.idle()
     expect(calls.length).toBe(1)
     t += 120_000
     await a.covers(['10'])
+    await a.idle()
     expect(calls.length).toBe(2)
   })
   it('ignores ids that are not numeric', async () => {

@@ -91,9 +91,12 @@ export function parseStoreCovers(json: unknown): Map<string, string | null> {
 export interface SteamArt {
   /**
    * Cover URLs to try in order for each numeric app id: the Steam client's cached cover (served
-   * as `hml-art://steam/<appid>`), the store's capsule, then the old CDN URL. Never throws.
+   * as `hml-art://steam/<appid>`), the store's capsule, then the old CDN URL. Never waits for the
+   * store: capsules not cached yet are fetched in the background for later calls. Never throws.
    */
   covers(appIds: string[]): Promise<Map<string, string[]>>
+  /** Resolves once no store request is in flight. */
+  idle(): Promise<void>
 }
 
 export function createSteamArt(opts: {
@@ -125,26 +128,17 @@ export function createSteamArt(opts: {
     }
   }
 
-  /** Fetches the ids whose store capsule isn't cached (or is old), sharing in-flight requests. */
-  async function refresh(ids: string[], cache: Map<string, CachedUrl>): Promise<void> {
-    const waits: Promise<void>[] = []
-    const wanted: string[] = []
-    for (const id of ids) {
-      const pending = inFlight.get(id)
-      if (pending) waits.push(pending)
-      else if (!fresh(cache.get(id))) wanted.push(id)
+  /** Starts fetching the ids whose store capsule isn't cached (or is old) and isn't in flight. */
+  function refresh(ids: string[], cache: Map<string, CachedUrl>): void {
+    const wanted = ids.filter((id) => !inFlight.has(id) && !fresh(cache.get(id)))
+    if (wanted.length === 0 || now() - failedAt < FAILED_RETRY_MS) return
+    for (let i = 0; i < wanted.length; i += STORE_BATCH) {
+      const batch = wanted.slice(i, i + STORE_BATCH)
+      const p = fetchBatch(batch, cache).finally(() => {
+        for (const id of batch) if (inFlight.get(id) === p) inFlight.delete(id)
+      })
+      for (const id of batch) inFlight.set(id, p)
     }
-    if (wanted.length > 0 && now() - failedAt >= FAILED_RETRY_MS) {
-      for (let i = 0; i < wanted.length; i += STORE_BATCH) {
-        const batch = wanted.slice(i, i + STORE_BATCH)
-        const p = fetchBatch(batch, cache).finally(() => {
-          for (const id of batch) if (inFlight.get(id) === p) inFlight.delete(id)
-        })
-        for (const id of batch) inFlight.set(id, p)
-        waits.push(p)
-      }
-    }
-    await Promise.all(waits)
   }
 
   return {
@@ -153,11 +147,12 @@ export function createSteamArt(opts: {
       const out = new Map<string, string[]>()
       if (ids.length === 0) return out
       const cache = await store.load()
+      // The store is asked in the background; its capsule shows from the next call on.
+      refresh(ids, cache)
       const root = await opts.getSteamRoot().catch(() => null)
-      const [local] = await Promise.all([
-        Promise.all(ids.map((id) => (root ? findLibraryCover(root, id) : Promise.resolve(null)))),
-        refresh(ids, cache)
-      ])
+      const local = await Promise.all(
+        ids.map((id) => (root ? findLibraryCover(root, id) : Promise.resolve(null)))
+      )
       ids.forEach((id, i) => {
         const store = cache.get(id)?.url
         out.set(id, [
@@ -167,6 +162,9 @@ export function createSteamArt(opts: {
         ])
       })
       return out
+    },
+    async idle() {
+      while (inFlight.size > 0) await Promise.all(new Set(inFlight.values()))
     }
   }
 }
