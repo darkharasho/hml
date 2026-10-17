@@ -1,14 +1,13 @@
 # Release Notes
 
-Version v1.1.3 — October 17, 2026
+Version v1.1.4 — October 17, 2026
 
-## Game colors
-- Each game now gets its own look. The bar at the top shows the game's Steam banner art behind its name, profile and mod count, with Start vanilla and Start modded on the right.
-- The orange accent changes to a color taken from the game's cover, so Lethal Company goes red and R.E.P.O. goes amber. Buttons, toggles, tabs and the selected profile all follow it, and the background stays the same dark blue-grey.
-- The game picker stays orange. Games with no Steam art, or covers too grey to take a color from, keep the usual look.
-- Don't like it? Turn off Game colors in Settings to get the plain bar and orange back.
+## No more duplicate games
+- Games like RV There Yet? that Thunderstore lists without a Steam app ID no longer show up a second time as an installed Steam game. HML now recognizes them by their install folder too.
+- If you already added one of these yourself, the picker shows just one entry. That's the Thunderstore one when HML can mod it, otherwise your own.
+- Your games and the game menu now hide duplicates the same way the full list does, so a Nexus game that's the same as a Thunderstore one (like Valheim) shows once.
+
+NOTE: Nothing is deleted. Profiles under a hidden entry are still on disk, the entry just isn't listed separately.
 
 ## Fixes
-- HML opens on the game picker now instead of reopening the last game. The picker's back button still takes you straight to it.
-- Button labels no longer wrap onto two lines, and dialog headers are clearly separated from what's under them.
-- The Online toolbar stays on one line at the default window size.
+- A hidden duplicate no longer takes up one of the 8 places in Your games and the game menu, so a game you opened recently doesn't drop off.
