@@ -31,6 +31,14 @@ const DOWNLOAD_TIMEOUT_MS = 600_000
 /** Largest release asset HML downloads (it is held in memory). */
 export const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
 
+/** The repo has releases, but every one is a pre-release (and pre-releases weren't asked for). */
+export class GhPrereleaseOnlyError extends Error {
+  constructor(slug: string) {
+    super(`${slug} only publishes pre-releases.`)
+    this.name = 'GhPrereleaseOnlyError'
+  }
+}
+
 const isTimeout = (e: unknown): boolean => e instanceof Error && e.name === 'TimeoutError'
 
 interface CacheEntry {
@@ -158,9 +166,11 @@ export async function fetchRelease(
     tag?: string
     maxAgeMs?: number
     track?: GhTrack
+    /** Newest release of any kind (not drafts) instead of the newest stable one. */
+    prereleases?: boolean
   }
 ): Promise<GhRelease> {
-  const { owner, repo, tag, maxAgeMs, track } = opts
+  const { owner, repo, tag, maxAgeMs, track, prereleases } = opts
   const now = opts.now ?? Date.now
   const slug = `${owner}/${repo}`
   const base = `${API_ROOT}/repos/${owner}/${repo}`
@@ -228,20 +238,29 @@ export async function fetchRelease(
     return normalizeRelease(found)
   }
 
+  /** Non-draft releases, newest first as GitHub lists them. */
+  const published = async (): Promise<Record<string, unknown>[]> => {
+    const list = await get(`${base}/releases?per_page=10`)
+    if (list.status === 'notfound') {
+      throw new Error(
+        `Couldn't find github.com/${slug}. Check the URL; private repositories need a GitHub token in Settings.`
+      )
+    }
+    const all = Array.isArray(list.body) ? (list.body as Record<string, unknown>[]) : []
+    const out = all.filter((r) => r.draft !== true)
+    if (out.length === 0) throw new Error(`${slug} has no releases yet.`)
+    return out
+  }
+
+  if (prereleases) return normalizeRelease((await published())[0])
+
   const latest = await get(`${base}/releases/latest`)
   if (latest.status === 'ok') return normalizeRelease(latest.body as Record<string, unknown>)
 
-  const list = await get(`${base}/releases?per_page=10`)
-  if (list.status === 'notfound') {
-    throw new Error(
-      `Couldn't find github.com/${slug}. Check the URL; private repositories need a GitHub token in Settings.`
-    )
-  }
-  const first = (Array.isArray(list.body) ? (list.body as Record<string, unknown>[]) : []).find(
-    (r) => r.draft !== true
-  )
-  if (!first) throw new Error(`${slug} has no releases yet.`)
-  return normalizeRelease(first)
+  // No latest release: either no releases at all, or only pre-releases.
+  const stable = (await published()).find((r) => r.prerelease !== true)
+  if (!stable) throw new GhPrereleaseOnlyError(slug)
+  return normalizeRelease(stable)
 }
 
 export async function downloadAsset(opts: {
@@ -307,4 +326,57 @@ export function isNewerTag(latest: string, current: string): boolean {
     return compareVersions(strip(latest), strip(current)) > 0
   }
   return latest !== current
+}
+
+const SEMVER_LIKE = /^v?(\d+(?:\.\d+)*)(?:-([0-9a-z.-]+))?$/i
+
+/** Semver order of two pre-release suffixes (`beta.2` < `beta.10` < `rc.1`). */
+function comparePre(a: string, b: string): number {
+  const pa = a.split('.')
+  const pb = b.split('.')
+  for (let i = 0; i < Math.min(pa.length, pb.length); i++) {
+    const x = pa[i]
+    const y = pb[i]
+    if (x === y) continue
+    const nx = /^\d+$/.test(x)
+    const ny = /^\d+$/.test(y)
+    if (nx && ny) return Number(x) < Number(y) ? -1 : 1
+    if (nx !== ny) return nx ? -1 : 1
+    return x < y ? -1 : 1
+  }
+  return Math.sign(pa.length - pb.length)
+}
+
+/** Semver-style order of two tags like `v2.0.0-beta.1`, or null when either isn't one. */
+function compareSemverTags(a: string, b: string): number | null {
+  const ma = SEMVER_LIKE.exec(a)
+  const mb = SEMVER_LIKE.exec(b)
+  if (!ma || !mb) return null
+  const core = compareVersions(ma[1], mb[1])
+  if (core !== 0) return core
+  if (ma[2] === undefined || mb[2] === undefined) {
+    // A release sorts after its own pre-releases.
+    return ma[2] === mb[2] ? 0 : ma[2] === undefined ? 1 : -1
+  }
+  return comparePre(ma[2], mb[2])
+}
+
+/**
+ * True when `latest` should be offered over the installed release. With a pre-release on either
+ * side, semver-style tags are ordered as semver, and an installed pre-release with a non-version
+ * tag is compared by publish date, so a stable release older than it is never offered.
+ */
+export function isNewerRelease(
+  latest: Pick<GhRelease, 'tag' | 'prerelease' | 'publishedAt'>,
+  installed: { tag: string; prerelease?: boolean; publishedAt?: string }
+): boolean {
+  if (latest.prerelease || installed.prerelease) {
+    const cmp = compareSemverTags(latest.tag, installed.tag)
+    if (cmp !== null) return cmp > 0
+    if (latest.tag === installed.tag) return false
+    const was = Date.parse(installed.publishedAt ?? '')
+    const now = Date.parse(latest.publishedAt)
+    if (installed.prerelease && Number.isFinite(was) && Number.isFinite(now)) return now > was
+  }
+  return isNewerTag(latest.tag, installed.tag)
 }

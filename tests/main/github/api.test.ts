@@ -7,6 +7,8 @@ import {
   downloadAsset,
   fetchLogin,
   fetchRelease,
+  GhPrereleaseOnlyError,
+  isNewerRelease,
   isNewerTag,
   GH_RELEASE_MEMO_MS,
   MAX_DOWNLOAD_BYTES
@@ -156,7 +158,7 @@ describe('fetchRelease', () => {
     expect(calls[1].headers['If-None-Match']).toBe('e')
   })
 
-  it('falls back to the list on 404 and skips drafts', async () => {
+  it('without prereleases, a repo with only pre-releases throws GhPrereleaseOnlyError', async () => {
     const { fetch: f } = fakeFetch({
       [`${API}/releases/latest`]: { status: 404 },
       [`${API}/releases?per_page=10`]: {
@@ -167,9 +169,75 @@ describe('fetchRelease', () => {
         ]
       }
     })
-    const rel = await fetchRelease(base(f))
-    expect(rel.tag).toBe('v2-beta')
+    const err = await fetchRelease(base(f)).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(GhPrereleaseOnlyError)
+    expect((err as Error).message).toBe('o/r only publishes pre-releases.')
+  })
+
+  it('without prereleases, falls back to a stable release in the list', async () => {
+    const { fetch: f } = fakeFetch({
+      [`${API}/releases/latest`]: { status: 404 },
+      [`${API}/releases?per_page=10`]: {
+        status: 200,
+        body: [
+          rawRelease({ tag_name: 'v2-beta', prerelease: true }),
+          rawRelease({ tag_name: 'v1' })
+        ]
+      }
+    })
+    expect((await fetchRelease(base(f))).tag).toBe('v1')
+  })
+
+  it('with prereleases, picks the newest non-draft release of any kind from the list', async () => {
+    const { fetch: f, calls } = fakeFetch({
+      [`${API}/releases?per_page=10`]: {
+        status: 200,
+        body: [
+          rawRelease({ tag_name: 'v3-draft', draft: true }),
+          rawRelease({ tag_name: 'v2.0.0-beta.1', prerelease: true }),
+          rawRelease({ tag_name: 'v1.0.0' })
+        ]
+      }
+    })
+    const rel = await fetchRelease(base(f, { prereleases: true }))
+    expect(rel.tag).toBe('v2.0.0-beta.1')
     expect(rel.prerelease).toBe(true)
+    expect(calls.map((c) => c.url)).toEqual([`${API}/releases?per_page=10`])
+  })
+
+  it('with prereleases, a newer stable release wins', async () => {
+    const { fetch: f } = fakeFetch({
+      [`${API}/releases?per_page=10`]: {
+        status: 200,
+        body: [
+          rawRelease({ tag_name: 'v2.0.0' }),
+          rawRelease({ tag_name: 'v2.0.0-rc.1', prerelease: true })
+        ]
+      }
+    })
+    const rel = await fetchRelease(base(f, { prereleases: true }))
+    expect(rel.tag).toBe('v2.0.0')
+    expect(rel.prerelease).toBe(false)
+  })
+
+  it('with prereleases, reports empty lists and missing repos', async () => {
+    const empty = fakeFetch({
+      [`${API}/releases?per_page=10`]: { status: 200, body: [rawRelease({ draft: true })] }
+    })
+    await expect(fetchRelease(base(empty.fetch, { prereleases: true }))).rejects.toThrow(
+      'o/r has no releases yet.'
+    )
+    const gone = fakeFetch({ [`${API}/releases?per_page=10`]: { status: 404 } })
+    await expect(fetchRelease(base(gone.fetch, { prereleases: true }))).rejects.toThrow(
+      "Couldn't find github.com/o/r."
+    )
+  })
+
+  it('a tag or a track ignores prereleases', async () => {
+    const { fetch: f } = fakeFetch({
+      [`${API}/releases/tags/v1`]: { status: 200, body: rawRelease({ tag_name: 'v1' }) }
+    })
+    expect((await fetchRelease(base(f, { tag: 'v1', prereleases: true }))).tag).toBe('v1')
   })
 
   it('reports empty lists, missing repos and missing tags', async () => {
@@ -504,5 +572,50 @@ describe('fetchRelease with a track', () => {
     await expect(
       fetchRelease(base(f, { track: { major: 6, prerelease: false }, owner: 'o', repo: 'r' }))
     ).rejects.toThrow('o/r has no 6.x release.')
+  })
+})
+
+describe('isNewerRelease', () => {
+  type Rel = { tag: string; prerelease: boolean; publishedAt: string }
+  const rel = (tag: string, prerelease = false, publishedAt = '2026-01-01T00:00:00Z'): Rel => ({
+    tag,
+    prerelease,
+    publishedAt
+  })
+
+  it('keeps isNewerTag for stable releases', () => {
+    expect(isNewerRelease(rel('v1.10.0'), { tag: 'v1.9.0' })).toBe(true)
+    expect(isNewerRelease(rel('v1.0'), { tag: 'v2.0' })).toBe(false)
+    expect(isNewerRelease(rel('nightly-b'), { tag: 'nightly-a' })).toBe(true)
+    expect(isNewerRelease(rel('same'), { tag: 'same' })).toBe(false)
+  })
+
+  it('orders semver pre-release tags', () => {
+    expect(isNewerRelease(rel('v2.0.0-beta.1', true), { tag: 'v1.9.0' })).toBe(true)
+    expect(
+      isNewerRelease(rel('v2.0.0-beta.2', true), { tag: 'v2.0.0-beta.1', prerelease: true })
+    ).toBe(true)
+    expect(
+      isNewerRelease(rel('v2.0.0-beta.10', true), { tag: 'v2.0.0-beta.9', prerelease: true })
+    ).toBe(true)
+    expect(
+      isNewerRelease(rel('v2.0.0-rc.1', true), { tag: 'v2.0.0-beta.9', prerelease: true })
+    ).toBe(true)
+    expect(isNewerRelease(rel('v2.0.0'), { tag: 'v2.0.0-rc.1', prerelease: true })).toBe(true)
+    expect(isNewerRelease(rel('v2.0.0-rc.1', true), { tag: 'v2.0.0' })).toBe(false)
+  })
+
+  it('never offers an older stable over an installed pre-release', () => {
+    expect(isNewerRelease(rel('v1.9.0'), { tag: 'v2.0.0-beta.1', prerelease: true })).toBe(false)
+    expect(isNewerRelease(rel('v1.9.1'), { tag: 'v2.0.0-beta.1', prerelease: true })).toBe(false)
+    expect(isNewerRelease(rel('v2.0.1'), { tag: 'v2.0.0-beta.1', prerelease: true })).toBe(true)
+  })
+
+  it('compares publish dates when an installed pre-release tag is not a version', () => {
+    const installed = { tag: 'beta-7', prerelease: true, publishedAt: '2026-03-01T00:00:00Z' }
+    expect(isNewerRelease(rel('release-6', false, '2026-02-01T00:00:00Z'), installed)).toBe(false)
+    expect(isNewerRelease(rel('release-7', false, '2026-04-01T00:00:00Z'), installed)).toBe(true)
+    // Without a recorded date, a different tag still counts as newer (today's behavior).
+    expect(isNewerRelease(rel('release-6'), { tag: 'beta-7', prerelease: true })).toBe(true)
   })
 })
