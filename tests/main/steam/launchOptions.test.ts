@@ -234,11 +234,37 @@ describe('setVdfLaunchOptions', () => {
     expect(read(after, '42')).toBe('opt')
   })
 
-  test('keeps CRLF line endings', () => {
+  test('keeps CRLF line endings throughout', () => {
     const before = steamFile(APPS_WITH_GAME.replace(/\n/g, '\r\n'), '\r\n')
+    expect(before.replace(/\r\n/g, '')).not.toContain('\n')
     const after = setVdfLaunchOptions(before, '3241660', 'opt')
-    expect(after.replace(/\r\n/g, '')).not.toContain('\n')
+    const anchor = `"Playtime"${T}${T}"12"\r\n`
+    expect(after).toBe(
+      before.replace(anchor, `${anchor}${T.repeat(6)}"LaunchOptions"${T}${T}"opt"\r\n`)
+    )
     expect(read(after)).toBe('opt')
+  })
+
+  test('edits only Software/Valve/Steam/apps, not apps blocks elsewhere', () => {
+    const decoy = (indent: string): string =>
+      [
+        `${indent}"apps"`,
+        `${indent}{`,
+        `${indent}${T}"3241660"`,
+        `${indent}${T}{`,
+        `${indent}${T}}`,
+        `${indent}}`
+      ].join('\n')
+    const before = steamFile(APPS_WITH_GAME)
+      .replace(`${T}"friends"\n${T}{\n`, `${T}"friends"\n${T}{\n${decoy(T + T)}\n`)
+      .replace(`${T}${T}"Valve"\n`, `${decoy(T + T)}\n${T}${T}"Valve"\n`)
+      .replace(`${T}${T}${T}"Steam"\n`, `${decoy(T + T + T)}\n${T}${T}${T}"Steam"\n`)
+    expect(before.match(/"apps"/g)).toHaveLength(4)
+    const after = setVdfLaunchOptions(before, '3241660', 'opt')
+    const anchor = `"Playtime"${T}${T}"12"\n`
+    expect(after).toBe(
+      before.replace(anchor, `${anchor}${T.repeat(6)}"LaunchOptions"${T}${T}"opt"\n`)
+    )
   })
 
   test('matches keys case-insensitively and edits the last duplicate, as the reader does', () => {
@@ -327,6 +353,24 @@ describe('writeProtonLaunchOptions', () => {
     await writeProtonLaunchOptions(root, '3241660')
     expect(await readLaunchOptions(root, '3241660')).toBe(`${PROTON_LAUNCH_OPTIONS} -windowed`)
     expect(await fs.readFile(`${configFile('111')}.hml-backup`, 'utf8')).toBe('older backup')
+  })
+
+  test('merges an existing value with escaped quotes and backslashes', async () => {
+    const before = steamFile(
+      APPS_WITH_GAME.replace(
+        '"Playtime"',
+        `"LaunchOptions"${T}${T}"PROTON_LOG_DIR=\\"C:\\\\x y\\" %command%"\n${T}"Playtime"`
+      )
+    )
+    await put(configFile('111'), before)
+    expect(await readLaunchOptions(root, '3241660')).toBe('PROTON_LOG_DIR="C:\\x y" %command%')
+    await writeProtonLaunchOptions(root, '3241660')
+    expect(await readLaunchOptions(root, '3241660')).toBe(
+      'WINEDLLOVERRIDES="winhttp=n,b" PROTON_LOG_DIR="C:\\x y" %command%'
+    )
+    expect(await fs.readFile(configFile('111'), 'utf8')).toContain(
+      `"LaunchOptions"${T}${T}"WINEDLLOVERRIDES=\\"winhttp=n,b\\" PROTON_LOG_DIR=\\"C:\\\\x y\\" %command%"`
+    )
   })
 
   test('does nothing when the option is already set', async () => {
