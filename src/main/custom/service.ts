@@ -280,13 +280,19 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
       input.image !== undefined
         ? await applyImage(game.label, input.image)
         : ((await customGames.get(game.label))?.cover ?? null)
-    if (input.source === 'folder') {
-      await updateSettings(paths, (s) => ({
-        ...s,
-        gamePathOverrides: { ...s.gamePathOverrides, [game.label]: input.folder }
-      }))
+    try {
+      if (input.source === 'folder') {
+        await updateSettings(paths, (s) => ({
+          ...s,
+          gamePathOverrides: { ...s.gamePathOverrides, [game.label]: input.folder }
+        }))
+      }
+      await customGames.put(game)
+    } catch (e) {
+      // The game wasn't saved, so the image just copied in would belong to nothing.
+      if (input.image !== undefined) await removeCovers(paths, game.label).catch(() => undefined)
+      throw e
     }
-    await customGames.put(game)
     return ctx.summarize(customGameDef(game))
   }
 

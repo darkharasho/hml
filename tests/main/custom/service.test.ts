@@ -285,6 +285,25 @@ describe('custom game services', () => {
     expect(existsSync(path.join(deps.paths.gameDir(added.label), 'cover.webp'))).toBe(false)
   })
 
+  test("a failed add doesn't leave the copied cover behind", async () => {
+    const img = path.join(tmp, 'a.png')
+    writeFileSync(img, 'PNG')
+    deps.dialog.pickFiles = async () => [img]
+    const api = createServices(deps)
+    const pick = await api.pickCustomGameImage()
+    // custom-games.json can't be written: saving the game fails after the image was copied.
+    mkdirSync(deps.paths.customGames, { recursive: true })
+    await expect(
+      api.addCustomGame({
+        source: 'steam',
+        steamAppId: '3314580',
+        loaderChoice: 'none',
+        image: pick!.token
+      })
+    ).rejects.toThrow()
+    expect(existsSync(path.join(deps.paths.gameDir('steam-3314580'), 'cover.png'))).toBe(false)
+  })
+
   test('picking a cover can be cancelled and refuses other file types', async () => {
     const api = createServices(deps)
     expect(await api.pickCustomGameImage()).toBeNull()
