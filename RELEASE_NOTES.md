@@ -1,23 +1,14 @@
 # Release Notes
 
-Version v1.1.2 — October 17, 2026
+Version v1.1.3 — October 17, 2026
 
-## Find mods faster
-- The Installed tab has a filter box, plus quick filters for mods with updates and disabled mods.
-- Press Ctrl+F or / to jump to whichever search box is on screen.
-- Click a Thunderstore or Nexus mod in your list to open its details, with the README, changelog and version picker. The ⋮ menu has Details… and Open on Thunderstore too.
+## Game colors
+- Each game now gets its own look. The bar at the top shows the game's Steam banner art behind its name, profile and mod count, with Start vanilla and Start modded on the right.
+- The orange accent changes to a color taken from the game's cover, so Lethal Company goes red and R.E.P.O. goes amber. Buttons, toggles, tabs and the selected profile all follow it, and the background stays the same dark blue-grey.
+- The game picker stays orange. Games with no Steam art, or covers too grey to take a color from, keep the usual look.
+- Don't like it? Turn off Game colors in Settings to get the plain bar and orange back.
 
-## Easier to get around
-- The game picker has a back button to the game you just left (Escape works too), and the games you've opened sit in a Your games row above the full list.
-- Share and Import now sit at the bottom of the sidebar, next to Settings.
-- The game's ⋮ menu has Game folder…, so you don't have to dig through Settings to change it.
-
-## Dialogs
-Mod details and Settings keep their title and buttons in view while the middle scrolls, so Install and Done are always reachable. Every dialog has a close button, and dialogs no longer slide under the titlebar.
-
-## QoL Improvements
-- Online categories fold to one line, with All categories to expand them and Clear to reset.
-- A new profile points you to Browse mods first.
-- The Thunderstore badge is gone from every row; only GitHub, Nexus and local mods are labeled.
-- Mods that can't be turned off, like BepInExPack, say "Always on" instead of showing a greyed-out toggle.
-- "Nexus domain" is now called "Nexus Mods page", and every save button in Settings just says Save.
+## Fixes
+- HML opens on the game picker now instead of reopening the last game. The picker's back button still takes you straight to it.
+- Button labels no longer wrap onto two lines, and dialog headers are clearly separated from what's under them.
+- The Online toolbar stays on one line at the default window size.
