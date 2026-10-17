@@ -1,8 +1,8 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { InstalledMod } from '../../shared/types'
-import { readJson, writeJsonAtomic } from '../store/json'
 import { modArtUrl } from './protocol'
+import { createUrlCache, type CachedUrl } from './urlCache'
 
 /** The shallowest `icon.png` among a mod's files (profile-relative posix paths), if any. */
 export function modIconFile(mod: Pick<InstalledMod, 'files'>): string | null {
@@ -85,27 +85,10 @@ export function createTsIcons(opts: {
   now?: () => number
 }): TsIcons {
   const now = opts.now ?? Date.now
-  let loaded: Promise<Map<string, { url: string | null; at: number }>> | null = null
+  const store = createUrlCache(opts.cacheFile, (k) => FULL_NAME.test(k))
   const inFlight = new Map<string, Promise<void>>()
   let failedAt = -Infinity
-  const load = (): NonNullable<typeof loaded> => {
-    loaded ??= readJson<Record<string, { url: string | null; at: number }>>(opts.cacheFile)
-      .catch(() => null)
-      .then((j) => {
-        const m = new Map<string, { url: string | null; at: number }>()
-        for (const [k, v] of Object.entries(j ?? {})) {
-          if (FULL_NAME.test(k) && v && typeof v.at === 'number') {
-            m.set(k, { url: typeof v.url === 'string' ? v.url : null, at: v.at })
-          }
-        }
-        return m
-      })
-    return loaded
-  }
-  async function fetchOne(
-    fullName: string,
-    cache: Map<string, { url: string | null; at: number }>
-  ): Promise<void> {
+  async function fetchOne(fullName: string, cache: Map<string, CachedUrl>): Promise<void> {
     const [, owner, name] = FULL_NAME.exec(fullName)!
     try {
       const res = await opts.fetch(`${TS_PACKAGE_API}${owner}/${name}/`, {
@@ -113,16 +96,14 @@ export function createTsIcons(opts: {
       })
       if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
       cache.set(fullName, { url: res.ok ? parseTsPackageIcon(await res.json()) : null, at: now() })
-      await writeJsonAtomic(opts.cacheFile, Object.fromEntries(cache), { pretty: false }).catch(
-        () => undefined
-      )
+      await store.save()
     } catch {
       failedAt = now()
     }
   }
   return {
     async icons(fullNames) {
-      const cache = await load()
+      const cache = await store.load()
       const wanted = [...new Set(fullNames.filter((n) => FULL_NAME.test(n)))]
       await Promise.all(
         wanted.map((n) => {

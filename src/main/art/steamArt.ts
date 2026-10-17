@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { readJson, writeJsonAtomic } from '../store/json'
 import { steamArtUrl } from './protocol'
+import { createUrlCache, type CachedUrl } from './urlCache'
 
 const STORE_API = 'https://api.steampowered.com/IStoreBrowseService/GetItems/v1'
 const STORE_ASSETS = 'https://shared.steamstatic.com/store_item_assets/'
@@ -88,11 +88,6 @@ export function parseStoreCovers(json: unknown): Map<string, string | null> {
   return out
 }
 
-interface CachedCover {
-  url: string | null
-  at: number
-}
-
 export interface SteamArt {
   /**
    * Cover URLs to try in order for each numeric app id: the Steam client's cached cover (served
@@ -108,29 +103,14 @@ export function createSteamArt(opts: {
   now?: () => number
 }): SteamArt {
   const now = opts.now ?? Date.now
-  let loaded: Promise<Map<string, CachedCover>> | null = null
+  const store = createUrlCache(opts.cacheFile, isAppId)
   const inFlight = new Map<string, Promise<void>>()
   let failedAt = -Infinity
 
-  const load = (): Promise<Map<string, CachedCover>> => {
-    loaded ??= readJson<{ items?: Record<string, CachedCover> }>(opts.cacheFile)
-      .catch(() => null)
-      .then((j) => {
-        const m = new Map<string, CachedCover>()
-        for (const [id, v] of Object.entries(j?.items ?? {})) {
-          if (isAppId(id) && v && typeof v.at === 'number') {
-            m.set(id, { url: typeof v.url === 'string' ? v.url : null, at: v.at })
-          }
-        }
-        return m
-      })
-    return loaded
-  }
-
-  const fresh = (c: CachedCover | undefined): boolean =>
+  const fresh = (c: CachedUrl | undefined): boolean =>
     !!c && now() - c.at < (c.url ? FOUND_MAX_AGE_MS : MISSING_MAX_AGE_MS)
 
-  async function fetchBatch(ids: string[], cache: Map<string, CachedCover>): Promise<void> {
+  async function fetchBatch(ids: string[], cache: Map<string, CachedUrl>): Promise<void> {
     try {
       const res = await opts.fetch(storeItemsUrl(ids), {
         signal: AbortSignal.timeout(STORE_TIMEOUT_MS)
@@ -139,18 +119,14 @@ export function createSteamArt(opts: {
       const found = parseStoreCovers(await res.json())
       const at = now()
       for (const id of ids) cache.set(id, { url: found.get(id) ?? null, at })
-      await writeJsonAtomic(
-        opts.cacheFile,
-        { items: Object.fromEntries(cache) },
-        { pretty: false }
-      ).catch(() => undefined)
+      await store.save()
     } catch {
       failedAt = now()
     }
   }
 
   /** Fetches the ids whose store capsule isn't cached (or is old), sharing in-flight requests. */
-  async function refresh(ids: string[], cache: Map<string, CachedCover>): Promise<void> {
+  async function refresh(ids: string[], cache: Map<string, CachedUrl>): Promise<void> {
     const waits: Promise<void>[] = []
     const wanted: string[] = []
     for (const id of ids) {
@@ -176,7 +152,7 @@ export function createSteamArt(opts: {
       const ids = [...new Set(appIds.filter(isAppId))]
       const out = new Map<string, string[]>()
       if (ids.length === 0) return out
-      const cache = await load()
+      const cache = await store.load()
       const root = await opts.getSteamRoot().catch(() => null)
       const [local] = await Promise.all([
         Promise.all(ids.map((id) => (root ? findLibraryCover(root, id) : Promise.resolve(null)))),
