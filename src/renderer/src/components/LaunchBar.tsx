@@ -176,20 +176,23 @@ export function LaunchBar(): React.JSX.Element | null {
       </div>
       {deploys ? (
         <>
-          {game.custom && (
-            <Button
-              disabled={busy || !!launching || warnings.includes('no-runner')}
-              title={
-                warnings.includes('no-runner')
-                  ? 'Choose a runner first (Choose runner…).'
-                  : undefined
-              }
-              onClick={() => void launch('vanilla')}
-            >
-              {launching ? <Spinner /> : <Icon name="play" />}
-              {launching ? 'Launching…' : 'Play'}
-            </Button>
-          )}
+          {game.custom &&
+            (launching ? (
+              <LaunchingButton game={game.label} />
+            ) : (
+              <Button
+                disabled={busy || warnings.includes('no-runner')}
+                title={
+                  warnings.includes('no-runner')
+                    ? 'Choose a runner first (Choose runner…).'
+                    : undefined
+                }
+                onClick={() => void launch('vanilla')}
+              >
+                <Icon name="play" />
+                Play
+              </Button>
+            ))}
           <Button disabled={busy || !deployment} onClick={() => void removeDeployment()}>
             Remove mods
           </Button>
@@ -206,19 +209,26 @@ export function LaunchBar(): React.JSX.Element | null {
         </>
       ) : (
         <>
-          <Button disabled={busy || !!launching} onClick={() => void launch('vanilla')}>
-            {launching === 'vanilla' && <Spinner />}
-            {launching === 'vanilla' ? 'Launching…' : 'Start vanilla'}
-          </Button>
-          <Button
-            variant="primary"
-            disabled={busy || !!launching || !profile}
-            onClick={() => void launch('modded')}
-            className="px-4"
-          >
-            {launching === 'modded' ? <Spinner /> : <Icon name="play" />}
-            {launching === 'modded' ? 'Launching…' : 'Start modded'}
-          </Button>
+          {launching === 'vanilla' ? (
+            <LaunchingButton game={game.label} />
+          ) : (
+            <Button disabled={busy || !!launching} onClick={() => void launch('vanilla')}>
+              Start vanilla
+            </Button>
+          )}
+          {launching === 'modded' ? (
+            <LaunchingButton game={game.label} variant="primary" className="px-4" />
+          ) : (
+            <Button
+              variant="primary"
+              disabled={busy || !!launching || !profile}
+              onClick={() => void launch('modded')}
+              className="px-4"
+            >
+              <Icon name="play" />
+              Start modded
+            </Button>
+          )}
         </>
       )}
 
@@ -226,6 +236,39 @@ export function LaunchBar(): React.JSX.Element | null {
       {editOpen && <EditGameDialog game={game} onClose={() => setEditOpen(false)} />}
       {flatpakOpen && <FlatpakDialog onClose={() => setFlatpakOpen(false)} />}
     </header>
+  )
+}
+
+/** The pressed start button while its game starts; clicking it stops waiting (Cancel on hover). */
+function LaunchingButton({
+  game,
+  variant,
+  className = ''
+}: {
+  game: string
+  variant?: 'primary'
+  className?: string
+}): React.JSX.Element {
+  const cancel = useStore((s) => s.cancelLaunch)
+  return (
+    <Button
+      variant={variant}
+      aria-label="Launching… Cancel"
+      title="Stop waiting for the game. A game that is already starting keeps starting."
+      onClick={() => cancel(game)}
+      className={`group ${className}`}
+    >
+      <Spinner />
+      {/* Both labels share one cell so the button keeps its width on hover. */}
+      <span className="grid">
+        <span className="[grid-area:1/1] group-hover:invisible group-focus-visible:invisible">
+          Launching…
+        </span>
+        <span className="invisible [grid-area:1/1] group-hover:visible group-focus-visible:visible">
+          Cancel
+        </span>
+      </span>
+    </Button>
   )
 }
 

@@ -141,6 +141,8 @@ interface State {
   handleEvent(e: HmlEvent): void
   /** Starts the current game; resolves once it's seen running, HML gives up, or it failed. */
   launch(mode: LaunchMode): Promise<void>
+  /** Stops waiting for a game to start (the game itself is left alone) and frees its buttons. */
+  cancelLaunch(game: string): void
   saveSteamPath(dir: string | null): Promise<void>
   setGamePath(dir: string | null): Promise<void>
   pickGamePath(label: string): Promise<string | null>
@@ -151,6 +153,9 @@ interface State {
 }
 
 let toastSeq = 0
+/** The latest launch per game label, so a cancelled launch that ends late changes nothing. */
+const launchSeq = new Map<string, number>()
+let launchCounter = 0
 let updatesSeq = 0
 /** The last GitHub rate-limit or rejected-token message shown, so it shows once per session. */
 let lastGhNotice: string | null = null
@@ -177,6 +182,16 @@ export const useStore = create<State>()((set, get) => {
       fail(e)
       return failed
     }
+  }
+
+  /** Frees a game's start buttons; a launch still running for it then ends without effect. */
+  function clearLaunching(game: string): void {
+    launchSeq.delete(game)
+    set((s) => {
+      const rest = { ...s.launching }
+      delete rest[game]
+      return { launching: rest }
+    })
   }
 
   /** The progress line is kept only while some install or update is running. */
@@ -985,27 +1000,32 @@ export const useStore = create<State>()((set, get) => {
       const label = currentGame.label
       // A second press while the game is starting does nothing.
       if (get().launching[label]) return
+      const seq = ++launchCounter
+      launchSeq.set(label, seq)
+      const current = (): boolean => launchSeq.get(label) === seq
       set((s) => ({ launching: { ...s.launching, [label]: mode } }))
+      const name = currentGame.displayName
       try {
         const ok = await busy(() =>
           api.launch(label, mode === 'modded' ? currentProfile : null, mode)
         )
-        if (ok === failed) return
+        if (ok === failed || !current()) return
         const result = await api.waitForGame(label).catch(() => 'unknown' as const)
+        if (!current()) return
         if (result === 'timeout')
-          get().toast(
-            'info',
-            `Couldn't confirm ${currentGame.displayName} started — it may still be loading`
-          )
-        else if (result === 'unknown')
-          get().toast('info', `Starting ${currentGame.displayName} ${mode}`)
+          get().toast('info', `Couldn't confirm ${name} started — it may still be loading`)
+        else if (result === 'exited')
+          get().toast('error', `${name} closed before it finished starting.`)
+        else if (result === 'unknown') get().toast('info', `Starting ${name} ${mode}`)
       } finally {
-        set((s) => {
-          const rest = { ...s.launching }
-          delete rest[label]
-          return { launching: rest }
-        })
+        if (current()) clearLaunching(label)
       }
+    },
+
+    cancelLaunch(game) {
+      if (!get().launching[game]) return
+      clearLaunching(game)
+      void api.cancelWaitForGame(game).catch(() => undefined)
     },
 
     async saveSteamPath(dir) {

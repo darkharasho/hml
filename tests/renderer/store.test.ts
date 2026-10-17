@@ -21,7 +21,8 @@ const api = vi.hoisted(() => ({
   removeManualLoader: vi.fn(),
   addCustomGame: vi.fn(),
   launch: vi.fn(),
-  waitForGame: vi.fn()
+  waitForGame: vi.fn(),
+  cancelWaitForGame: vi.fn()
 }))
 vi.mock('../../src/renderer/src/api', () => ({
   api,
@@ -428,6 +429,7 @@ describe('store launch', () => {
   beforeEach(() => {
     api.launch.mockReset().mockResolvedValue(undefined)
     api.waitForGame.mockReset()
+    api.cancelWaitForGame.mockReset().mockResolvedValue(undefined)
     useStore.setState({
       currentGame: repo as unknown as GameSummary,
       currentProfile: 'p1',
@@ -491,5 +493,57 @@ describe('store launch', () => {
     seen('running')
     await run
     expect(useStore.getState().launching).toEqual({})
+  })
+
+  test('cancelLaunch clears the state at once and stops the wait in main', async () => {
+    let settle!: (r: 'cancelled') => void
+    api.waitForGame.mockReturnValue(new Promise((r) => (settle = r)))
+    const run = useStore.getState().launch('modded')
+    await vi.waitFor(() => expect(api.waitForGame).toHaveBeenCalled())
+    useStore.getState().cancelLaunch('repo')
+    expect(useStore.getState().launching).toEqual({})
+    expect(api.cancelWaitForGame).toHaveBeenCalledWith('repo')
+    settle('cancelled')
+    await run
+    expect(messages()).toEqual([])
+  })
+
+  test('a launch pressed again after cancelling keeps its state when the old one ends', async () => {
+    const settles: ((r: 'cancelled' | 'running') => void)[] = []
+    api.waitForGame.mockImplementation(() => new Promise((r) => settles.push(r)))
+    const first = useStore.getState().launch('modded')
+    await vi.waitFor(() => expect(settles).toHaveLength(1))
+    useStore.getState().cancelLaunch('repo')
+    const second = useStore.getState().launch('vanilla')
+    await vi.waitFor(() => expect(settles).toHaveLength(2))
+    settles[0]('cancelled')
+    await first
+    expect(useStore.getState().launching).toEqual({ repo: 'vanilla' })
+    settles[1]('running')
+    await second
+    expect(useStore.getState().launching).toEqual({})
+  })
+
+  test('cancelling before the launch call returns skips the wait', async () => {
+    let started!: () => void
+    api.launch.mockReturnValue(new Promise<void>((r) => (started = r)))
+    const run = useStore.getState().launch('modded')
+    useStore.getState().cancelLaunch('repo')
+    started()
+    await run
+    expect(api.waitForGame).not.toHaveBeenCalled()
+    expect(useStore.getState().launching).toEqual({})
+  })
+
+  test('a game that exits before it is seen ends with an error toast', async () => {
+    api.waitForGame.mockResolvedValue('exited')
+    await useStore.getState().launch('modded')
+    expect(useStore.getState().launching).toEqual({})
+    expect(useStore.getState().toasts).toEqual([
+      expect.objectContaining({
+        kind: 'error',
+        message: 'R.E.P.O. closed before it finished starting.'
+      })
+    ])
   })
 })
