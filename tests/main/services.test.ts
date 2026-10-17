@@ -178,7 +178,9 @@ describe('services', () => {
     expect(labels).toContain('repo')
     expect(labels).not.toContain('nexus-repo')
     // Its profiles stay reachable.
-    expect(await api.getGame('nexus-repo')).toMatchObject({ label: 'nexus-repo' })
+    // ...but lists of used games (Your games, the game menu) leave it out.
+    expect(await api.getGame('nexus-repo')).toMatchObject({ label: 'nexus-repo', hidden: true })
+    expect((await api.getGame('repo'))?.hidden).toBeUndefined()
     expect((await api.addNexusGame('repo')).label).toBe('repo')
     expect(urls.some((u) => u.includes('graphql'))).toBe(false)
   })

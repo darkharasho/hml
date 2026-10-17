@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { GameSummary } from '../../../shared/ipc'
 import { api } from '../api'
 import { useCurrentProfile, useStore } from '../store'
-import { sortMenuGames, usedGameLabels } from '../titleView'
+import { uniqueGames, usedGameLabels } from '../titleView'
 import { GameCover } from './GameCover'
 import { Menu, type MenuItem } from './ui'
 import { UpdatePill } from './UpdatePill'
@@ -145,7 +145,7 @@ function useUsedGames(current: GameSummary): GameSummary[] {
       live = false
     }
   }, [key])
-  return sortMenuGames(found, current)
+  return uniqueGames(found, current)
 }
 
 function useMaximized(): boolean {
