@@ -18,7 +18,9 @@
     "postinstall": "install-electron && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "build:linux": "electron-vite build && electron-builder --linux",
+    "build:mac": "electron-vite build && electron-builder --mac",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
