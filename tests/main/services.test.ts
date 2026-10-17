@@ -1536,6 +1536,8 @@ describe('services', () => {
       tag: string
       files: Record<string, Uint8Array>
       wrongDigest?: boolean
+      pre?: boolean
+      date?: string
     }
     const sha = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex')
     const zipOf = (name: string, version: string, dll = `${name}.dll`): Uint8Array =>
@@ -1562,12 +1564,24 @@ describe('services', () => {
       entry.releases.push({ tag, files, wrongDigest: wrong })
       repos.set(slug(o, r), entry)
     }
+    /** Publishes a GitHub pre-release (`releases/latest` skips it). */
+    const publishPre = (
+      o: string,
+      r: string,
+      tag: string,
+      files: Record<string, Uint8Array>,
+      date?: string
+    ): void => {
+      const entry = repos.get(slug(o, r)) ?? { releases: [] }
+      entry.releases.push({ tag, files, pre: true, date })
+      repos.set(slug(o, r), entry)
+    }
     const json = (o: string, r: string, rel: Rel): unknown => ({
       tag_name: rel.tag,
       name: rel.tag,
-      prerelease: false,
+      prerelease: rel.pre === true,
       draft: false,
-      published_at: '2026-01-01T00:00:00Z',
+      published_at: rel.date ?? '2026-01-01T00:00:00Z',
       html_url: `https://github.com/${o}/${r}/releases/tag/${rel.tag}`,
       assets: Object.entries(rel.files).map(([name, data], i) => ({
         id: i + 1,
@@ -1607,7 +1621,7 @@ describe('services', () => {
           }
           const rel = m[4]
             ? entry.releases.find((x) => x.tag === decodeURIComponent(m[4]))
-            : entry.releases[entry.releases.length - 1]
+            : entry.releases.filter((x) => !x.pre).pop()
           return rel ? res(200, json(m[1], m[2], rel)) : res(404)
         }
         if (u.host === 'github.com') {
@@ -2512,6 +2526,150 @@ describe('services', () => {
       } finally {
         warn.mockRestore()
       }
+    })
+
+    describe('prereleases', () => {
+      test('a repo with only pre-releases reports it, then installs with prereleases on', async () => {
+        await setup()
+        publishPre(
+          'owner',
+          'repo',
+          'v2.0.0-beta.1',
+          { 'a.zip': zipOf('Thing', '2.0.0') },
+          '2026-02-01T00:00:00Z'
+        )
+        const r = await api.ghInstall('repo', pid, 'https://github.com/owner/repo')
+        expect(r).toEqual({ kind: 'prerelease-only', owner: 'owner', repo: 'repo' })
+        expect(await modsOf()).toEqual([])
+        const ok = await api.ghInstall('repo', pid, 'https://github.com/owner/repo', undefined, {
+          prereleases: true
+        })
+        if (ok.kind !== 'installed') throw new Error('expected install')
+        expect(ok.mod.source).toMatchObject({ tag: 'v2.0.0-beta.1' })
+        expect(ok.mod.github).toEqual({
+          updateMode: 'auto',
+          assetPattern: null,
+          prereleases: true,
+          installedPrerelease: true,
+          installedPublishedAt: '2026-02-01T00:00:00Z'
+        })
+      })
+
+      test('a stable install records no pre-release fields', async () => {
+        await setup()
+        publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+        publishPre('owner', 'repo', 'v1.1.0-beta.1', { 'a.zip': zipOf('Thing', '1.1.0') })
+        const r = await api.ghInstall('repo', pid, 'owner/repo')
+        if (r.kind !== 'installed') throw new Error('expected install')
+        expect(r.mod.source).toMatchObject({ tag: 'v1.0.0' })
+        expect(r.mod.github).toEqual({ updateMode: 'auto', assetPattern: null })
+      })
+
+      test('off ignores newer pre-releases; turning on reports one and updates follow it', async () => {
+        await setup()
+        publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+        await api.ghInstall('repo', pid, 'owner/repo')
+        publishPre('owner', 'repo', 'v1.1.0-beta.1', { 'a.zip': zipOf('Thing', '1.1.0') })
+        clock += 11 * 60_000
+        expect(await api.ghCheckUpdates('repo', pid)).toEqual([])
+        expect(await api.ghUpdate('repo', pid, ['owner-repo'])).toEqual([])
+
+        const u = await api.ghSetPrereleases('repo', pid, 'owner-repo', true)
+        expect(u).toEqual({
+          modId: 'owner-repo',
+          owner: 'owner',
+          repo: 'repo',
+          current: 'v1.0.0',
+          latest: 'v1.1.0-beta.1',
+          mode: 'auto'
+        })
+        expect((await modsOf())[0].github?.prereleases).toBe(true)
+        expect((await api.ghCheckUpdates('repo', pid)).map((x) => x.latest)).toEqual([
+          'v1.1.0-beta.1'
+        ])
+        const [m] = await api.ghUpdate('repo', pid, ['owner-repo'])
+        expect(m.source).toMatchObject({ tag: 'v1.1.0-beta.1' })
+        expect(m.github).toMatchObject({ prereleases: true, installedPrerelease: true })
+      })
+
+      test('turning off never downgrades and waits for a newer stable release', async () => {
+        await setup()
+        publish('owner', 'repo', 'v1.9.0', { 'a.zip': zipOf('Thing', '1.9.0') })
+        publishPre('owner', 'repo', 'v2.0.0-beta.1', { 'a.zip': zipOf('Thing', '2.0.0') })
+        await api.ghInstall('repo', pid, 'owner/repo', undefined, { prereleases: true })
+        expect((await modsOf())[0].source).toMatchObject({ tag: 'v2.0.0-beta.1' })
+
+        expect(await api.ghSetPrereleases('repo', pid, 'owner-repo', false)).toBeNull()
+        const mod = (await modsOf())[0]
+        expect(mod.github?.prereleases).toBeUndefined()
+        expect(mod.github?.installedPrerelease).toBe(true)
+        clock += 11 * 60_000
+        expect(await api.ghCheckUpdates('repo', pid)).toEqual([])
+        expect(await api.ghUpdate('repo', pid, ['owner-repo'])).toEqual([])
+        await api.ghAutoUpdateAll()
+        expect((await modsOf())[0].source).toMatchObject({ tag: 'v2.0.0-beta.1' })
+
+        publish('owner', 'repo', 'v2.0.0', { 'a.zip': zipOf('Thing', '2.0.0') })
+        clock += 11 * 60_000
+        expect((await api.ghCheckUpdates('repo', pid)).map((x) => x.latest)).toEqual(['v2.0.0'])
+        const [m] = await api.ghUpdate('repo', pid, ['owner-repo'])
+        expect(m.source).toMatchObject({ tag: 'v2.0.0' })
+        expect(m.github).toEqual({ updateMode: 'auto', assetPattern: null })
+      })
+
+      test('auto-update keeps the setting apart per mod for the same repo', async () => {
+        await setup()
+        const p2 = (await api.createProfile('repo', 'q')).id
+        publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+        await api.ghInstall('repo', pid, 'owner/repo')
+        await api.ghInstall('repo', p2, 'owner/repo')
+        await api.ghSetPrereleases('repo', pid, 'owner-repo', true)
+        publishPre('owner', 'repo', 'v1.1.0-beta.1', { 'a.zip': zipOf('Thing', '1.1.0') })
+        await api.ghAutoUpdateAll()
+        expect((await modsOf(pid))[0].source).toMatchObject({ tag: 'v1.1.0-beta.1' })
+        expect((await modsOf(p2))[0].source).toMatchObject({ tag: 'v1.0.0' })
+      })
+
+      test('turning on for a pinned mod saves it without a check', async () => {
+        await setup()
+        publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+        await api.ghInstall('repo', pid, 'https://github.com/owner/repo/releases/tag/v1.0.0')
+        publishPre('owner', 'repo', 'v1.1.0-beta.1', { 'a.zip': zipOf('Thing', '1.1.0') })
+        calls.length = 0
+        expect(await api.ghSetPrereleases('repo', pid, 'owner-repo', true)).toBeNull()
+        expect(calls).toEqual([])
+        expect((await modsOf())[0].github).toMatchObject({
+          updateMode: 'pinned',
+          prereleases: true
+        })
+      })
+
+      test('ghSetPrereleases refuses loader mods, other mods and non-booleans', async () => {
+        await setup()
+        publish('BepInEx', 'BepInEx', 'v5.4.23.4', { 'a.zip': zipOf('BepInEx', '5.4.23.4') })
+        await api.ghInstall('repo', pid, 'BepInEx/BepInEx')
+        const profile = await getProfile(deps.paths, 'repo', pid)
+        await saveProfile(deps.paths, {
+          ...profile,
+          mods: profile.mods.map((m) => ({
+            ...m,
+            github: {
+              updateMode: 'auto',
+              assetPattern: null,
+              track: { major: 5, prerelease: false }
+            }
+          }))
+        })
+        await expect(api.ghSetPrereleases('repo', pid, 'BepInEx-BepInEx', true)).rejects.toThrow(
+          'follows its loader release track'
+        )
+        await expect(api.ghSetPrereleases('repo', pid, 'nope', true)).rejects.toThrow(
+          "nope isn't a GitHub mod."
+        )
+        await expect(
+          api.ghSetPrereleases('repo', pid, 'BepInEx-BepInEx', 'yes' as unknown as boolean)
+        ).rejects.toThrow()
+      })
     })
   })
 

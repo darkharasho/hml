@@ -29,6 +29,7 @@ test('HML_METHODS lists the github methods', () => {
       'ghCheckUpdates',
       'ghUpdate',
       'ghSetUpdateMode',
+      'ghSetPrereleases',
       'ghSetToken',
       'ghTokenStatus'
     ])

@@ -3,6 +3,7 @@ import type {
   CustomGameUpdate,
   GameDef,
   GameDetection,
+  GhInstallRequest,
   GhInstallResult,
   GhUpdate,
   GhUpdateMode,
@@ -73,10 +74,23 @@ export interface HmlApi {
   tsCheckUpdates(game: string, profileId: string): Promise<ModUpdate[]>
   tsUpdate(game: string, profileId: string, modIds: string[]): Promise<TsInstallResult>
   /** Installs the latest (or the linked) release of a GitHub repo; may ask which file to use. */
-  ghInstall(game: string, profileId: string, url: string, asset?: string): Promise<GhInstallResult>
+  ghInstall(
+    game: string,
+    profileId: string,
+    url: string,
+    asset?: string,
+    opts?: GhInstallRequest
+  ): Promise<GhInstallResult>
   ghCheckUpdates(game: string, profileId: string): Promise<GhUpdate[]>
   ghUpdate(game: string, profileId: string, modIds: string[]): Promise<InstalledMod[]>
   ghSetUpdateMode(game: string, profileId: string, modId: string, mode: GhUpdateMode): Promise<void>
+  /** Saves the mod's pre-release setting; turning it on checks the mod and returns its update. */
+  ghSetPrereleases(
+    game: string,
+    profileId: string,
+    modId: string,
+    on: boolean
+  ): Promise<GhUpdate | null>
   /** Saves (after verifying) or, with null/empty, removes the GitHub token. Never returns it. */
   ghSetToken(token: string | null): Promise<{ login: string | null }>
   ghTokenStatus(): Promise<{ set: boolean; encryptionAvailable: boolean }>
@@ -182,6 +196,7 @@ const METHOD_TABLE = {
   ghCheckUpdates: true,
   ghUpdate: true,
   ghSetUpdateMode: true,
+  ghSetPrereleases: true,
   ghSetToken: true,
   ghTokenStatus: true,
   addNexusGame: true,

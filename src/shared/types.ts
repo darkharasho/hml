@@ -147,6 +147,8 @@ export interface HmlExportMod {
   name?: string
   /** Thunderstore packages the mod stands in for (InstalledMod.provides); optional when reading. */
   provides?: string[]
+  /** A GitHub mod that follows pre-releases; written only when true, absent is off. */
+  prereleases?: boolean
 }
 
 /** The export.json inside a .hml profile file. */
@@ -260,6 +262,17 @@ export interface GhModConfig {
   /** Saved when the user picked the asset; `{version}` stands for version-like parts. */
   assetPattern: string | null
   track?: GhTrack
+  /** Follow pre-releases too (absent is off). Not used with a track. */
+  prereleases?: boolean
+  /** True when the installed release is a GitHub pre-release; absent otherwise and on old installs. */
+  installedPrerelease?: boolean
+  /** The installed pre-release's publish date, set with installedPrerelease. */
+  installedPublishedAt?: string
+}
+/** Options of an Add from GitHub install. */
+export interface GhInstallRequest {
+  /** Install and follow the newest release even when it is a pre-release. */
+  prereleases?: boolean
 }
 export interface GhAsset {
   name: string
@@ -268,6 +281,8 @@ export interface GhAsset {
 export type GhInstallResult =
   | { kind: 'installed'; mod: InstalledMod; replaced: string[] }
   | { kind: 'choose-asset'; owner: string; repo: string; tag: string; assets: GhAsset[] }
+  /** Pre-releases were off and the repo publishes nothing else; nothing was installed. */
+  | { kind: 'prerelease-only'; owner: string; repo: string }
 export interface GhUpdate {
   modId: string
   owner: string

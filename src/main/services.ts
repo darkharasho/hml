@@ -1006,8 +1006,11 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     serveArt: (url) => serveArt(url, artSources),
     getModIcons,
     // Replacing an installed mod under a running game is refused; a fresh install is allowed.
-    ghInstall: (game, profileId, url, asset) =>
-      ghInstallWith(game, profileId, url, asset, { beforeReplacing: assertGameClosed }),
+    ghInstall: (game, profileId, url, asset, opts) =>
+      ghInstallWith(game, profileId, url, asset, {
+        beforeReplacing: assertGameClosed,
+        prereleases: opts?.prereleases === true
+      }),
     async ghUpdate(game, profileId, modIds) {
       await assertGameClosed(await requireGame(game))
       return ghServices.ghUpdate(game, profileId, modIds)

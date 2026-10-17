@@ -25,7 +25,8 @@ import {
   fetchLogin,
   fetchRelease,
   GH_RELEASE_MEMO_MS,
-  isNewerTag,
+  GhPrereleaseOnlyError,
+  isNewerRelease,
   type GhRelease
 } from './api'
 import { loadToken, NO_SECURE_STORAGE, saveToken } from './token'
@@ -58,9 +59,25 @@ const configOf = (m: InstalledMod): GhModConfig =>
 /** The saved asset pattern, else one derived from the installed file's name. */
 const patternOf = (m: GhMod): string =>
   configOf(m).assetPattern ?? assetPattern(m.source.asset, m.source.tag)
+type LatestOf = (owner: string, repo: string, follow?: Follow) => Promise<GhRelease>
 type ModeCheck = (mode: GhUpdateMode) => boolean
 const manualAllows: ModeCheck = (mode) => mode !== 'pinned'
 const autoAllows: ModeCheck = (mode) => mode === 'auto'
+/** What a release lookup for the mod follows: its loader track, else stable or any release. */
+const followOf = (m: InstalledMod): Follow => {
+  const { track, prereleases } = configOf(m)
+  return track ? { track } : { prereleases: prereleases === true }
+}
+type Follow = { track?: GhTrack; prereleases?: boolean }
+
+/** The config with the installed release's pre-release fields set from `release`. */
+function withInstalled(config: GhModConfig, release: GhRelease): GhModConfig {
+  const rest = { ...config }
+  delete rest.installedPrerelease
+  delete rest.installedPublishedAt
+  if (!release.prerelease || config.track) return rest
+  return { ...rest, installedPrerelease: true, installedPublishedAt: release.publishedAt }
+}
 
 interface Chosen {
   asset: GhReleaseAsset
@@ -93,11 +110,19 @@ export interface GhInstallOptions {
   track?: GhTrack
   /** Pick the one asset matching this pattern (`{version}` allowed); saved in the config. */
   assetPattern?: string
+  /** Follow pre-releases (saved in the config); a reinstall keeps a saved true. */
+  prereleases?: boolean
 }
 
 export function createGithubServices(ctx: GhContext): Pick<
   HmlApi,
-  'ghInstall' | 'ghCheckUpdates' | 'ghUpdate' | 'ghSetUpdateMode' | 'ghSetToken' | 'ghTokenStatus'
+  | 'ghInstall'
+  | 'ghCheckUpdates'
+  | 'ghUpdate'
+  | 'ghSetUpdateMode'
+  | 'ghSetPrereleases'
+  | 'ghSetToken'
+  | 'ghTokenStatus'
 > & {
   ghAutoUpdateAll(): Promise<void>
   ghInstallWith(
@@ -115,7 +140,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     token: string | null,
     owner: string,
     repo: string,
-    opts: { tag?: string; maxAgeMs?: number; track?: GhTrack } = {}
+    opts: { tag?: string; maxAgeMs?: number; track?: GhTrack; prereleases?: boolean } = {}
   ): Promise<GhRelease> =>
     fetchRelease({
       fetch: deps.fetch,
@@ -127,18 +152,22 @@ export function createGithubServices(ctx: GhContext): Pick<
       ...opts
     })
 
-  /** One release lookup per owner/repo (case-insensitive) for the life of the returned function. */
-  function memoLookup(
-    token: string | null,
-    maxAgeMs?: number
-  ): (owner: string, repo: string, track?: GhTrack) => Promise<GhRelease> {
+  /**
+   * One release lookup per owner/repo (case-insensitive) and followed releases (track, or stable
+   * vs pre-releases) for the life of the returned function.
+   */
+  function memoLookup(token: string | null, maxAgeMs?: number): LatestOf {
     const seen = new Map<string, Promise<GhRelease>>()
-    return (owner, repo, track) => {
-      const key =
-        `${owner}/${repo}${track ? `#${track.major}/${track.prerelease}` : ''}`.toLowerCase()
+    return (owner, repo, { track, prereleases } = {}) => {
+      const follows = track
+        ? `#${track.major}/${track.prerelease}`
+        : prereleases
+          ? '#prereleases'
+          : ''
+      const key = `${owner}/${repo}${follows}`.toLowerCase()
       let p = seen.get(key)
       if (!p) {
-        p = lookup(token, owner, repo, { maxAgeMs, track })
+        p = lookup(token, owner, repo, { maxAgeMs, track, prereleases })
         seen.set(key, p)
       }
       return p
@@ -288,7 +317,7 @@ export function createGithubServices(ctx: GhContext): Pick<
         name: meta?.name ?? loaderModName(source) ?? undefined,
         version,
         replaces: replacesOf(superseded, packageId),
-        github: o.config(previous),
+        github: withInstalled(o.config(previous), release),
         provides
       }
     )
@@ -345,7 +374,14 @@ export function createGithubServices(ctx: GhContext): Pick<
     })
   }
 
-  const needsUpdate = (m: GhMod, latest: GhRelease): boolean => isNewerTag(latest.tag, m.source.tag)
+  const needsUpdate = (m: GhMod, latest: GhRelease): boolean => {
+    const c = configOf(m)
+    return isNewerRelease(latest, {
+      tag: m.source.tag,
+      prerelease: c.installedPrerelease === true,
+      publishedAt: c.installedPublishedAt
+    })
+  }
 
   async function install(
     game: string,
@@ -370,11 +406,19 @@ export function createGithubServices(ctx: GhContext): Pick<
 
     progress(`Checking ${owner}/${repo}`, 0)
     const token = await loadToken(paths, deps.secrets)
-    const release = await lookup(token, owner, repo, { tag: ref.tag, track: opts.track })
     const { mods } = await getProfile(paths, game, profileId)
     const prior = mods
       .filter(isGhMod)
       .find((m) => sameRepo(m.source.owner, owner) && sameRepo(m.source.repo, repo))
+    const track = opts.track ?? prior?.github?.track
+    const prereleases = !track && (opts.prereleases === true || prior?.github?.prereleases === true)
+    let release: GhRelease
+    try {
+      release = await lookup(token, owner, repo, { tag: ref.tag, track: opts.track, prereleases })
+    } catch (e) {
+      if (e instanceof GhPrereleaseOnlyError) return { kind: 'prerelease-only', owner, repo }
+      throw e
+    }
 
     const named = assetArg ?? ref.asset
     const onDownload = (a: GhReleaseAsset): void => progress(`Downloading ${a.name}`, 1)
@@ -431,7 +475,8 @@ export function createGithubServices(ctx: GhContext): Pick<
                     : (previous?.github?.assetPattern ?? null),
                 ...((opts.track ?? previous?.github?.track)
                   ? { track: opts.track ?? previous?.github?.track }
-                  : {})
+                  : {}),
+                ...(prereleases ? { prereleases: true } : {})
               }
       })
       progress('Done', total)
@@ -451,7 +496,7 @@ export function createGithubServices(ctx: GhContext): Pick<
       const mode = configOf(m).updateMode
       if (mode === 'pinned') continue
       try {
-        const latest = await latestOf(m.source.owner, m.source.repo, configOf(m).track)
+        const latest = await latestOf(m.source.owner, m.source.repo, followOf(m))
         checked++
         if (needsUpdate(m, latest)) {
           out.push({
@@ -491,7 +536,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     for (const m of mods.filter(isGhMod)) {
       if (!wanted.has(m.id) || !manualAllows(configOf(m).updateMode)) continue
       try {
-        const latest = await latestOf(m.source.owner, m.source.repo, configOf(m).track)
+        const latest = await latestOf(m.source.owner, m.source.repo, followOf(m))
         if (!needsUpdate(m, latest)) continue
         const mod = await updateMod(def, catalog, profileId, m, latest, token, manualAllows)
         if (mod) updated.push(mod)
@@ -532,6 +577,48 @@ export function createGithubServices(ctx: GhContext): Pick<
     })
   }
 
+  async function setPrereleases(
+    game: string,
+    profileId: string,
+    modId: string,
+    on: boolean
+  ): Promise<GhUpdate | null> {
+    if (typeof on !== 'boolean') throw new Error('Pre-releases must be turned on or off.')
+    await ctx.requireGame(game)
+    const mod = await serialize(game, profileId, async () => {
+      const profile = await getProfile(paths, game, profileId)
+      const target = profile.mods.find((m) => m.id === modId)
+      if (!target || !isGhMod(target)) throw new Error(`${modId} isn't a GitHub mod.`)
+      if (configOf(target).track) {
+        throw new Error(`${target.name} follows its loader release track, not pre-releases.`)
+      }
+      const rest = { ...configOf(target) }
+      delete rest.prereleases
+      const updated: GhMod = { ...target, github: on ? { ...rest, prereleases: true } : rest }
+      await saveProfile(paths, {
+        ...profile,
+        mods: profile.mods.map((m) => (m.id === modId ? updated : m))
+      })
+      return updated
+    })
+    // Turning it off never downgrades: the mod waits for a newer stable release.
+    const mode = configOf(mod).updateMode
+    if (!on || mode === 'pinned') return null
+    try {
+      const token = await loadToken(paths, deps.secrets)
+      const { owner, repo } = mod.source
+      const latest = await lookup(token, owner, repo, { prereleases: true })
+      if (!needsUpdate(mod, latest)) return null
+      return { modId, owner, repo, current: mod.source.tag, latest: latest.tag, mode }
+    } catch (e) {
+      // The setting is saved; the next update check reports what went wrong.
+      console.warn(
+        `GitHub update check of ${mod.source.owner}/${mod.source.repo} failed: ${errMsg(e)}`
+      )
+      return null
+    }
+  }
+
   /** `game/profile/modId@tag` of notify-mode releases already announced this session. */
   const announced = new Set<string>()
 
@@ -540,7 +627,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     catalog: Catalog,
     profileId: string,
     token: string | null,
-    latestOf: (owner: string, repo: string, track?: GhTrack) => Promise<GhRelease>,
+    latestOf: LatestOf,
     /** False while the game runs: notify-mode lookups still happen, installs don't. */
     installs: boolean
   ): Promise<void> {
@@ -550,7 +637,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     for (const m of mods.filter(isGhMod)) {
       if (configOf(m).updateMode === 'notify') {
         try {
-          const latest = await latestOf(m.source.owner, m.source.repo, configOf(m).track)
+          const latest = await latestOf(m.source.owner, m.source.repo, followOf(m))
           const key = `${def.label}/${profileId}/${m.id}@${latest.tag}`
           if (needsUpdate(m, latest) && !announced.has(key)) fresh.push(key)
         } catch (e) {
@@ -562,7 +649,7 @@ export function createGithubServices(ctx: GhContext): Pick<
       }
       if (!installs || !autoAllows(configOf(m).updateMode)) continue
       try {
-        const latest = await latestOf(m.source.owner, m.source.repo, configOf(m).track)
+        const latest = await latestOf(m.source.owner, m.source.repo, followOf(m))
         if (!needsUpdate(m, latest)) continue
         const mod = await updateMod(def, catalog, profileId, m, latest, token, autoAllows)
         if (mod) done.push({ name: mod.name, tag: latest.tag })
@@ -641,11 +728,13 @@ export function createGithubServices(ctx: GhContext): Pick<
   return {
     ghSetToken: setToken,
     ghTokenStatus: tokenStatus,
-    ghInstall: (game, profileId, url, asset) => install(game, profileId, url, asset),
+    ghInstall: (game, profileId, url, asset, opts) =>
+      install(game, profileId, url, asset, { prereleases: opts?.prereleases === true }),
     ghInstallWith: install,
     ghCheckUpdates: checkUpdates,
     ghUpdate: update,
     ghSetUpdateMode: setUpdateMode,
+    ghSetPrereleases: setPrereleases,
     ghAutoUpdateAll() {
       running ??= runAutoUpdate().finally(() => {
         running = null
