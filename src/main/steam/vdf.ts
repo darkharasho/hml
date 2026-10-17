@@ -6,11 +6,12 @@
 export type VdfObject = { [key: string]: string | VdfObject }
 
 type Token = { type: 'string' } | { type: 'open' } | { type: 'close' }
-type TokenWithValue = Token & { value: string }
+/** A token with its decoded value and its span `[start, end)` in the source text. */
+export type TokenWithValue = Token & { value: string; start: number; end: number }
 
 const ESCAPES: Record<string, string> = { n: '\n', t: '\t', '\\': '\\', '"': '"' }
 
-function tokenize(text: string): TokenWithValue[] {
+export function tokenizeVdf(text: string): TokenWithValue[] {
   const tokens: TokenWithValue[] = []
   let i = 0
   while (i < text.length) {
@@ -20,12 +21,13 @@ function tokenize(text: string): TokenWithValue[] {
     } else if (ch === '/' && text[i + 1] === '/') {
       while (i < text.length && text[i] !== '\n') i++
     } else if (ch === '{') {
-      tokens.push({ type: 'open', value: ch })
+      tokens.push({ type: 'open', value: ch, start: i, end: i + 1 })
       i++
     } else if (ch === '}') {
-      tokens.push({ type: 'close', value: ch })
+      tokens.push({ type: 'close', value: ch, start: i, end: i + 1 })
       i++
     } else if (ch === '"') {
+      const start = i
       let value = ''
       i++
       let closed = false
@@ -47,14 +49,15 @@ function tokenize(text: string): TokenWithValue[] {
         }
       }
       if (!closed) throw new Error(`VDF: unterminated quoted string at offset ${i}`)
-      tokens.push({ type: 'string', value })
+      tokens.push({ type: 'string', value, start, end: i })
     } else {
+      const start = i
       let value = ''
       while (i < text.length && !/[\s"{}]/.test(text[i])) {
         value += text[i]
         i++
       }
-      tokens.push({ type: 'string', value })
+      tokens.push({ type: 'string', value, start, end: i })
     }
   }
   return tokens
@@ -66,7 +69,7 @@ function define(obj: VdfObject, key: string, value: string | VdfObject): void {
 }
 
 export function parseVdf(text: string): VdfObject {
-  const tokens = tokenize(text)
+  const tokens = tokenizeVdf(text)
   let pos = 0
 
   function parseBody(nested: boolean): VdfObject {
