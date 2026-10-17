@@ -1,5 +1,15 @@
-import { describe, expect, test } from 'vitest'
-import { isGameRunning, parseTasklist } from '../../../src/main/launch/processes'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import {
+  isGameRunning,
+  isSteamProcess,
+  linuxProcessNames,
+  parseTasklist,
+  steamShutdownCommand,
+  waitForSteamExit
+} from '../../../src/main/launch/processes'
 
 const TASKLIST = [
   '"System Idle Process","0","Services","0","8 K"',
@@ -60,5 +70,82 @@ describe('isGameRunning', () => {
     expect(await isGameRunning('linux', exec(TASKLIST), ['REPO.exe'])).toBe(false)
     expect(await isGameRunning('darwin', failing, ['REPO.exe'])).toBe(false)
     expect(calls).toEqual([])
+  })
+})
+
+describe('Steam processes', () => {
+  let proc: string
+  beforeEach(async () => {
+    proc = await fs.mkdtemp(path.join(os.tmpdir(), 'hml-proc-'))
+  })
+  afterEach(async () => {
+    await fs.rm(proc, { recursive: true, force: true })
+  })
+  async function addProc(pid: string, comm: string | null): Promise<void> {
+    await fs.mkdir(path.join(proc, pid), { recursive: true })
+    if (comm !== null) await fs.writeFile(path.join(proc, pid, 'comm'), comm + '\n')
+  }
+
+  test('linuxProcessNames reads each numeric pid comm, skipping unreadable ones', async () => {
+    await addProc('1', 'systemd')
+    await addProc('42', 'steamwebhelper')
+    await addProc('43', null)
+    await addProc('self', 'nope')
+    expect((await linuxProcessNames(proc)).sort()).toEqual(['steamwebhelper', 'systemd'])
+  })
+
+  test('isSteamProcess matches steam, steam.sh, steamwebhelper and reaper only', () => {
+    for (const n of ['steam', 'steam.sh', 'steamwebhelper', 'reaper']) {
+      expect(isSteamProcess(n)).toBe(true)
+    }
+    for (const n of ['steamos-session', 'hml', 'Steam.exe', 'bash']) {
+      expect(isSteamProcess(n)).toBe(false)
+    }
+  })
+
+  test('steamShutdownCommand uses flatpak run for Flatpak Steam', () => {
+    expect(steamShutdownCommand(false)).toEqual({ command: 'steam', args: ['-shutdown'] })
+    expect(steamShutdownCommand(true)).toEqual({
+      command: 'flatpak',
+      args: ['run', 'com.valvesoftware.Steam', '-shutdown']
+    })
+  })
+
+  test('waitForSteamExit polls until Steam is gone', async () => {
+    let t = 0
+    const answers = [true, true, false]
+    const sleeps: number[] = []
+    const gone = await waitForSteamExit(async () => answers.shift()!, {
+      timeoutMs: 30_000,
+      intervalMs: 500,
+      now: () => t,
+      sleep: async (ms) => {
+        sleeps.push(ms)
+        t += ms
+      }
+    })
+    expect(gone).toBe(true)
+    expect(sleeps).toEqual([500, 500])
+  })
+
+  test('waitForSteamExit gives up after the timeout', async () => {
+    let t = 0
+    let checks = 0
+    const gone = await waitForSteamExit(
+      async () => {
+        checks++
+        return true
+      },
+      {
+        timeoutMs: 30_000,
+        intervalMs: 1000,
+        now: () => t,
+        sleep: async (ms) => {
+          t += ms
+        }
+      }
+    )
+    expect(gone).toBe(false)
+    expect(checks).toBe(31)
   })
 })
