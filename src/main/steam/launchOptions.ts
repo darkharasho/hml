@@ -2,11 +2,14 @@ import { constants as fsConstants, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseVdf, tokenizeVdf, vdfGet, type TokenWithValue, type VdfObject } from './vdf'
 
-/** The DLL override Proton needs to load BepInEx's doorstop `winhttp.dll`. */
-const OVERRIDE = 'winhttp=n,b'
+import {
+  hasProtonOverride,
+  PROTON_DLL_OVERRIDE as OVERRIDE,
+  PROTON_LAUNCH_OPTIONS
+} from '../../shared/protonOptions'
+
+export { PROTON_LAUNCH_OPTIONS }
 const ENV_PREFIX = `WINEDLLOVERRIDES="${OVERRIDE}"`
-/** Steam launch options for a game that has none. */
-export const PROTON_LAUNCH_OPTIONS = `${ENV_PREFIX} %command%`
 
 /** Keeps every DLL override but winhttp, then adds `winhttp=n,b`. */
 function mergeOverrides(raw: string): string {
@@ -27,23 +30,54 @@ function mergeOverrides(raw: string): string {
 }
 
 /**
+ * Where the command that runs `%command%` starts in `env` (the text before it): 0 for plain
+ * `VAR=x wrapper` prefixes, or after the last `;`, `&&`, `||`, `|` or `sh -c` of a shell
+ * sequence. Null when it isn't a sequence.
+ */
+function lastCommandStart(env: string): number | null {
+  // `;` and `|` inside a quoted VAR="..." value (a DLL list) don't separate commands.
+  const masked = env.replace(
+    /(\w=)("[^"]*"|'[^']*')/g,
+    (_, k: string, v: string) => k + 'x'.repeat(v.length)
+  )
+  let start: number | null = null
+  for (const m of masked.matchAll(/;|&&|\|\|?|(?:^|\s)(?:ba)?sh\s+-c(?=\s)/g)) {
+    start = m.index + m[0].length
+  }
+  return start
+}
+
+/** Odd count of unescaped double quotes before `at`: `at` is inside a "..." string. */
+function insideDoubleQuotes(s: string, at: number): boolean {
+  return (s.slice(0, at).match(/(?<!\\)"/g) ?? []).length % 2 === 1
+}
+
+/**
  * The user's Steam launch options with `WINEDLLOVERRIDES="winhttp=n,b"` added, keeping
- * everything else. Options that already have `winhttp=n,b` come back unchanged.
+ * everything else. Options that already have `winhttp=n,b` (before `%command%`) come back
+ * unchanged.
  */
 export function mergeProtonLaunchOptions(existing: string): string {
-  if (existing.includes(OVERRIDE)) return existing
+  if (hasProtonOverride(existing)) return existing
   const s = existing.trim()
   if (!s) return PROTON_LAUNCH_OPTIONS
   const at = s.indexOf('%command%')
   // Without %command%, Steam passes the options to the game as arguments.
   if (at < 0) return `${PROTON_LAUNCH_OPTIONS} ${s}`
-  const env = s.slice(0, at)
-  const re = /(^|\s)(WINEDLLOVERRIDES=)("([^"]*)"|'([^']*)'|(\S*))/g
+  const sequence = lastCommandStart(s.slice(0, at))
+  const from = sequence ?? 0
+  const env = s.slice(from, at)
+  const re = /(^|[\s'"])(WINEDLLOVERRIDES=)("([^"]*)"|'([^']*)'|([^\s\\]\S*|(?=\s)))/g
   let last: RegExpExecArray | null = null
   for (let m = re.exec(env); m; m = re.exec(env)) last = m
-  if (!last) return `${ENV_PREFIX} ${s}`
-  const valueStart = last.index + last[1].length + last[2].length
-  const valueEnd = last.index + last[0].length
+  if (!last) {
+    if (sequence === null) return `${ENV_PREFIX} ${s}`
+    // In a shell sequence only the command that runs the game should get the variable.
+    const prefix = insideDoubleQuotes(s, at) ? `WINEDLLOVERRIDES=${OVERRIDE}` : ENV_PREFIX
+    return `${s.slice(0, at)}${prefix} ${s.slice(at)}`
+  }
+  const valueStart = from + last.index + last[1].length + last[2].length
+  const valueEnd = from + last.index + last[0].length
   const quote = last[5] !== undefined ? "'" : '"'
   const raw = last[4] ?? last[5] ?? last[6] ?? ''
   return s.slice(0, valueStart) + quote + mergeOverrides(raw) + quote + s.slice(valueEnd)

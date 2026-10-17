@@ -77,6 +77,45 @@ describe('mergeProtonLaunchOptions', () => {
     )
   })
 
+  test('a shell sequence gets the variable directly before %command%', () => {
+    expect(mergeProtonLaunchOptions('echo hi; %command%')).toBe(
+      'echo hi; WINEDLLOVERRIDES="winhttp=n,b" %command%'
+    )
+    expect(mergeProtonLaunchOptions('cd /x && PROTON_LOG=1 %command% -y')).toBe(
+      'cd /x && PROTON_LOG=1 WINEDLLOVERRIDES="winhttp=n,b" %command% -y'
+    )
+    expect(mergeProtonLaunchOptions('a || b | gamemoderun %command%')).toBe(
+      'a || b | gamemoderun WINEDLLOVERRIDES="winhttp=n,b" %command%'
+    )
+    expect(mergeProtonLaunchOptions(`bash -c 'exec %command%'`)).toBe(
+      `bash -c 'exec WINEDLLOVERRIDES="winhttp=n,b" %command%'`
+    )
+    expect(mergeProtonLaunchOptions(`sh -c 'exec %command%'`)).toBe(
+      `sh -c 'exec WINEDLLOVERRIDES="winhttp=n,b" %command%'`
+    )
+  })
+
+  test('inside a double-quoted shell string the value goes unquoted', () => {
+    expect(mergeProtonLaunchOptions('bash -c "echo; %command%"')).toBe(
+      'bash -c "echo; WINEDLLOVERRIDES=winhttp=n,b %command%"'
+    )
+  })
+
+  test('a shell sequence merges into a WINEDLLOVERRIDES in the last command only', () => {
+    expect(mergeProtonLaunchOptions('echo hi; WINEDLLOVERRIDES="dxgi=n" %command%')).toBe(
+      'echo hi; WINEDLLOVERRIDES="dxgi=n;winhttp=n,b" %command%'
+    )
+    expect(mergeProtonLaunchOptions('WINEDLLOVERRIDES="dxgi=n" foo; %command%')).toBe(
+      'WINEDLLOVERRIDES="dxgi=n" foo; WINEDLLOVERRIDES="winhttp=n,b" %command%'
+    )
+  })
+
+  test('winhttp=n,b after %command% does not count as set', () => {
+    expect(mergeProtonLaunchOptions('%command% -winhttp=n,b')).toBe(
+      'WINEDLLOVERRIDES="winhttp=n,b" %command% -winhttp=n,b'
+    )
+  })
+
   test('options that already have winhttp=n,b are returned unchanged', () => {
     for (const s of [
       PROTON_LAUNCH_OPTIONS,
