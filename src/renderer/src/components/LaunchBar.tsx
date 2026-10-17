@@ -134,9 +134,6 @@ export function LaunchBar(): React.JSX.Element | null {
   return (
     <header className="flex flex-wrap items-center gap-3 border-b border-line bg-panel/60 px-6 py-3">
       <div className="mr-auto flex min-w-0 flex-wrap items-center gap-2">
-        <span className="truncate text-sm text-muted">
-          Profile <span className="font-semibold text-fg">{profile?.name ?? 'none'}</span>
-        </span>
         {warnings.map((code) => {
           const base = WARNINGS[code] ?? { label: code, detail: code, action: null }
           const extra = customWarning(code)

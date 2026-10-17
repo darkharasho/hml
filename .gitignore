@@ -9,3 +9,6 @@ out
 .sai/
 *.tsbuildinfo
 .eslintcache
+
+# Claude Code worktrees and local state
+.claude/
