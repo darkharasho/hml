@@ -4,6 +4,7 @@
   "description": "HML (Haro's Mod Loader)",
   "main": "./out/main/index.js",
   "author": "darkharasho",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "format": "prettier --write .",

@@ -12,6 +12,7 @@ Pick a game, keep separate mod profiles, and start it modded or vanilla with one
 [![Downloads](https://img.shields.io/github/downloads/darkharasho/hml/total?style=flat-square&color=0ea5e9)](https://github.com/darkharasho/hml/releases)
 [![Build](https://img.shields.io/github/actions/workflow/status/darkharasho/hml/release.yml?style=flat-square&label=build)](https://github.com/darkharasho/hml/actions/workflows/release.yml)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-6b7280?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE)
 
 [**Download**](#download) · [**Features**](#features) · [**Getting started**](#getting-started) · [**Linux and Proton**](#linux-and-proton) · [**Development**](#development)
 
@@ -159,5 +160,5 @@ Releases are cut from tags. See [docs/RELEASING.md](docs/RELEASING.md).
 ---
 
 <div align="center">
-<sub>Made by <a href="https://github.com/darkharasho">darkharasho</a>. Not affiliated with Thunderstore, Nexus Mods or Valve.</sub>
+<sub>Made by <a href="https://github.com/darkharasho">darkharasho</a>. <a href="LICENSE">MIT licensed</a>. Not affiliated with Thunderstore, Nexus Mods or Valve.</sub>
 </div>
