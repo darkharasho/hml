@@ -240,7 +240,8 @@ export async function fetchRelease(
 
   /** Non-draft releases, newest first as GitHub lists them. */
   const published = async (): Promise<Record<string, unknown>[]> => {
-    const list = await get(`${base}/releases?per_page=10`)
+    // GitHub's largest page, so a run of drafts at the top doesn't hide the published releases.
+    const list = await get(`${base}/releases?per_page=100`)
     if (list.status === 'notfound') {
       throw new Error(
         `Couldn't find github.com/${slug}. Check the URL; private repositories need a GitHub token in Settings.`
@@ -257,10 +258,9 @@ export async function fetchRelease(
   const latest = await get(`${base}/releases/latest`)
   if (latest.status === 'ok') return normalizeRelease(latest.body as Record<string, unknown>)
 
-  // No latest release: either no releases at all, or only pre-releases.
-  const stable = (await published()).find((r) => r.prerelease !== true)
-  if (!stable) throw new GhPrereleaseOnlyError(slug)
-  return normalizeRelease(stable)
+  // No latest release: no published releases at all (published throws), or only pre-releases.
+  await published()
+  throw new GhPrereleaseOnlyError(slug)
 }
 
 export async function downloadAsset(opts: {
@@ -328,7 +328,7 @@ export function isNewerTag(latest: string, current: string): boolean {
   return latest !== current
 }
 
-const SEMVER_LIKE = /^v?(\d+(?:\.\d+)*)(?:-([0-9a-z.-]+))?$/i
+const SEMVER_LIKE = /^v?(\d+(?:\.\d+)*)(?:-([0-9a-z.-]+))?(?:\+[0-9a-z.-]+)?$/i
 
 /** Semver order of two pre-release suffixes (`beta.2` < `beta.10` < `rc.1`). */
 function comparePre(a: string, b: string): number {
@@ -347,7 +347,10 @@ function comparePre(a: string, b: string): number {
   return Math.sign(pa.length - pb.length)
 }
 
-/** Semver-style order of two tags like `v2.0.0-beta.1`, or null when either isn't one. */
+/**
+ * Semver-style order of two tags like `v2.0.0-beta.1+b7`, or null when either isn't one. Build
+ * metadata is ignored.
+ */
 function compareSemverTags(a: string, b: string): number | null {
   const ma = SEMVER_LIKE.exec(a)
   const mb = SEMVER_LIKE.exec(b)
@@ -362,21 +365,22 @@ function compareSemverTags(a: string, b: string): number | null {
 }
 
 /**
- * True when `latest` should be offered over the installed release. With a pre-release on either
- * side, semver-style tags are ordered as semver, and an installed pre-release with a non-version
- * tag is compared by publish date, so a stable release older than it is never offered.
+ * True when `latest` should be offered over the installed release. Version-style tags (with
+ * optional pre-release and build parts) are ordered as semver, so a lower version is never
+ * offered; an installed pre-release with a non-version tag is compared by publish date; other
+ * tags count as newer when they differ.
  */
 export function isNewerRelease(
   latest: Pick<GhRelease, 'tag' | 'prerelease' | 'publishedAt'>,
   installed: { tag: string; prerelease?: boolean; publishedAt?: string }
 ): boolean {
-  if (latest.prerelease || installed.prerelease) {
-    const cmp = compareSemverTags(latest.tag, installed.tag)
-    if (cmp !== null) return cmp > 0
-    if (latest.tag === installed.tag) return false
-    const was = Date.parse(installed.publishedAt ?? '')
-    const now = Date.parse(latest.publishedAt)
-    if (installed.prerelease && Number.isFinite(was) && Number.isFinite(now)) return now > was
+  const cmp = compareSemverTags(latest.tag, installed.tag)
+  if (cmp !== null) return cmp > 0
+  if (latest.tag === installed.tag) return false
+  const was = Date.parse(installed.publishedAt ?? '')
+  const now = Date.parse(latest.publishedAt)
+  if (installed.prerelease && Number.isFinite(was) && Number.isFinite(now)) {
+    return now > was
   }
   return isNewerTag(latest.tag, installed.tag)
 }

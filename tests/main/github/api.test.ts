@@ -161,7 +161,7 @@ describe('fetchRelease', () => {
   it('without prereleases, a repo with only pre-releases throws GhPrereleaseOnlyError', async () => {
     const { fetch: f } = fakeFetch({
       [`${API}/releases/latest`]: { status: 404 },
-      [`${API}/releases?per_page=10`]: {
+      [`${API}/releases?per_page=100`]: {
         status: 200,
         body: [
           rawRelease({ tag_name: 'd', draft: true }),
@@ -174,23 +174,9 @@ describe('fetchRelease', () => {
     expect((err as Error).message).toBe('o/r only publishes pre-releases.')
   })
 
-  it('without prereleases, falls back to a stable release in the list', async () => {
-    const { fetch: f } = fakeFetch({
-      [`${API}/releases/latest`]: { status: 404 },
-      [`${API}/releases?per_page=10`]: {
-        status: 200,
-        body: [
-          rawRelease({ tag_name: 'v2-beta', prerelease: true }),
-          rawRelease({ tag_name: 'v1' })
-        ]
-      }
-    })
-    expect((await fetchRelease(base(f))).tag).toBe('v1')
-  })
-
   it('with prereleases, picks the newest non-draft release of any kind from the list', async () => {
     const { fetch: f, calls } = fakeFetch({
-      [`${API}/releases?per_page=10`]: {
+      [`${API}/releases?per_page=100`]: {
         status: 200,
         body: [
           rawRelease({ tag_name: 'v3-draft', draft: true }),
@@ -202,12 +188,25 @@ describe('fetchRelease', () => {
     const rel = await fetchRelease(base(f, { prereleases: true }))
     expect(rel.tag).toBe('v2.0.0-beta.1')
     expect(rel.prerelease).toBe(true)
-    expect(calls.map((c) => c.url)).toEqual([`${API}/releases?per_page=10`])
+    expect(calls.map((c) => c.url)).toEqual([`${API}/releases?per_page=100`])
+  })
+
+  it('with prereleases, looks past a page start full of drafts', async () => {
+    const drafts = Array.from({ length: 12 }, (_, i) =>
+      rawRelease({ tag_name: `d${i}`, draft: true })
+    )
+    const { fetch: f } = fakeFetch({
+      [`${API}/releases?per_page=100`]: {
+        status: 200,
+        body: [...drafts, rawRelease({ tag_name: 'v2-beta', prerelease: true })]
+      }
+    })
+    expect((await fetchRelease(base(f, { prereleases: true }))).tag).toBe('v2-beta')
   })
 
   it('with prereleases, a newer stable release wins', async () => {
     const { fetch: f } = fakeFetch({
-      [`${API}/releases?per_page=10`]: {
+      [`${API}/releases?per_page=100`]: {
         status: 200,
         body: [
           rawRelease({ tag_name: 'v2.0.0' }),
@@ -222,12 +221,12 @@ describe('fetchRelease', () => {
 
   it('with prereleases, reports empty lists and missing repos', async () => {
     const empty = fakeFetch({
-      [`${API}/releases?per_page=10`]: { status: 200, body: [rawRelease({ draft: true })] }
+      [`${API}/releases?per_page=100`]: { status: 200, body: [rawRelease({ draft: true })] }
     })
     await expect(fetchRelease(base(empty.fetch, { prereleases: true }))).rejects.toThrow(
       'o/r has no releases yet.'
     )
-    const gone = fakeFetch({ [`${API}/releases?per_page=10`]: { status: 404 } })
+    const gone = fakeFetch({ [`${API}/releases?per_page=100`]: { status: 404 } })
     await expect(fetchRelease(base(gone.fetch, { prereleases: true }))).rejects.toThrow(
       "Couldn't find github.com/o/r."
     )
@@ -243,12 +242,12 @@ describe('fetchRelease', () => {
   it('reports empty lists, missing repos and missing tags', async () => {
     const empty = fakeFetch({
       [`${API}/releases/latest`]: { status: 404 },
-      [`${API}/releases?per_page=10`]: { status: 200, body: [] }
+      [`${API}/releases?per_page=100`]: { status: 200, body: [] }
     })
     await expect(fetchRelease(base(empty.fetch))).rejects.toThrow('o/r has no releases yet.')
     const gone = fakeFetch({
       [`${API}/releases/latest`]: { status: 404 },
-      [`${API}/releases?per_page=10`]: { status: 404 }
+      [`${API}/releases?per_page=100`]: { status: 404 }
     })
     await expect(fetchRelease(base(gone.fetch))).rejects.toThrow(
       "Couldn't find github.com/o/r. Check the URL; private repositories need a GitHub token in Settings."
@@ -603,6 +602,15 @@ describe('isNewerRelease', () => {
     ).toBe(true)
     expect(isNewerRelease(rel('v2.0.0'), { tag: 'v2.0.0-rc.1', prerelease: true })).toBe(true)
     expect(isNewerRelease(rel('v2.0.0-rc.1', true), { tag: 'v2.0.0' })).toBe(false)
+  })
+
+  it('ignores +build metadata and never offers a lower version when both tags parse', () => {
+    expect(isNewerRelease(rel('v1.0.0+build.5'), { tag: 'v1.0.0+build.4' })).toBe(false)
+    expect(isNewerRelease(rel('v1.0.1+b1'), { tag: 'v1.0.0+b9' })).toBe(true)
+    expect(isNewerRelease(rel('v2.0.0-rc.1+b2', true), { tag: 'v2.0.0-rc.1+b1' })).toBe(false)
+    // An old install of a pre-release has no flag or date; its tag shape still orders it.
+    expect(isNewerRelease(rel('v1.9.0'), { tag: 'v2.0.0-beta.1' })).toBe(false)
+    expect(isNewerRelease(rel('v2.0.0'), { tag: 'v2.0.0-beta.1' })).toBe(true)
   })
 
   it('never offers an older stable over an installed pre-release', () => {
