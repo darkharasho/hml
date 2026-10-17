@@ -4,7 +4,7 @@ import {
   isGameRunning,
   matchesGameExe,
   parseTasklist,
-  runningProgramNames,
+  PROC_SCAN_CONCURRENCY,
   waitForGameStart,
   type ProcFsPort
 } from '../../../src/main/launch/processes'
@@ -71,17 +71,24 @@ describe('isGameRunning', () => {
   })
 })
 
-/** A fake /proc from pid → [comm, cmdline argv]. */
-function fakeProc(procs: Record<string, [string, string[]]>): ProcFsPort {
+/** A fake /proc from pid → [comm, cmdline argv, state]; records every file read. */
+function fakeProc(procs: Record<string, [string, string[], string?]>): ProcFsPort & {
+  reads: string[]
+} {
+  const reads: string[] = []
   return {
+    reads,
     async readdir() {
       return [...Object.keys(procs), 'self', 'sys']
     },
     async readFile(file) {
+      reads.push(file)
       const [, , pid, kind] = file.split('/')
       const p = procs[pid]
       if (!p) throw new Error('ENOENT')
-      return kind === 'comm' ? `${p[0]}\n` : p[1].join('\0') + '\0'
+      if (kind === 'stat') return `${pid} (${p[0]}) ${p[2] ?? 'S'} 1 ${pid} ${pid} 0 -1\n`
+      if (kind === 'cmdline') return p[1].join('\0') + '\0'
+      throw new Error(`unexpected read ${file}`)
     }
   }
 }
@@ -89,63 +96,107 @@ const noExec = async (): Promise<{ stdout: string }> => {
   throw new Error('not used')
 }
 
-describe('runningProgramNames', () => {
-  test('on linux, lists comm and argv[0] basenames, lower-cased', async () => {
-    const names = await runningProgramNames(
-      'linux',
-      noExec,
-      fakeProc({
-        '1': ['systemd', ['/usr/lib/systemd/systemd']],
-        '42': ['REPO.exe', ['Z:\\home\\me\\REPO\\REPO.exe', '-batch']]
-      })
-    )
-    expect(names).toEqual(expect.arrayContaining(['systemd', 'repo.exe']))
-    expect(names).not.toContain('-batch')
+describe('isGameProcessRunning on linux', () => {
+  test('finds a Proton game by its comm without reading its cmdline', async () => {
+    const proc = fakeProc({ '42': ['REPO.exe', ['Z:\\home\\me\\REPO\\REPO.exe']] })
+    expect(await isGameProcessRunning('linux', noExec, ['REPO.exe'], proc)).toBe(true)
+    expect(proc.reads).toEqual(['/proc/42/stat'])
+  })
+
+  test("reads argv[0] when the comm doesn't match", async () => {
+    // Wine can leave a comm like "wine64-preload"; argv[0] still names the exe.
+    const proc = fakeProc({ '42': ['wine64-preload', ['C:\\Games\\REPO.exe', '-batch']] })
+    expect(await isGameProcessRunning('linux', noExec, ['REPO.exe'], proc)).toBe(true)
+    expect(proc.reads).toEqual(['/proc/42/stat', '/proc/42/cmdline'])
+  })
+
+  test('false when no process is the game', async () => {
+    const proc = fakeProc({
+      '1': ['systemd', ['/usr/lib/systemd/systemd']],
+      '9': ['proton', ['/usr/bin/python3', 'proton', 'run', 'REPO.exe']]
+    })
+    expect(await isGameProcessRunning('linux', noExec, ['REPO.exe'], proc)).toBe(false)
+  })
+
+  test('skips zombie processes', async () => {
+    const proc = fakeProc({ '42': ['REPO.exe', ['C:\\Games\\REPO.exe'], 'Z'] })
+    expect(await isGameProcessRunning('linux', noExec, ['REPO.exe'], proc)).toBe(false)
+    expect(proc.reads).toEqual(['/proc/42/stat'])
+  })
+
+  test('a comm with spaces and parentheses is read from stat correctly', async () => {
+    const proc = fakeProc({ '42': ['Game (x64).exe', ['/x']] })
+    expect(await isGameProcessRunning('linux', noExec, ['Game (x64).exe'], proc)).toBe(true)
   })
 
   test('skips processes that exit while being read', async () => {
     const proc = fakeProc({ '7': ['bash', ['/bin/bash']] })
-    const names = await runningProgramNames('linux', noExec, {
+    const r = await isGameProcessRunning('linux', noExec, ['REPO.exe'], {
       readdir: async () => ['7', '8'],
       readFile: proc.readFile
     })
-    expect(names).toEqual(['bash', 'bash'])
+    expect(r).toBe(false)
   })
 
+  test('reads at most a few processes at a time and stops once found', async () => {
+    let active = 0
+    let peak = 0
+    const procs: Record<string, [string, string[]]> = {}
+    for (let i = 1; i <= 200; i++) procs[String(i)] = ['bash', ['/bin/bash']]
+    procs['50'] = ['REPO.exe', ['C:\\REPO.exe']]
+    const inner = fakeProc(procs)
+    const proc: ProcFsPort = {
+      readdir: inner.readdir,
+      async readFile(file) {
+        active++
+        peak = Math.max(peak, active)
+        await new Promise((r) => setTimeout(r, 0))
+        active--
+        return inner.readFile(file)
+      }
+    }
+    expect(await isGameProcessRunning('linux', noExec, ['REPO.exe'], proc)).toBe(true)
+    expect(peak).toBeLessThanOrEqual(PROC_SCAN_CONCURRENCY)
+    expect(inner.reads.filter((f) => f.endsWith('/stat')).length).toBeLessThan(200)
+  })
+})
+
+describe('isGameProcessRunning', () => {
   test('on win32, uses tasklist', async () => {
     const exec = async (): Promise<{ stdout: string }> => ({ stdout: TASKLIST })
-    expect(await runningProgramNames('win32', exec)).toContain('repo.exe')
+    expect(await isGameProcessRunning('win32', exec, ['REPO.exe'])).toBe(true)
+    expect(await isGameProcessRunning('win32', exec, ['Other.exe'])).toBe(false)
   })
 
-  test('null on other platforms', async () => {
-    expect(await runningProgramNames('darwin', noExec)).toBeNull()
+  test('null without exe names or on a platform HML cannot list', async () => {
+    const proc = fakeProc({ '42': ['REPO.exe', ['C:\\Games\\REPO.exe']] })
+    expect(await isGameProcessRunning('linux', noExec, [], proc)).toBeNull()
+    expect(await isGameProcessRunning('darwin', noExec, ['REPO.exe'], proc)).toBeNull()
   })
 })
 
 describe('matchesGameExe', () => {
   test('matches by basename, ignoring case', () => {
-    expect(matchesGameExe(['repo.exe'], ['Game/REPO.exe'])).toBe(true)
-    expect(matchesGameExe(['other.exe'], ['REPO.exe'])).toBe(false)
+    expect(matchesGameExe('repo.exe', ['Game/REPO.exe'])).toBe(true)
+    expect(matchesGameExe('other.exe', ['REPO.exe'])).toBe(false)
   })
 
   test("matches Linux's 15-character comm of a longer exe name", () => {
-    expect(matchesGameExe(['lethal company.'], ['Lethal Company.exe'])).toBe(true)
+    expect(matchesGameExe('lethal company.', ['Lethal Company.exe'])).toBe(true)
     // A short name is never a prefix match.
-    expect(matchesGameExe(['lethal'], ['Lethal Company.exe'])).toBe(false)
-  })
-})
-
-describe('isGameProcessRunning', () => {
-  const proc = fakeProc({ '42': ['REPO.exe', ['C:\\Games\\REPO.exe']] })
-
-  test('true when the exe runs, false when not', async () => {
-    expect(await isGameProcessRunning('linux', noExec, ['REPO.exe'], proc)).toBe(true)
-    expect(await isGameProcessRunning('linux', noExec, ['Other.exe'], proc)).toBe(false)
+    expect(matchesGameExe('lethal', ['Lethal Company.exe'])).toBe(false)
   })
 
-  test('null without exe names or on a platform HML cannot list', async () => {
-    expect(await isGameProcessRunning('linux', noExec, [], proc)).toBeNull()
-    expect(await isGameProcessRunning('darwin', noExec, ['REPO.exe'], proc)).toBeNull()
+  test('an exe name of exactly 15 characters matches only itself', () => {
+    expect('ValheimGame.exe').toHaveLength(15)
+    expect(matchesGameExe('valheimgame.exe', ['ValheimGame.exe'])).toBe(true)
+    expect(matchesGameExe('valheimgame.ex', ['ValheimGame.exe'])).toBe(false)
+    expect(matchesGameExe('valheimgame.exx', ['ValheimGame.exe'])).toBe(false)
+  })
+
+  test('a 16-character exe name matches its cut comm', () => {
+    expect('ValheimGame2.exe').toHaveLength(16)
+    expect(matchesGameExe('valheimgame2.ex', ['ValheimGame2.exe'])).toBe(true)
   })
 })
 
@@ -216,5 +267,54 @@ describe('waitForGameStart', () => {
       async () => true
     ]
     expect(await waitForGameStart({ check: () => answers.shift()!(), ...c })).toBe('running')
+  })
+
+  test('cancelled when the signal aborts, even mid-sleep, and checks no more', async () => {
+    const ac = new AbortController()
+    let checks = 0
+    const result = waitForGameStart({
+      check: async () => {
+        checks++
+        return false
+      },
+      signal: ac.signal
+      // The real sleep: abort has to cut it short.
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    ac.abort()
+    expect(await result).toBe('cancelled')
+    expect(checks).toBe(1)
+  })
+
+  test('cancelled at once for an already aborted signal', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    let checks = 0
+    const check = async (): Promise<boolean> => {
+      checks++
+      return true
+    }
+    expect(await waitForGameStart({ check, signal: ac.signal })).toBe('cancelled')
+    expect(checks).toBe(0)
+  })
+
+  test('exited when the launched program exits before the game is seen', async () => {
+    let exit!: () => void
+    const exited = new Promise<void>((r) => (exit = r))
+    const result = waitForGameStart({ check: async () => false, exited })
+    await new Promise((r) => setTimeout(r, 10))
+    exit()
+    expect(await result).toBe('exited')
+  })
+
+  test('running when the launcher exits but the game is up by then', async () => {
+    let up = false
+    let exit!: () => void
+    const exited = new Promise<void>((r) => (exit = r))
+    const result = waitForGameStart({ check: async () => up, exited })
+    await new Promise((r) => setTimeout(r, 10))
+    up = true
+    exit()
+    expect(await result).toBe('running')
   })
 })
