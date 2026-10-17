@@ -10,6 +10,7 @@ import {
   runnerLabel
 } from '../customView'
 import { useStore } from '../store'
+import { GameCover } from './GameCover'
 import { Button, Modal } from './ui'
 
 const NATIVE_LINUX_NOTE = "Force Proton in the game's Steam properties, then add it again"
@@ -47,6 +48,9 @@ export function AddGameDialog({
   const [runnerIndex, setRunnerIndex] = useState(0)
   // Edit mode keeps the stored runner unless the user picks another one.
   const [runnerChanged, setRunnerChanged] = useState(false)
+  // A picked image, 'remove' to drop the stored one, or null to leave the cover as it is.
+  const [image, setImage] = useState<{ token: string; preview: string } | 'remove' | null>(null)
+  const [picking, setPicking] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const mounted = useRef(true)
@@ -86,6 +90,29 @@ export function AddGameDialog({
   const close = (): void => {
     if (!running) onClose()
   }
+  const storedImage = mode === 'edit' && !!game?.custom?.image
+  const hasImage = image ? image !== 'remove' : storedImage
+  // A stored image comes first in the game's cover list; the rest is its Steam art.
+  const steamArt = storedImage ? (game?.iconFallbacks ?? []) : []
+  const cover =
+    image && image !== 'remove'
+      ? { iconUrl: image.preview, iconFallbacks: [] }
+      : image === 'remove'
+        ? { iconUrl: steamArt[0] ?? null, iconFallbacks: steamArt.slice(1) }
+        : { iconUrl: game?.iconUrl ?? null, iconFallbacks: game?.iconFallbacks ?? [] }
+
+  async function pickImage(): Promise<void> {
+    setError(null)
+    setPicking(true)
+    try {
+      const picked = await api.pickCustomGameImage()
+      if (picked && mounted.current) setImage(picked)
+    } catch (e) {
+      if (mounted.current) setError(errorMessage(e))
+    } finally {
+      if (mounted.current) setPicking(false)
+    }
+  }
   const trimmed = name.trim()
   const canSave = !running && (!showName || trimmed.length > 0)
 
@@ -98,7 +125,8 @@ export function AddGameDialog({
         await addCustomGame({
           source: 'steam',
           steamAppId: label.replace(/^steam-/, ''),
-          loaderChoice: loader
+          loaderChoice: loader,
+          ...(image && image !== 'remove' ? { image: image.token } : {})
         })
       } else if (mode === 'folder') {
         await addCustomGame({
@@ -106,7 +134,8 @@ export function AddGameDialog({
           folder: folder ?? '',
           displayName: trimmed,
           loaderChoice: loader,
-          runner: showRunner ? (runners?.[runnerIndex] ?? null) : null
+          runner: showRunner ? (runners?.[runnerIndex] ?? null) : null,
+          ...(image && image !== 'remove' ? { image: image.token } : {})
         })
       } else if (game) {
         const patch = {
@@ -114,7 +143,8 @@ export function AddGameDialog({
           loaderChoice: loader,
           ...(showRunner && runnerChanged && runners?.[runnerIndex]
             ? { runner: runners[runnerIndex] }
-            : {})
+            : {}),
+          ...(image === 'remove' ? { image: null } : image ? { image: image.token } : {})
         }
         // The edit dialog only opens for the current game; the store updates it and its warnings.
         await updateCustomGame(patch)
@@ -144,6 +174,32 @@ export function AddGameDialog({
       }
     >
       <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-4">
+          <div className="aspect-[3/4] w-16 shrink-0 overflow-hidden rounded-md bg-raised ring-1 ring-line">
+            <GameCover
+              game={{ ...cover, displayName: trimmed || initialName, supported: true }}
+              className="text-base"
+            />
+          </div>
+          <div className="flex flex-col items-start gap-1.5">
+            <span className="text-xs font-medium text-fg">Cover image</span>
+            <div className="flex gap-2">
+              <Button disabled={running || picking} onClick={() => void pickImage()}>
+                Choose image…
+              </Button>
+              {hasImage && (
+                <Button
+                  variant="quiet"
+                  disabled={running || picking}
+                  onClick={() => setImage(storedImage ? 'remove' : null)}
+                >
+                  Remove image
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+
         {showName && (
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-fg">Name</span>
