@@ -155,6 +155,17 @@ describe('packaged build', () => {
     expect(u.checks).toBe(1)
   })
 
+  test('a failed download from a check is not an unhandled rejection', async () => {
+    const { updater, u } = setup()
+    const failed = Promise.reject(new Error('download failed'))
+    const caught = vi.spyOn(failed, 'catch')
+    u.nextCheck = () => Promise.resolve({ downloadPromise: failed })
+    expect(await updater.check()).toEqual({ ok: true })
+    expect(caught).toHaveBeenCalled()
+    // An unhandled rejection would fail the run; give it a turn to surface.
+    await new Promise((r) => setTimeout(r, 0))
+  })
+
   test('restart installs only once an update is downloaded', async () => {
     const { updater, u } = setup()
     await updater.check()
@@ -182,6 +193,28 @@ describe('scheduling', () => {
     await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS)
     expect(u.checks).toBe(3)
     expect(UPDATE_CHECK_INTERVAL_MS).toBe(6 * 60 * 60 * 1000)
+  })
+
+  test('a second start neither checks again nor stacks another interval', async () => {
+    const intervals: number[] = []
+    const u = fakeUpdater()
+    const updater = createUpdater({
+      isPackaged: true,
+      version: '1.0.0',
+      load: async () => u,
+      onState: () => undefined,
+      setInterval: (fn, ms) => {
+        intervals.push(ms)
+        return setInterval(fn, ms)
+      }
+    })
+    await updater.start()
+    await updater.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(intervals).toEqual([UPDATE_CHECK_INTERVAL_MS])
+    expect(u.checks).toBe(1)
+    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS)
+    expect(u.checks).toBe(2)
   })
 
   test('the scheduled check is skipped once an update is downloaded', async () => {

@@ -15,7 +15,10 @@ export interface AutoUpdaterLike {
   autoInstallOnAppQuit: boolean
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   on(event: string, listener: (...args: any[]) => void): unknown
-  /** Resolves null when the updater isn't active (e.g. Linux outside an AppImage). */
+  /**
+   * Resolves null when the updater isn't active (e.g. Linux outside an AppImage); otherwise the
+   * result may carry the downloadPromise of an update it started downloading.
+   */
   checkForUpdates(): Promise<unknown>
   quitAndInstall(): void
 }
@@ -35,7 +38,7 @@ export interface UpdaterDeps {
 }
 
 export interface Updater extends UpdateApi {
-  /** The launch check plus the 6-hourly one; does nothing in a dev build. */
+  /** The launch check plus the 6-hourly one; does nothing in a dev build or when called again. */
   start(): Promise<void>
 }
 
@@ -50,6 +53,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   const warn = deps.warn ?? ((m) => console.warn(m))
   let state: UpdateState = { status: 'idle' }
   let loading: Promise<AutoUpdaterLike> | null = null
+  let started = false
 
   const set = (next: UpdateState): void => {
     state = next
@@ -93,6 +97,11 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       const u = await ensure()
       const result = await u.checkForUpdates()
       if (result === null) return { ok: false, error: DEV_UPDATE_MESSAGE }
+      // A failed download rejects this as well as emitting 'error' (which sets the state);
+      // unhandled, it would be an unhandled rejection in main.
+      const download = (result as { downloadPromise?: Promise<unknown> | null } | undefined)
+        ?.downloadPromise
+      download?.catch(() => undefined)
       return { ok: true }
     } catch (e) {
       const message = firstLine(e)
@@ -110,7 +119,9 @@ export function createUpdater(deps: UpdaterDeps): Updater {
 
   return {
     async start() {
-      if (!deps.isPackaged) return
+      // Once only, so a second call can't stack another interval.
+      if (!deps.isPackaged || started) return
+      started = true
       background()
       every(background, UPDATE_CHECK_INTERVAL_MS)
     },
