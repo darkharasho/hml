@@ -1,13 +1,11 @@
 # Release Notes
 
-Version v1.1.0 — October 16, 2026
+Version v1.1.1 — October 16, 2026
 
-## Mod READMEs
-Opening a Thunderstore mod now shows its README and changelog, rendered like the mod page, next to its dependencies. Clicking a link in them opens it in your browser.
+## Import r2modman codes
+You can now paste an r2modman profile code into Import, or open an r2modman `.r2z` export with Choose file. HML installs the same mods at the same versions, keeps disabled mods off, and brings over the profile's config files.
 
-## No more Steam launch options on Linux
-On Proton games, HML no longer asks you to paste launch options or close Steam. Start modded now sets up the game's Proton prefix so BepInEx loads by itself. The first change keeps a backup of the file it edits (`user.reg.hml-backup`).
+NOTE: r2modman codes don't say which game they're for, so the profile goes into the game you have open, just like in r2modman. Open the right game first.
 
-NOTE: Proton creates a game's prefix the first time the game runs. For a game you've never started, HML asks you to start it once (vanilla is fine) before mods can load.
-
-NOTE: Launch options HML set for you before still work and do no harm. You can clear them in Steam if you like.
+## One game grid
+The game picker no longer has a separate From Nexus Mods section. Nexus-only games now sit in the main grid with a Nexus badge, and a Nexus game HML already knows (like Lethal Company) only shows once. Profiles you made under a duplicate entry are still there.
