@@ -1,25 +1,26 @@
-import { useState } from 'react'
 import type { GameSummary } from '../../../shared/ipc'
 import { initials } from '../tsView'
+import { useFallbackSrc } from '../useFallbackSrc'
 
-/** Cover art with an initials fallback when the icon is missing or fails to load. */
+/** Cover art, trying each fallback URL in turn, with initials when none loads. */
 export function GameCover({
   game,
   className = ''
 }: {
-  game: Pick<GameSummary, 'iconUrl' | 'displayName' | 'supported'>
+  game: Pick<GameSummary, 'iconUrl' | 'iconFallbacks' | 'displayName' | 'supported'>
   className?: string
 }): React.JSX.Element {
-  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const { src, onError } = useFallbackSrc([game.iconUrl, ...(game.iconFallbacks ?? [])])
   const dim = game.supported ? '' : 'grayscale-[0.7] opacity-70'
-  if (game.iconUrl && failedUrl !== game.iconUrl) {
+  if (src) {
     return (
       <img
-        src={game.iconUrl}
+        key={src}
+        src={src}
         alt=""
         loading="lazy"
         draggable={false}
-        onError={() => setFailedUrl(game.iconUrl)}
+        onError={onError}
         className={`size-full object-cover ${dim} ${className}`}
       />
     )
