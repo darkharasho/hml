@@ -1,15 +1,13 @@
 # Release Notes
 
-Version v1.0.0 — October 16, 2026
+Version v1.1.0 — October 16, 2026
 
-## First release
+## Mod READMEs
+Opening a Thunderstore mod now shows its README and changelog, rendered like the mod page, next to its dependencies. Clicking a link in them opens it in your browser.
 
-HML is a mod manager for Steam games, in the spirit of r2modman.
+## No more Steam launch options on Linux
+On Proton games, HML no longer asks you to paste launch options or close Steam. Start modded now sets up the game's Proton prefix so BepInEx loads by itself. The first change keeps a backup of the file it edits (`user.reg.hml-backup`).
 
-- Browse and install mods from Thunderstore and Nexus Mods, with update checks.
-- Paste a GitHub repo URL to install a mod from its latest release. HML keeps it updated, or just tells you when a new release is out.
-- Separate mod profiles per game, and launch modded or vanilla.
-- Share a profile as a short code or a `.hml` file. Importing one rebuilds the same mod list at the same versions.
-- Add games HML doesn't know yet, from your Steam library or any game folder.
+NOTE: Proton creates a game's prefix the first time the game runs. For a game you've never started, HML asks you to start it once (vanilla is fine) before mods can load.
 
-HML updates itself too: new versions download in the background and install when you restart.
+NOTE: Launch options HML set for you before still work and do no harm. You can clear them in Steam if you like.
