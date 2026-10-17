@@ -5,7 +5,7 @@ import { installedLoaderLabel, shortLoaderLabel } from '../customView'
 import { deploymentLabel } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
 import { EditGameDialog } from './AddGameDialog'
-import { Button, Icon, Modal } from './ui'
+import { Button, Icon, Modal, Spinner } from './ui'
 
 const PROTON_LAUNCH_OPTIONS = 'WINEDLLOVERRIDES="winhttp=n,b" %command%'
 
@@ -75,6 +75,7 @@ export function LaunchBar(): React.JSX.Element | null {
   const warnings = useStore((s) => s.warnings)
   const busy = useStore((s) => s.busy)
   const launch = useStore((s) => s.launch)
+  const launching = useStore((s) => (s.currentGame ? s.launching[s.currentGame.label] : undefined))
   const deployment = useStore((s) => s.deployment)
   const deploy = useStore((s) => s.deploy)
   const installLoader = useStore((s) => s.installLoader)
@@ -177,7 +178,7 @@ export function LaunchBar(): React.JSX.Element | null {
         <>
           {game.custom && (
             <Button
-              disabled={busy || warnings.includes('no-runner')}
+              disabled={busy || !!launching || warnings.includes('no-runner')}
               title={
                 warnings.includes('no-runner')
                   ? 'Choose a runner first (Choose runner…).'
@@ -185,8 +186,8 @@ export function LaunchBar(): React.JSX.Element | null {
               }
               onClick={() => void launch('vanilla')}
             >
-              <Icon name="play" />
-              Play
+              {launching ? <Spinner /> : <Icon name="play" />}
+              {launching ? 'Launching…' : 'Play'}
             </Button>
           )}
           <Button disabled={busy || !deployment} onClick={() => void removeDeployment()}>
@@ -205,17 +206,18 @@ export function LaunchBar(): React.JSX.Element | null {
         </>
       ) : (
         <>
-          <Button disabled={busy} onClick={() => void launch('vanilla')}>
-            Start vanilla
+          <Button disabled={busy || !!launching} onClick={() => void launch('vanilla')}>
+            {launching === 'vanilla' && <Spinner />}
+            {launching === 'vanilla' ? 'Launching…' : 'Start vanilla'}
           </Button>
           <Button
             variant="primary"
-            disabled={busy || !profile}
+            disabled={busy || !!launching || !profile}
             onClick={() => void launch('modded')}
             className="px-4"
           >
-            <Icon name="play" />
-            Start modded
+            {launching === 'modded' ? <Spinner /> : <Icon name="play" />}
+            {launching === 'modded' ? 'Launching…' : 'Start modded'}
           </Button>
         </>
       )}

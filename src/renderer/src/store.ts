@@ -78,6 +78,10 @@ interface State {
   manualLoader: { game: string; entries: string[] } | null
   /** The current game's Nexus domain; null when it has none or the lookup failed. */
   currentDomain: string | null
+  /** Games (by label) being started, with the mode, until their process is seen or HML gives up. */
+  launching: Record<string, LaunchMode>
+  /** The profile sidebar's new-profile name field is open (also opened from the titlebar). */
+  creatingProfile: boolean
 
   init(): Promise<void>
   selectGame(game: GameSummary): Promise<void>
@@ -135,11 +139,13 @@ interface State {
   updateAll(): Promise<void>
   checkUpdates(): Promise<void>
   handleEvent(e: HmlEvent): void
+  /** Starts the current game; resolves once it's seen running, HML gives up, or it failed. */
   launch(mode: LaunchMode): Promise<void>
   saveSteamPath(dir: string | null): Promise<void>
   setGamePath(dir: string | null): Promise<void>
   pickGamePath(label: string): Promise<string | null>
   setSettingsOpen(open: boolean): void
+  setCreatingProfile(open: boolean): void
   toast(kind: ToastKind, message: string, action?: ToastAction): void
   dismissToast(id: number): void
 }
@@ -408,6 +414,8 @@ export const useStore = create<State>()((set, get) => {
     settingsOpen: false,
     manualLoader: null,
     currentDomain: null,
+    launching: {},
+    creatingProfile: false,
 
     init() {
       initPromise ??= runInit()
@@ -424,7 +432,8 @@ export const useStore = create<State>()((set, get) => {
         nxUpdates: [],
         deployment: null,
         manualLoader: null,
-        currentDomain: null
+        currentDomain: null,
+        creatingProfile: false
       })
       void loadDomain(game)
       try {
@@ -474,7 +483,8 @@ export const useStore = create<State>()((set, get) => {
         nxUpdates: [],
         deployment: null,
         manualLoader: null,
-        currentDomain: null
+        currentDomain: null,
+        creatingProfile: false
       })
     },
 
@@ -972,10 +982,30 @@ export const useStore = create<State>()((set, get) => {
       const { currentGame, currentProfile } = get()
       // HML does not start catalog deploy games (the launch bar deploys instead); custom ones can Play.
       if (!currentGame || (currentGame.loader === 'deploy' && !currentGame.custom)) return
-      const ok = await busy(() =>
-        api.launch(currentGame.label, mode === 'modded' ? currentProfile : null, mode)
-      )
-      if (ok !== failed) get().toast('info', `Starting ${currentGame.displayName} ${mode}`)
+      const label = currentGame.label
+      // A second press while the game is starting does nothing.
+      if (get().launching[label]) return
+      set((s) => ({ launching: { ...s.launching, [label]: mode } }))
+      try {
+        const ok = await busy(() =>
+          api.launch(label, mode === 'modded' ? currentProfile : null, mode)
+        )
+        if (ok === failed) return
+        const result = await api.waitForGame(label).catch(() => 'unknown' as const)
+        if (result === 'timeout')
+          get().toast(
+            'info',
+            `Couldn't confirm ${currentGame.displayName} started — it may still be loading`
+          )
+        else if (result === 'unknown')
+          get().toast('info', `Starting ${currentGame.displayName} ${mode}`)
+      } finally {
+        set((s) => {
+          const rest = { ...s.launching }
+          delete rest[label]
+          return { launching: rest }
+        })
+      }
     },
 
     async saveSteamPath(dir) {
@@ -1013,6 +1043,10 @@ export const useStore = create<State>()((set, get) => {
 
     setSettingsOpen(open) {
       set({ settingsOpen: open })
+    },
+
+    setCreatingProfile(open) {
+      set({ creatingProfile: open })
     },
 
     toast(kind, message, action) {
