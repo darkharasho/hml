@@ -31,7 +31,7 @@ function App(): React.JSX.Element {
     <>
       <div className="flex h-full flex-col">
         <TitleBar />
-        <div className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1" data-inert-under-modal>
           {!ready ? (
             <div className="grid h-full place-items-center text-sm text-muted">Loading…</div>
           ) : game ? (

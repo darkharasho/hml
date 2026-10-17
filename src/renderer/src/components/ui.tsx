@@ -6,6 +6,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode
 } from 'react'
+import { createPortal } from 'react-dom'
 
 type Variant = 'primary' | 'ghost' | 'quiet' | 'danger'
 
@@ -31,7 +32,28 @@ export function Button({
   )
 }
 
-/** Centered modal using the native <dialog>, so focus trapping and Escape come for free. */
+/**
+ * Open modals, innermost last. A native showModal() would make everything else inert, the
+ * titlebar's window buttons included, so modals are plain dialogs above a backdrop and the app
+ * marks what they cover inert itself: every `data-inert-under-modal` element, and any modal
+ * under the top one.
+ */
+const openModals: HTMLElement[] = []
+
+function syncModalInert(): void {
+  const open = openModals.length > 0
+  document.querySelectorAll<HTMLElement>('[data-inert-under-modal]').forEach((el) => {
+    el.inert = open
+  })
+  openModals.forEach((el, i) => {
+    el.inert = i !== openModals.length - 1
+  })
+}
+
+/**
+ * Centered modal dialog: the rest of the window (except the titlebar) is inert while it is open,
+ * Escape and a click on the backdrop close it, and focus returns where it was.
+ */
 export function Modal({
   title,
   onClose,
@@ -45,34 +67,65 @@ export function Modal({
   footer?: ReactNode
   width?: string
 }): React.JSX.Element {
-  const ref = useRef<HTMLDialogElement>(null)
+  const layerRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const closeRef = useRef(onClose)
   useEffect(() => {
-    const dialog = ref.current
-    dialog?.showModal()
-    return () => dialog?.close()
-  }, [])
-  return (
-    <dialog
-      ref={ref}
-      onCancel={(e) => {
+    closeRef.current = onClose
+  })
+  useEffect(() => {
+    const layer = layerRef.current
+    const dialog = dialogRef.current
+    if (!layer || !dialog) return
+    const returnFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    openModals.push(layer)
+    syncModalInert()
+    dialog.show()
+    // Keep an autoFocus field's focus; otherwise focus the dialog so keys reach it.
+    if (!dialog.contains(document.activeElement)) dialog.focus()
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && openModals[openModals.length - 1] === layer) {
         e.preventDefault()
-        onClose()
-      }}
+        closeRef.current()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      dialog.close()
+      openModals.splice(openModals.indexOf(layer), 1)
+      syncModalInert()
+      if (returnFocus?.isConnected) returnFocus.focus()
+    }
+  }, [])
+  return createPortal(
+    <div
+      ref={layerRef}
       onClick={(e) => {
-        if (e.target === ref.current) onClose()
+        if (e.target === e.currentTarget) onClose()
       }}
-      className={`${width} max-w-[calc(100vw-2rem)] m-auto rounded-xl border border-line bg-panel text-fg p-0 shadow-[0_24px_64px_-16px_rgba(0,0,0,0.7)] backdrop:bg-[#061014]/70 backdrop:backdrop-blur-[2px] [animation:dialog-in_160ms_ease-out]`}
+      className="fixed inset-0 z-[55] flex bg-[#061014]/70 p-4 backdrop-blur-[2px]"
     >
-      <div className="px-5 pt-5 pb-4">
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-        <div className="mt-3 text-sm text-muted">{children}</div>
-      </div>
-      {footer && (
-        <div className="flex justify-end gap-2 border-t border-line bg-ink/40 px-5 py-3">
-          {footer}
+      <dialog
+        ref={dialogRef}
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
+        className={`${width} relative m-auto max-h-full max-w-full overflow-auto rounded-xl border border-line bg-panel p-0 text-fg shadow-[0_24px_64px_-16px_rgba(0,0,0,0.7)] outline-none [animation:dialog-in_160ms_ease-out]`}
+      >
+        <div className="px-5 pt-5 pb-4">
+          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+          <div className="mt-3 text-sm text-muted">{children}</div>
         </div>
-      )}
-    </dialog>
+        {footer && (
+          <div className="flex justify-end gap-2 border-t border-line bg-ink/40 px-5 py-3">
+            {footer}
+          </div>
+        )}
+      </dialog>
+    </div>,
+    document.body
   )
 }
 

@@ -19,7 +19,9 @@ export function TitleBar(): React.JSX.Element {
   return (
     <header
       // The whole bar moves the window; a double-click on it maximizes natively (windowFrame.ts).
-      className={`flex ${HEIGHT} shrink-0 items-center border-b border-line bg-ink text-[13px] [-webkit-app-region:drag] ${
+      // Above the modal backdrop (z-[55] in ui.tsx), so the window can be moved, minimized,
+      // maximized and closed while a dialog is open.
+      className={`relative z-[60] flex ${HEIGHT} shrink-0 items-center border-b border-line bg-ink text-[13px] [-webkit-app-region:drag] ${
         isMac ? 'pl-[78px]' : 'pl-3'
       }`}
     >
@@ -83,7 +85,8 @@ function Crumbs({ game }: { game: GameSummary }): React.JSX.Element {
     }
   ]
   return (
-    <div className="flex min-w-0 items-center">
+    // Switching game or profile under an open dialog could leave it acting on the old one.
+    <div className="flex min-w-0 items-center" data-inert-under-modal>
       <Separator />
       <Menu
         label={`Switch game (${game.displayName})`}
