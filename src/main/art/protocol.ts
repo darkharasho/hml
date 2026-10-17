@@ -9,10 +9,12 @@ export const ART_SCHEME = 'hml-art'
 
 export type ArtTarget =
   | { kind: 'steam'; appId: string }
+  | { kind: 'steam-hero'; appId: string }
   | { kind: 'custom'; label: string }
   | { kind: 'mod'; game: string; profileId: string; modId: string }
 
 export const steamArtUrl = (appId: string): string => `${ART_SCHEME}://steam/${appId}`
+export const steamHeroArtUrl = (appId: string): string => `${ART_SCHEME}://steam-hero/${appId}`
 /** `v` changes when the image does, so the renderer doesn't show a cached old one. */
 export const customArtUrl = (label: string, v: number | string): string =>
   `${ART_SCHEME}://custom/${encodeURIComponent(label)}?v=${encodeURIComponent(String(v))}`
@@ -38,6 +40,9 @@ export function parseArtUrl(raw: string): ArtTarget | null {
   if (u.hostname === 'steam' && segs.length === 1 && /^\d{1,10}$/.test(segs[0])) {
     return { kind: 'steam', appId: segs[0] }
   }
+  if (u.hostname === 'steam-hero' && segs.length === 1 && /^\d{1,10}$/.test(segs[0])) {
+    return { kind: 'steam-hero', appId: segs[0] }
+  }
   if (u.hostname === 'custom' && segs.length === 1) return { kind: 'custom', label: segs[0] }
   if (u.hostname === 'mod' && segs.length === 3) {
     return { kind: 'mod', game: segs[0], profileId: segs[1], modId: segs[2] }
@@ -48,6 +53,7 @@ export function parseArtUrl(raw: string): ArtTarget | null {
 /** Finds the file for each kind of art; null when there is none or the request is invalid. */
 export interface ArtSources {
   steamCover(appId: string): Promise<string | null>
+  steamHero(appId: string): Promise<string | null>
   customCover(label: string): Promise<string | null>
   modIcon(game: string, profileId: string, modId: string): Promise<string | null>
 }
@@ -59,6 +65,8 @@ export async function resolveArt(raw: string, sources: ArtSources): Promise<stri
     switch (t.kind) {
       case 'steam':
         return await sources.steamCover(t.appId)
+      case 'steam-hero':
+        return await sources.steamHero(t.appId)
       case 'custom':
         return await sources.customCover(t.label)
       case 'mod':

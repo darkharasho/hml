@@ -147,6 +147,7 @@ interface State {
   setGamePath(dir: string | null): Promise<void>
   pickGamePath(label: string): Promise<string | null>
   setSettingsOpen(open: boolean): void
+  setGameColors(on: boolean): Promise<void>
   setCreatingProfile(open: boolean): void
   toast(kind: ToastKind, message: string, action?: ToastAction): void
   dismissToast(id: number): void
@@ -1063,6 +1064,10 @@ export const useStore = create<State>()((set, get) => {
 
     setSettingsOpen(open) {
       set({ settingsOpen: open })
+    },
+
+    async setGameColors(on) {
+      await persist((s) => ({ ...s, gameColors: on })).catch(fail)
     },
 
     setCreatingProfile(open) {

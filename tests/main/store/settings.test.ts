@@ -60,7 +60,8 @@ describe('settings store', () => {
       lastGame: null,
       lastProfile: {},
       nexusDomainOverrides: {},
-      manualLoaderKept: []
+      manualLoaderKept: [],
+      gameColors: true
     })
   })
 
@@ -72,7 +73,8 @@ describe('settings store', () => {
       lastGame: 'repo',
       lastProfile: { repo: 'default' },
       nexusDomainOverrides: {},
-      manualLoaderKept: []
+      manualLoaderKept: [],
+      gameColors: true
     }
     await saveSettings(paths, s)
     expect(await loadSettings(paths)).toEqual(s)
@@ -95,7 +97,8 @@ describe('settings store', () => {
       lastGame: 'repo',
       lastProfile: {},
       nexusDomainOverrides: {},
-      manualLoaderKept: []
+      manualLoaderKept: [],
+      gameColors: true
     })
   })
 
@@ -108,8 +111,17 @@ describe('settings store', () => {
       lastGame: null,
       lastProfile: {},
       nexusDomainOverrides: {},
-      manualLoaderKept: []
+      manualLoaderKept: [],
+      gameColors: true
     })
+  })
+})
+
+describe('normalizeSettings gameColors', () => {
+  test('defaults on and keeps a stored boolean', () => {
+    expect(normalizeSettings({}).gameColors).toBe(true)
+    expect(normalizeSettings({ gameColors: 'no' }).gameColors).toBe(true)
+    expect(normalizeSettings({ gameColors: false }).gameColors).toBe(false)
   })
 })
 
@@ -120,7 +132,8 @@ describe('resolveGameDir', () => {
     lastGame: null,
     lastProfile: {},
     nexusDomainOverrides: {},
-    manualLoaderKept: []
+    manualLoaderKept: [],
+    gameColors: true
   }
 
   test('override beats steam detection', async () => {

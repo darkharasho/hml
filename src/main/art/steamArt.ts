@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { steamArtUrl } from './protocol'
+import { steamArtUrl, steamHeroArtUrl } from './protocol'
 import { createUrlCache, type CachedUrl } from './urlCache'
 
 const STORE_API = 'https://api.steampowered.com/IStoreBrowseService/GetItems/v1'
@@ -27,29 +27,54 @@ async function isFile(p: string): Promise<boolean> {
 }
 
 /**
- * The portrait cover Steam's client cached for an app: `<appid>/library_600x900.jpg`, else the
- * newest `<appid>/<hash>/library_capsule.jpg` (the current layout), else the legacy flat
- * `<appid>_library_600x900.jpg`. Null when there is none or the id isn't numeric.
+ * A picture Steam's client cached for an app: `<appid>/<flat>`, else the newest
+ * `<appid>/<hash>/<hashed>` (the current layout), else the legacy flat `<appid>_<flat>`.
  */
-export async function findLibraryCover(steamRoot: string, appId: string): Promise<string | null> {
+async function findLibraryFile(
+  steamRoot: string,
+  appId: string,
+  flat: string,
+  hashed: string
+): Promise<string | null> {
   if (!isAppId(appId)) return null
   const cache = path.join(steamRoot, 'appcache', 'librarycache')
   const appDir = path.join(cache, appId)
-  const portrait = path.join(appDir, 'library_600x900.jpg')
-  if (await isFile(portrait)) return portrait
+  const direct = path.join(appDir, flat)
+  if (await isFile(direct)) return direct
   const entries = await fs.readdir(appDir, { withFileTypes: true }).catch(() => [])
   let best: { file: string; mtime: number } | null = null
   for (const e of entries) {
     if (!e.isDirectory()) continue
-    const file = path.join(appDir, e.name, 'library_capsule.jpg')
+    const file = path.join(appDir, e.name, hashed)
     const stat = await fs.stat(file).catch(() => null)
     if (stat?.isFile() && (!best || stat.mtimeMs > best.mtime)) {
       best = { file, mtime: stat.mtimeMs }
     }
   }
   if (best) return best.file
-  const legacy = path.join(cache, `${appId}_library_600x900.jpg`)
+  const legacy = path.join(cache, `${appId}_${flat}`)
   return (await isFile(legacy)) ? legacy : null
+}
+
+/** The portrait cover Steam's client cached for an app. Null when there is none or the id isn't numeric. */
+export const findLibraryCover = (steamRoot: string, appId: string): Promise<string | null> =>
+  findLibraryFile(steamRoot, appId, 'library_600x900.jpg', 'library_capsule.jpg')
+
+/** The wide banner art Steam's client cached for an app (shown behind the launch bar). */
+export const findLibraryHero = (steamRoot: string, appId: string): Promise<string | null> =>
+  findLibraryFile(steamRoot, appId, 'library_hero.jpg', 'library_hero.jpg')
+
+/**
+ * Banner URLs to try in order for an app: the Steam client's cached copy, then Steam's CDN, then
+ * the store's asset path (newer games only have the latter). Empty for a non-numeric id.
+ */
+export function steamHeroUrls(appId: string): string[] {
+  if (!isAppId(appId)) return []
+  return [
+    steamHeroArtUrl(appId),
+    `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/library_hero.jpg`,
+    `${STORE_ASSETS}steam/apps/${appId}/library_hero.jpg`
+  ]
 }
 
 /** One GetItems request for many apps, asking for their store assets. */

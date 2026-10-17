@@ -4,6 +4,7 @@ import { api, errorMessage } from '../api'
 import { installedLoaderLabel, shortLoaderLabel } from '../customView'
 import { deploymentLabel } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
+import { useFallbackSrc } from '../useFallbackSrc'
 import { EditGameDialog } from './AddGameDialog'
 import { Button, Icon, Modal, Spinner } from './ui'
 
@@ -82,6 +83,8 @@ export function LaunchBar(): React.JSX.Element | null {
   const openSettings = useStore((s) => s.setSettingsOpen)
   const [flatpakOpen, setFlatpakOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const gameColors = useStore((s) => s.settings?.gameColors ?? true)
+  const hero = useFallbackSrc(gameColors ? (game?.heroUrls ?? []) : [])
 
   if (!game) return null
   // HML doesn't start deploy games: it copies the mods into the game folder and the user starts it.
@@ -120,54 +123,56 @@ export function LaunchBar(): React.JSX.Element | null {
     if (action === 'flatpak') setFlatpakOpen(true)
   }
 
-  return (
-    <header className="flex flex-wrap items-center gap-3 border-b border-line bg-panel/60 px-6 py-3">
-      <div className="mr-auto flex min-w-0 flex-wrap items-center gap-2">
-        {warnings.map((code) => {
-          const base = WARNINGS[code] ?? { label: code, detail: code, action: null }
-          const extra = customWarning(code)
-          const w = extra ? { ...base, detail: extra.detail } : base
-          const chip =
-            'inline-flex items-center gap-1.5 rounded-full border border-warn/40 bg-warn/10 px-2.5 py-1 text-xs font-medium text-warn'
-          if (extra?.button)
-            return (
-              <span key={code} className={chip}>
-                <Icon name="warn" className="size-3" />
-                <span>{w.detail}</span>
-                <Button
-                  variant="quiet"
-                  disabled={busy}
-                  onClick={extra.button.onClick}
-                  className="h-6 px-2 text-xs"
-                >
-                  {extra.button.label}
-                </Button>
-              </span>
-            )
-          return w.action ? (
-            <button
-              key={code}
-              type="button"
-              title={w.detail}
-              onClick={() => runAction(w.action)}
-              className={`${chip} hover:bg-warn/20`}
-            >
+  const status = (
+    <>
+      {warnings.map((code) => {
+        const base = WARNINGS[code] ?? { label: code, detail: code, action: null }
+        const extra = customWarning(code)
+        const w = extra ? { ...base, detail: extra.detail } : base
+        const chip =
+          'inline-flex items-center gap-1.5 rounded-full border border-warn/40 bg-warn/10 px-2.5 py-1 text-xs font-medium text-warn'
+        if (extra?.button)
+          return (
+            <span key={code} className={chip}>
               <Icon name="warn" className="size-3" />
-              {w.label}
-            </button>
-          ) : (
-            <span key={code} title={w.detail} className={chip}>
-              <Icon name="warn" className="size-3" />
-              {w.label}
+              <span>{w.detail}</span>
+              <Button
+                variant="quiet"
+                disabled={busy}
+                onClick={extra.button.onClick}
+                className="h-6 px-2 text-xs"
+              >
+                {extra.button.label}
+              </Button>
             </span>
           )
-        })}
-        {deploys && (
-          <span className="truncate text-sm text-muted">
-            {deploymentLabel(deployment, profile?.id ?? null)}
+        return w.action ? (
+          <button
+            key={code}
+            type="button"
+            title={w.detail}
+            onClick={() => runAction(w.action)}
+            className={`${chip} hover:bg-warn/20`}
+          >
+            <Icon name="warn" className="size-3" />
+            {w.label}
+          </button>
+        ) : (
+          <span key={code} title={w.detail} className={chip}>
+            <Icon name="warn" className="size-3" />
+            {w.label}
           </span>
-        )}
-      </div>
+        )
+      })}
+      {deploys && (
+        <span className="truncate text-sm text-muted">
+          {deploymentLabel(deployment, profile?.id ?? null)}
+        </span>
+      )}
+    </>
+  )
+  const actions = (
+    <>
       {deploys ? (
         <>
           {game.custom &&
@@ -225,7 +230,50 @@ export function LaunchBar(): React.JSX.Element | null {
           )}
         </>
       )}
+    </>
+  )
 
+  if (!hero.src)
+    return (
+      <header className="flex flex-wrap items-center gap-3 border-b border-line bg-panel/60 px-6 py-3">
+        <div className="mr-auto flex min-w-0 flex-wrap items-center gap-2">{status}</div>
+        {actions}
+        {editOpen && <EditGameDialog game={game} onClose={() => setEditOpen(false)} />}
+        {flatpakOpen && <FlatpakDialog onClose={() => setFlatpakOpen(false)} />}
+      </header>
+    )
+
+  return (
+    // The game's banner art, fading into the background behind its name and start buttons.
+    <header className="relative isolate flex min-h-32 shrink-0 items-end overflow-hidden border-b border-line px-6 pt-6 pb-4">
+      <img
+        key={hero.src}
+        src={hero.src}
+        alt=""
+        draggable={false}
+        onError={hero.onError}
+        className="absolute inset-0 -z-10 size-full object-cover object-[center_35%]"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,var(--color-ink)_0%,color-mix(in_srgb,var(--color-ink)_65%,transparent)_45%,transparent_90%),linear-gradient(0deg,var(--color-ink)_0%,transparent_75%)]"
+      />
+      <div className="flex w-full items-end gap-3">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-2xl font-bold tracking-tight [text-shadow:0_2px_14px_rgb(0_0_0/0.7)]">
+            {game.displayName}
+          </h2>
+          <p className="truncate text-xs text-muted">
+            {profile
+              ? `${profile.name} profile, ${profile.mods.length} ${profile.mods.length === 1 ? 'mod' : 'mods'}`
+              : 'No profile'}
+          </p>
+          {(warnings.length > 0 || deploys) && (
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">{status}</div>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-3">{actions}</div>
+      </div>
       {editOpen && <EditGameDialog game={game} onClose={() => setEditOpen(false)} />}
       {flatpakOpen && <FlatpakDialog onClose={() => setFlatpakOpen(false)} />}
     </header>

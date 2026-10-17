@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   createSteamArt,
   findLibraryCover,
+  findLibraryHero,
   isAppId,
   parseStoreCovers,
   steamCdnCover,
+  steamHeroUrls,
   storeItemsUrl
 } from '../../../src/main/art/steamArt'
 
@@ -64,6 +66,31 @@ describe('findLibraryCover', () => {
     put('x/library_600x900.jpg')
     expect(await findLibraryCover(root, 'x')).toBeNull()
     expect(await findLibraryCover(root, '../x')).toBeNull()
+  })
+})
+
+describe('findLibraryHero', () => {
+  it('finds the banner flat, hashed or legacy', async () => {
+    const flat = put('10/library_hero.jpg')
+    expect(await findLibraryHero(root, '10')).toBe(flat)
+    const hashed = put('20/ab12/library_hero.jpg')
+    put('20/ab12/library_capsule.jpg')
+    expect(await findLibraryHero(root, '20')).toBe(hashed)
+    const legacy = put('30_library_hero.jpg')
+    expect(await findLibraryHero(root, '30')).toBe(legacy)
+    put('40/library_600x900.jpg')
+    expect(await findLibraryHero(root, '40')).toBeNull()
+  })
+})
+
+describe('steamHeroUrls', () => {
+  it('lists the cached banner, then the CDN and store copies', () => {
+    expect(steamHeroUrls('10')).toEqual([
+      'hml-art://steam-hero/10',
+      'https://cdn.cloudflare.steamstatic.com/steam/apps/10/library_hero.jpg',
+      'https://shared.steamstatic.com/store_item_assets/steam/apps/10/library_hero.jpg'
+    ])
+    expect(steamHeroUrls('../x')).toEqual([])
   })
 })
 

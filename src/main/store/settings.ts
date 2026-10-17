@@ -11,7 +11,8 @@ export function defaultSettings(): Settings {
     lastGame: null,
     lastProfile: {},
     nexusDomainOverrides: {},
-    manualLoaderKept: []
+    manualLoaderKept: [],
+    gameColors: true
   }
 }
 
@@ -44,7 +45,8 @@ export function normalizeSettings(stored: unknown): Settings {
       stringRecord(stored.nexusDomainOverrides) ?? defaults.nexusDomainOverrides,
     manualLoaderKept: Array.isArray(stored.manualLoaderKept)
       ? stored.manualLoaderKept.filter((x): x is string => typeof x === 'string')
-      : defaults.manualLoaderKept
+      : defaults.manualLoaderKept,
+    gameColors: typeof stored.gameColors === 'boolean' ? stored.gameColors : defaults.gameColors
   }
 }
 

@@ -94,7 +94,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
             aria-hidden="true"
           />
           <div className="relative flex items-center gap-3 py-4 pr-10 pl-4">
-            <div className="h-16 w-12 shrink-0 overflow-hidden rounded-md shadow-lg ring-1 ring-white/10">
+            <div className="h-16 w-12 shrink-0 overflow-hidden rounded-md shadow-lg ring-1 ring-white/10 [:root[data-game-colors]_&]:shadow-[0_8px_22px_-8px_var(--color-ember)]">
               <GameCover game={game} className="text-base" />
             </div>
             <div className="min-w-0">

@@ -44,6 +44,8 @@ export interface HmlApi {
   searchGames(query: string): Promise<GameSummary[]>
   /** One game by label, without searching Nexus Mods; null for an unknown label. */
   getGame(label: string): Promise<GameSummary | null>
+  /** A readable accent colour (`#rrggbb`) taken from the game's cover; null for grey or no art. */
+  getGameAccent(label: string): Promise<string | null>
   refreshCatalog(): Promise<void>
   setGamePath(label: string, dir: string | null): Promise<void>
   /** Folder dialog, then setGamePath. Null when cancelled. */
@@ -186,6 +188,7 @@ export interface HmlApi {
 const METHOD_TABLE = {
   searchGames: true,
   getGame: true,
+  getGameAccent: true,
   refreshCatalog: true,
   setGamePath: true,
   pickGamePath: true,

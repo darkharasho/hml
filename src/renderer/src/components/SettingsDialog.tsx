@@ -6,7 +6,7 @@ import { api, errorMessage } from '../api'
 import { NX_API_KEY_PAGE } from '../nxView'
 import { useStore } from '../store'
 import { updateStatusText } from '../updateView'
-import { Button, Modal, Spinner } from './ui'
+import { Button, Modal, Spinner, Toggle } from './ui'
 import { useUpdateState } from '../useUpdateState'
 
 export function SettingsDialog(): React.JSX.Element | null {
@@ -53,6 +53,8 @@ function SettingsForm({ onClose }: { onClose(): void }): React.JSX.Element {
             />
           </div>
         )}
+
+        <GameColorsRow />
 
         <UpdateSection />
       </div>
@@ -124,6 +126,22 @@ function GameDirField({
         Save
       </Button>
     </Field>
+  )
+}
+
+function GameColorsRow(): React.JSX.Element {
+  const on = useStore((s) => s.settings?.gameColors ?? true)
+  const setGameColors = useStore((s) => s.setGameColors)
+  return (
+    <div className="flex items-center justify-between gap-4 border-t border-line pt-5">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-fg">Game colors</p>
+        <p className="mt-0.5 text-xs text-muted">
+          Show each game&apos;s banner art and take HML&apos;s accent color from its cover.
+        </p>
+      </div>
+      <Toggle checked={on} label="Game colors" onChange={(v) => void setGameColors(v)} />
+    </div>
   )
 }
 

@@ -9,7 +9,8 @@ const settings = (lastGame: string | null, used: string[]): Settings => ({
   lastGame,
   lastProfile: Object.fromEntries(used.map((g) => [g, 'p'])),
   nexusDomainOverrides: {},
-  manualLoaderKept: []
+  manualLoaderKept: [],
+  gameColors: true
 })
 const game = (label: string, displayName: string): GameSummary =>
   ({ label, displayName }) as GameSummary

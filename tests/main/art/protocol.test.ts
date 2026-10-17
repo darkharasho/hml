@@ -55,6 +55,7 @@ describe('resolveArt / serveArt', () => {
   }
   const sources = (over: Partial<ArtSources> = {}): ArtSources => ({
     steamCover: async () => null,
+    steamHero: async () => null,
     customCover: async () => null,
     modIcon: async () => null,
     ...over
@@ -64,6 +65,7 @@ describe('resolveArt / serveArt', () => {
     const seen: string[] = []
     const s = sources({
       steamCover: async (id) => (seen.push(`steam:${id}`), null),
+      steamHero: async (id) => (seen.push(`hero:${id}`), null),
       customCover: async (l) => (seen.push(`custom:${l}`), null),
       modIcon: async (g, p, m) => (seen.push(`mod:${g}/${p}/${m}`), null)
     })
@@ -71,7 +73,9 @@ describe('resolveArt / serveArt', () => {
     await resolveArt('hml-art://custom/custom-x?v=1', s)
     await resolveArt('hml-art://mod/repo/p/A-B?v=1', s)
     await resolveArt('hml-art://steam/x', s)
-    expect(seen).toEqual(['steam:10', 'custom:custom-x', 'mod:repo/p/A-B'])
+    await resolveArt('hml-art://steam-hero/20', s)
+    await resolveArt('hml-art://steam-hero/x', s)
+    expect(seen).toEqual(['steam:10', 'custom:custom-x', 'mod:repo/p/A-B', 'hero:20'])
   })
   it('swallows source errors', async () => {
     const s = sources({

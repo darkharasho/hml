@@ -24,7 +24,7 @@ export function UpdatePill({ className = '' }: { className?: string }): React.JS
     <button
       type="button"
       onClick={() => void window.hmlUpdate.restart()}
-      className={`${PILL} bg-ember text-ink hover:bg-[#ffab5c] active:bg-ember-deep ${className}`}
+      className={`${PILL} bg-ember text-ink hover:bg-ember-hover active:bg-ember-deep ${className}`}
       title={pill.version ? `Restart HML to install v${pill.version}` : 'Restart HML to install'}
     >
       <Icon name="download" className="size-3.5" />

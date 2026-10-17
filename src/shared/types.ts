@@ -75,6 +75,8 @@ export interface GameDef {
   iconUrl: string | null
   /** More cover URLs to try, in order, when iconUrl fails to load. */
   iconFallbacks?: string[]
+  /** Wide banner art URLs to try in order (Steam games), shown behind the launch bar. */
+  heroUrls?: string[]
   supported: boolean
   /** Nexus-only search results: the game's mod count on Nexus Mods. */
   nexusModCount?: number
@@ -103,6 +105,8 @@ export interface Settings {
   nexusDomainOverrides: Record<string, string>
   /** Game labels whose manual loader install the user chose to keep. */
   manualLoaderKept: string[]
+  /** Tint the app with each game's colour and show its banner art. */
+  gameColors: boolean
 }
 
 export type ModSource =

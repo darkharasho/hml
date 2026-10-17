@@ -7,6 +7,7 @@ import { ProfileSidebar } from './components/ProfileSidebar'
 import { SettingsDialog } from './components/SettingsDialog'
 import { TitleBar } from './components/TitleBar'
 import { Toasts } from './components/Toast'
+import { useGameAccent } from './gameTheme'
 import { useStore } from './store'
 
 /** Ctrl+F (Cmd+F on macOS) or / focuses the search box on screen, outside dialogs. */
@@ -33,6 +34,8 @@ function focusSearch(e: KeyboardEvent): void {
 function App(): React.JSX.Element {
   const ready = useStore((s) => s.ready)
   const game = useStore((s) => s.currentGame)
+  const gameColors = useStore((s) => s.settings?.gameColors ?? true)
+  useGameAccent(game?.label ?? null, gameColors)
 
   useEffect(() => {
     void useStore.getState().init()

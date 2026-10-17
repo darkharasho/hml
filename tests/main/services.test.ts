@@ -139,6 +139,31 @@ describe('services', () => {
     expect(urls.some((u) => u.includes('graphql'))).toBe(false)
   })
 
+  test('getGame gives Steam games banner URLs', async () => {
+    const api = createServices(deps)
+    expect((await api.getGame('repo'))?.heroUrls?.[0]).toBe('hml-art://steam-hero/3241660')
+  })
+
+  test('getGameAccent takes a colour from the cover once, null without a decoder', async () => {
+    const base = deps.fetch
+    deps.fetch = (async (url: string, init?: unknown) =>
+      // Only Steam's JPEG cover decodes; the catalog's WebP cover is skipped.
+      String(url).endsWith('library_600x900.jpg')
+        ? { ok: true, arrayBuffer: async () => new TextEncoder().encode('IMG').buffer }
+        : (base as (u: string, i?: unknown) => Promise<Response>)(url, init)) as typeof fetch
+    expect(await createServices(deps).getGameAccent('repo')).toBeNull()
+    const decode = vi.fn((data: Buffer) =>
+      data.toString() === 'IMG' ? new Uint8Array(Array(400).fill([200, 30, 30, 255]).flat()) : null
+    )
+    const api = createServices({ ...deps, decodeImage: decode })
+    const accent = await api.getGameAccent('repo')
+    expect(accent).toMatch(/^#[0-9a-f]{6}$/)
+    expect(parseInt(accent!.slice(1, 3), 16)).toBeGreaterThan(parseInt(accent!.slice(3, 5), 16))
+    expect(await api.getGameAccent('repo')).toBe(accent)
+    expect(decode).toHaveBeenCalledTimes(1)
+    expect(await api.getGameAccent('nope')).toBeNull()
+  })
+
   test("a Nexus game that is a catalog game's twin shows once, as the catalog game", async () => {
     const urls: string[] = []
     const base = deps.fetch
@@ -918,7 +943,8 @@ describe('services', () => {
       lastGame: null,
       lastProfile: {},
       nexusDomainOverrides: {},
-      manualLoaderKept: []
+      manualLoaderKept: [],
+      gameColors: true
     })
   })
 

@@ -83,11 +83,19 @@ import { createShareServices } from './share/service'
 import { gameByDomain } from './nexus/api'
 import { parseNxm, type HandlerPort } from './nexus/nxm'
 import { findInstalledMod, providesPackage } from '../shared/modIdentity'
-import { createSteamArt, findLibraryCover } from './art/steamArt'
+import {
+  createSteamArt,
+  findLibraryCover,
+  findLibraryHero,
+  isAppId,
+  steamCdnCover,
+  steamHeroUrls
+} from './art/steamArt'
 import { createTsIcons, modIconCandidates, modIconPath } from './art/modIcons'
 import { ensureWinhttpOverride } from './steam/protonPrefix'
 import { createTsDocs } from './thunderstore/docs'
-import { serveArt, type ArtSources } from './art/protocol'
+import { pickAccent } from './art/accent'
+import { ART_SCHEME, resolveArt, serveArt, steamArtUrl, type ArtSources } from './art/protocol'
 
 export interface DialogPort {
   pickFiles(opts: {
@@ -138,6 +146,11 @@ export interface ServiceDeps {
   shareBaseUrl: string
   /** Folder of Flatpak's system-wide overrides; defaults to /var/lib/flatpak/overrides. */
   flatpakSystemOverridesDir?: string
+  /**
+   * Decodes a PNG or JPEG to RGBA pixels (Electron's nativeImage), for taking a game's accent
+   * colour from its cover. Unset (as in tests) means no accent colours.
+   */
+  decodeImage?: (data: Buffer) => Uint8Array | null
   /** Linux process list for confirming a launch; defaults to the real /proc. */
   procFs?: ProcFsPort
   /** Clock and timer for waitForGame; default to the real ones. */
@@ -165,6 +178,9 @@ const INDEX_MAX_AGE_MS = 3_600_000
 /** A stale (offline) index is retried at most this often. */
 const STALE_RETRY_MS = 30_000
 
+/** Cover downloads for accent colours give up after this long, or past this size. */
+const ACCENT_FETCH_TIMEOUT_MS = 5_000
+const ACCENT_MAX_BYTES = 8_000_000
 const DEFAULT_PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll'
 
 async function assertZipFile(file: string): Promise<void> {
@@ -291,21 +307,31 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   const tsDocs = createTsDocs({ fetch: deps.fetch })
 
   /**
-   * Gives custom Steam games and installed Steam games in search the best Steam cover known now.
-   * Store capsules not cached yet are looked up in the background (one batched request) and show
-   * from the next search on, so search never waits for the store. A cover the user chose stays first.
+   * Gives custom Steam games and installed Steam games in search the best Steam cover known now,
+   * and every Steam game its banner URLs. Store capsules not cached yet are looked up in the
+   * background (one batched request) and show from the next search on, so search never waits for
+   * the store. A cover the user chose stays first.
    */
   async function withArt(games: GameSummary[]): Promise<GameSummary[]> {
     const ids = games.flatMap((g) => (g.custom && g.steamAppId ? [g.steamAppId] : []))
-    if (ids.length === 0) return games
-    const covers = await steamArt.covers(ids)
+    const covers = ids.length > 0 ? await steamArt.covers(ids) : new Map<string, string[]>()
     return games.map((g) => {
+      const heroes = g.steamAppId ? steamHeroUrls(g.steamAppId) : []
+      const withHero = heroes.length > 0 ? { ...g, heroUrls: heroes } : g
       const art = g.custom && g.steamAppId ? covers.get(g.steamAppId) : undefined
-      if (!art || art.length === 0) return g
+      if (!art || art.length === 0) return withHero
       return g.custom?.image
-        ? { ...g, iconFallbacks: art }
-        : { ...g, iconUrl: art[0], iconFallbacks: art.slice(1) }
+        ? { ...withHero, iconFallbacks: art }
+        : { ...withHero, iconUrl: art[0], iconFallbacks: art.slice(1) }
     })
+  }
+
+  async function getGameSummary(label: string): Promise<GameSummary | null> {
+    const catalog = await getCatalog()
+    const def = catalog.games.find((g) => g.label === label)
+    if (!def) return null
+    const summary = await summarize(def, catalog, await loadSettings(paths), await getSteamRoot())
+    return (await withArt([summary]))[0]
   }
 
   /** Whether the user's Flatpak overrides already give Steam access to HML's games folder. */
@@ -990,12 +1016,54 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       const root = await getSteamRoot().catch(() => null)
       return root ? findLibraryCover(root, appId) : null
     },
+    async steamHero(appId) {
+      const root = await getSteamRoot().catch(() => null)
+      return root ? findLibraryHero(root, appId) : null
+    },
     customCover: customCoverFile,
     // getProfile refuses unsafe game and profile ids; the file comes from the mod's record.
     async modIcon(game, profileId, modId) {
       const mod = (await getProfile(paths, game, profileId)).mods.find((m) => m.id === modId)
       return mod ? modIconPath(paths.profileDir(game, profileId), mod) : null
     }
+  }
+  /** Bytes of a cover image: an hml-art:// file main looks up, or an https download. */
+  async function imageBytes(url: string): Promise<Buffer | null> {
+    if (url.startsWith(`${ART_SCHEME}:`)) {
+      const file = await resolveArt(url, artSources)
+      return file ? fs.readFile(file).catch(() => null) : null
+    }
+    if (!/^https:\/\//i.test(url)) return null
+    try {
+      const res = await deps.fetch(url, { signal: AbortSignal.timeout(ACCENT_FETCH_TIMEOUT_MS) })
+      if (!res.ok) return null
+      const data = Buffer.from(await res.arrayBuffer())
+      return data.length <= ACCENT_MAX_BYTES ? data : null
+    } catch {
+      return null
+    }
+  }
+
+  // Accents by cover URL list, so a changed cover is looked at again.
+  const accents = new Map<string, Promise<string | null>>()
+  /** The accent colour from the first of a game's covers that loads and decodes; null if none. */
+  function coverAccent(urls: string[]): Promise<string | null> {
+    const key = urls.join('\n')
+    let p = accents.get(key)
+    if (!p) {
+      p = (async () => {
+        const decode = deps.decodeImage
+        if (!decode) return null
+        for (const url of urls) {
+          const data = await imageBytes(url)
+          const pixels = data ? decode(data) : null
+          if (pixels) return pickAccent(pixels)
+        }
+        return null
+      })().catch(() => null)
+      accents.set(key, p)
+    }
+    return p
   }
 
   async function getModIcons(game: string, profileId: string): Promise<Record<string, string[]>> {
@@ -1103,12 +1171,19 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       return withArt([...sorted, ...extras, ...installed])
     },
 
-    async getGame(label: string): Promise<GameSummary | null> {
-      const catalog = await getCatalog()
-      const def = catalog.games.find((g) => g.label === label)
-      if (!def) return null
-      const summary = await summarize(def, catalog, await loadSettings(paths), await getSteamRoot())
-      return (await withArt([summary]))[0]
+    getGame: getGameSummary,
+
+    async getGameAccent(label) {
+      const game = await getGameSummary(label)
+      if (!game) return null
+      // Electron can't decode WebP (Thunderstore's covers), so Steam's JPEG covers follow.
+      const steam = game.steamAppId && isAppId(game.steamAppId) ? game.steamAppId : null
+      const urls = [
+        game.iconUrl,
+        ...(game.iconFallbacks ?? []),
+        ...(steam ? [steamArtUrl(steam), steamCdnCover(steam)] : [])
+      ].filter((u, i, all): u is string => !!u && all.indexOf(u) === i)
+      return urls.length > 0 ? coverAccent(urls) : null
     },
 
     addNexusGame,

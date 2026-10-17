@@ -14,7 +14,7 @@ type Variant = 'primary' | 'ghost' | 'quiet' | 'danger'
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    'bg-ember text-ink font-semibold hover:bg-[#ffab5c] active:bg-ember-deep disabled:bg-raised disabled:text-muted',
+    'bg-ember text-ink font-semibold hover:bg-ember-hover active:bg-ember-deep disabled:bg-raised disabled:text-muted',
   ghost: 'border border-line text-fg hover:bg-raised hover:border-[#3a5664] disabled:text-muted',
   quiet: 'text-muted hover:text-fg hover:bg-raised disabled:opacity-50',
   danger: 'bg-danger text-ink font-semibold hover:bg-[#ff7884] disabled:opacity-50'
@@ -369,5 +369,41 @@ export function Menu({
         ))}
       </div>
     </details>
+  )
+}
+
+/** An on/off switch. */
+export function Toggle({
+  checked,
+  disabled,
+  label,
+  title,
+  onChange
+}: {
+  checked: boolean
+  disabled?: boolean
+  label: string
+  title?: string
+  onChange(value: boolean): void
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      title={title}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+        checked ? 'bg-ember' : 'bg-line'
+      }`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-fg shadow transition-transform ${
+          checked ? 'translate-x-4' : ''
+        }`}
+      />
+    </button>
   )
 }

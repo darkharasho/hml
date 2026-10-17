@@ -1,4 +1,4 @@
-import { app, shell, dialog, BrowserWindow, protocol, safeStorage } from 'electron'
+import { app, shell, dialog, BrowserWindow, nativeImage, protocol, safeStorage } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir, release as osRelease, type as osType } from 'node:os'
@@ -236,6 +236,20 @@ if (hasLock)
       spawn,
       execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false }),
       nxmHandler,
+      decodeImage: (data) => {
+        const img = nativeImage.createFromBuffer(data)
+        if (img.isEmpty()) return null
+        // A small copy is plenty for picking a colour. toBitmap is BGRA; swap to RGBA.
+        const px = img.resize({ width: 64 }).toBitmap()
+        const out = new Uint8Array(px.length)
+        for (let i = 0; i + 3 < px.length; i += 4) {
+          out[i] = px[i + 2]
+          out[i + 1] = px[i + 1]
+          out[i + 2] = px[i]
+          out[i + 3] = px[i + 3]
+        }
+        return out
+      },
       shareBaseUrl: process.env.HML_SHARE_URL ?? 'https://hml-share.project96.workers.dev'
     })
     const ready = services
