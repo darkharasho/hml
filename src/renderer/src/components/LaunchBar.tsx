@@ -260,7 +260,7 @@ export function LaunchBar(): React.JSX.Element | null {
       {steamConfirm && (
         <ConfirmDialog
           title="Close Steam?"
-          body="Steam is running and would overwrite this when it closes. Close Steam and set it?"
+          body="Steam is running and would overwrite this when it closes. Close Steam and set it? Steam will close; HML's Start buttons will start it again."
           confirmLabel="Close Steam and set it"
           onConfirm={() => void setForMe(true)}
           onClose={() => setSteamConfirm(false)}
