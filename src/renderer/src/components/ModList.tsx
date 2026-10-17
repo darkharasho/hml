@@ -22,6 +22,7 @@ const SOURCE_BADGE: Record<ModSource['kind'], { label: string; className: string
 const hasFiles = (e: DragEvent): boolean => e.dataTransfer.types.includes('Files')
 
 const NO_ICONS: string[] = []
+const NO_ICON_MAP: Record<string, string[]> = {}
 
 /**
  * Icon URLs for each installed mod, fetched again when the mod set or a version changes. Empty
@@ -32,24 +33,29 @@ function useModIcons(
   profileId: string | undefined,
   mods: InstalledMod[] | undefined
 ): Record<string, string[]> {
-  const key = `${game}/${profileId}/${(mods ?? []).map((m) => `${m.id}@${m.version}`).join('|')}`
-  const [icons, setIcons] = useState<Record<string, string[]>>({})
+  const scope = `${game}/${profileId}`
+  const key = `${scope}/${(mods ?? []).map((m) => `${m.id}@${m.version}`).join('|')}`
+  const [icons, setIcons] = useState<{ scope: string; urls: Record<string, string[]> }>({
+    scope: '',
+    urls: {}
+  })
   useEffect(() => {
     if (!game || !profileId) return
     let live = true
     api.getModIcons(game, profileId).then(
-      (urls) => live && setIcons(urls),
+      (urls) => live && setIcons({ scope, urls }),
       () => undefined
     )
     return () => {
       live = false
     }
-    // key covers game, profileId and the mods.
+    // key covers game, profileId (scope) and the mods.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
-  // The previous answer stands in until the new one arrives, so installing a mod doesn't make
-  // every other row flash back to its letter tile.
-  return icons
+  // Within one profile the previous answer stands in until the new one arrives (or when a lookup
+  // fails), so installing a mod doesn't make every row flash back to its letter tile. Another
+  // game's or profile's icons never show.
+  return icons.scope === scope ? icons.urls : NO_ICON_MAP
 }
 
 export function ModList(): React.JSX.Element | null {
