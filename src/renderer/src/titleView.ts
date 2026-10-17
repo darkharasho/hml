@@ -1,12 +1,14 @@
 import type { GameSummary } from '../../shared/ipc'
 import type { Settings } from '../../shared/types'
 
-/** How many games the titlebar's game menu and the picker's Your games list. */
+/** How many games the titlebar's game menu lists. */
 export const MAX_MENU_GAMES = 8
+/** How many games the picker's Your games lists: two rows at the default window width. */
+export const MAX_YOUR_GAMES = 14
 
 /**
  * Labels of the games the user has opened (each remembers its last profile), the current one
- * first. All of them: uniqueGames drops duplicates before keeping MAX_MENU_GAMES.
+ * first. All of them: uniqueGames drops duplicates before applying a limit.
  */
 export function usedGameLabels(settings: Settings | null, current: string | null): string[] {
   const labels = [
@@ -18,14 +20,15 @@ export function usedGameLabels(settings: Settings | null, current: string | null
 }
 
 /**
- * The user's games once each, at most MAX_MENU_GAMES (the first ones in `games`, which is in the
- * order used), by name. Entries another one stands in for are left out and, should two entries
+ * The user's games once each, at most `limit` (the first ones in `games`, which is in the order
+ * used), by name. Entries another one stands in for are left out and, should two entries
  * still share a name, the current game, then an installed one, then a non-Nexus one is kept. The
  * current game is kept even when its lookup is missing or hidden.
  */
 export function uniqueGames(
   games: (GameSummary | null)[],
-  current: GameSummary | null
+  current: GameSummary | null,
+  limit = MAX_MENU_GAMES
 ): GameSummary[] {
   const found = games
     .filter((g): g is GameSummary => g !== null && (!g.hidden || g.label === current?.label))
@@ -42,6 +45,6 @@ export function uniqueGames(
     if (!had || score(g) > score(had)) byName.set(key, g)
   }
   return [...byName.values()]
-    .slice(0, MAX_MENU_GAMES)
+    .slice(0, limit)
     .sort((a, b) => a.displayName.localeCompare(b.displayName))
 }

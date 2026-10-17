@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import type { GameSummary } from '../../src/shared/ipc'
 import type { Settings } from '../../src/shared/types'
-import { MAX_MENU_GAMES, uniqueGames, usedGameLabels } from '../../src/renderer/src/titleView'
+import {
+  MAX_MENU_GAMES,
+  MAX_YOUR_GAMES,
+  uniqueGames,
+  usedGameLabels
+} from '../../src/renderer/src/titleView'
 
 const settings = (lastGame: string | null, used: string[]): Settings => ({
   gamePathOverrides: {},
@@ -60,6 +65,11 @@ describe('uniqueGames', () => {
     expect(r).toHaveLength(MAX_MENU_GAMES)
     expect(r).toContain(`g${MAX_MENU_GAMES - 1}`)
     expect(r).not.toContain(`g${MAX_MENU_GAMES}`)
+  })
+
+  test('takes a larger limit for Your games', () => {
+    const used = Array.from({ length: 20 }, (_, i) => game(`g${i}`, `Game ${i}`))
+    expect(uniqueGames(used, null, MAX_YOUR_GAMES)).toHaveLength(14)
   })
 
   test('uses the store copy of the current game and adds it when missing', () => {

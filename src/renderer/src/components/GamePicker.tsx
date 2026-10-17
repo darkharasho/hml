@@ -5,7 +5,7 @@ import { api, errorMessage } from '../api'
 import { isNexusOnly, isSteamCandidate } from '../customView'
 import { formatCount } from '../nxView'
 import { useStore } from '../store'
-import { uniqueGames, usedGameLabels } from '../titleView'
+import { MAX_YOUR_GAMES, uniqueGames, usedGameLabels } from '../titleView'
 import { AddGameDialog } from './AddGameDialog'
 import { GameCover } from './GameCover'
 import { Button, Icon } from './ui'
@@ -268,7 +268,7 @@ function useYourGames(reload: number): GameSummary[] | null {
     // A game that can't be looked up (a removed custom game) is left out, and each game shows
     // once.
     void Promise.all(labels.map((l) => api.getGame(l).catch(() => null))).then((found) => {
-      if (live) setGames(uniqueGames(found, null))
+      if (live) setGames(uniqueGames(found, null, MAX_YOUR_GAMES))
     })
     return () => {
       live = false
