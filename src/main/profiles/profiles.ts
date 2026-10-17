@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { ProfileManifest } from '../../shared/types'
 import type { AppPaths } from '../store/paths'
 import { readJson, writeJsonAtomic } from '../store/json'
+import { withReadableName } from '../custom/loaders'
 
 const MANIFEST = 'hml-profile.json'
 export const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
@@ -35,6 +36,10 @@ export function slugifyProfileName(name: string): string {
 
 const manifestPath = (paths: AppPaths, game: string, id: string): string =>
   path.join(paths.profileDir(game, id), MANIFEST)
+
+/** A manifest as read: loaders saved under their raw id get their readable name (kept on next save). */
+const readable = (m: ProfileManifest): ProfileManifest =>
+  Array.isArray(m.mods) ? { ...m, mods: m.mods.map(withReadableName) } : m
 
 export async function createProfile(
   paths: AppPaths,
@@ -92,7 +97,7 @@ export async function listProfiles(paths: AppPaths, game: string): Promise<Profi
   const found: ProfileManifest[] = []
   for (const id of entries) {
     const m = await readJson<ProfileManifest>(manifestPath(paths, game, id))
-    if (isValidManifest(m, id)) found.push(m)
+    if (isValidManifest(m, id)) found.push(readable(m))
   }
   return found.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 }
@@ -106,7 +111,7 @@ export async function getProfile(
   assertSafe('profile id', id)
   const m = await readJson<ProfileManifest>(manifestPath(paths, game, id))
   if (!m) throw new Error(`Profile not found: ${game}/${id}`)
-  return m
+  return readable(m)
 }
 
 export async function saveProfile(paths: AppPaths, m: ProfileManifest): Promise<void> {

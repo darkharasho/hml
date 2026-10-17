@@ -490,6 +490,7 @@ describe('custom game loaders, launches and manual installs', () => {
     expect(await api.getLaunchWarnings(label, profile.id)).toContain('loader-mismatch')
     const mod = await api.installLoader(label, profile.id)
     expect(mod.source).toMatchObject({ asset: 'BepInEx-Unity.Mono-win-x64-6.0.0-pre.2.zip' })
+    expect(mod.name).toBe('BepInEx 6 (Mono)')
     const { mods } = (await api.listProfiles(label))[0]
     // Exactly one loader remains: the old one was replaced, not kept beside the new one.
     expect(mods).toHaveLength(1)

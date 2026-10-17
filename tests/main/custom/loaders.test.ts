@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   findLoaderMod,
   loaderMatches,
+  loaderModName,
   loaderSpec,
-  LOADER_SPECS
+  LOADER_SPECS,
+  withReadableName
 } from '../../../src/main/custom/loaders'
 import { matchesAssetPattern } from '../../../src/main/github/assets'
 import type { InstalledMod } from '../../../src/shared/types'
@@ -63,5 +65,31 @@ describe('loader specs', () => {
     expect(loaderMatches(mono6, LOADER_SPECS['bepinex6-mono'])).toBe(true)
     expect(loaderMatches(mono6, LOADER_SPECS['bepinex6-il2cpp'])).toBe(false)
     expect(loaderMatches(ghMod('BepInEx', 'BepInEx'), s5)).toBe(false)
+  })
+})
+
+describe('loader names', () => {
+  const raw = (asset: string): InstalledMod => ({
+    ...ghMod('BepInEx', 'BepInEx', undefined, asset),
+    name: 'BepInEx-BepInEx'
+  })
+  it('names the loader by its build, from the installed asset', () => {
+    expect(loaderModName(raw('BepInEx_win_x64_5.4.23.5.zip').source)).toBe('BepInEx 5 (Mono)')
+    expect(loaderModName(raw('BepInEx-Unity.Mono-win-x64-6.0.0-pre.2.zip').source)).toBe(
+      'BepInEx 6 (Mono)'
+    )
+    expect(loaderModName(raw('BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip').source)).toBe(
+      'BepInEx 6 (IL2CPP)'
+    )
+    expect(loaderModName(raw('BepInEx_linux_x64_5.4.23.5.zip').source)).toBe('BepInEx')
+    expect(loaderModName(ghMod('a', 'b').source)).toBeNull()
+    expect(loaderModName({ kind: 'thunderstore', fullName: 'BepInEx-BepInExPack' })).toBeNull()
+  })
+  it('renames only a loader still called by its raw id', () => {
+    expect(withReadableName(raw('BepInEx_win_x64_5.4.23.5.zip')).name).toBe('BepInEx 5 (Mono)')
+    const named = { ...raw('BepInEx_win_x64_5.4.23.5.zip'), name: 'My BepInEx' }
+    expect(withReadableName(named)).toBe(named)
+    const other = ghMod('a', 'b')
+    expect(withReadableName(other)).toBe(other)
   })
 })

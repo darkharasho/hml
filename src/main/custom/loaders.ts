@@ -1,5 +1,5 @@
 import { matchesAssetPattern } from '../github/assets'
-import type { GhTrack, InstalledMod, LoaderChoice } from '../../shared/types'
+import type { GhTrack, InstalledMod, LoaderChoice, ModSource } from '../../shared/types'
 
 export interface LoaderSpec {
   choice: Exclude<LoaderChoice, 'none'>
@@ -42,14 +42,36 @@ export function loaderSpec(choice: LoaderChoice): LoaderSpec | null {
   return choice === 'none' ? null : LOADER_SPECS[choice]
 }
 
+const isLoaderSource = (s: ModSource): s is Extract<ModSource, { kind: 'github' }> =>
+  s.kind === 'github' && s.owner.toLowerCase() === 'bepinex' && s.repo.toLowerCase() === 'bepinex'
+
 /** The loader GitHub mod in a profile (BepInEx/BepInEx, case-insensitive), if any. */
 export function findLoaderMod(mods: InstalledMod[]): InstalledMod | undefined {
-  return mods.find(
-    (m) =>
-      m.source.kind === 'github' &&
-      m.source.owner.toLowerCase() === 'bepinex' &&
-      m.source.repo.toLowerCase() === 'bepinex'
+  return mods.find((m) => isLoaderSource(m.source))
+}
+
+/**
+ * The name the BepInEx loader mod is shown by: its build's label ("BepInEx 5 (Mono)"), judged by
+ * the installed asset, or plain "BepInEx" for another build. Null for any other mod. Its zip has
+ * no manifest, so without this it would be named by its id, "BepInEx-BepInEx".
+ */
+export function loaderModName(source: ModSource): string | null {
+  if (!isLoaderSource(source)) return null
+  const spec = Object.values(LOADER_SPECS).find((s) =>
+    matchesAssetPattern(s.assetPattern, source.asset)
   )
+  return spec?.label ?? 'BepInEx'
+}
+
+/**
+ * The mod with the loader's readable name when it still has its raw `<owner>-<repo>` name, as
+ * loaders installed before HML named them do. Other mods come back unchanged.
+ */
+export function withReadableName(mod: InstalledMod): InstalledMod {
+  const name = loaderModName(mod.source)
+  if (!name || mod.source.kind !== 'github') return mod
+  const raw = `${mod.source.owner}-${mod.source.repo}`.toLowerCase()
+  return mod.name.toLowerCase() === raw ? { ...mod, name } : mod
 }
 
 /**

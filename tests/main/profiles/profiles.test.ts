@@ -31,6 +31,30 @@ const exists = (p: string): Promise<boolean> =>
   )
 
 describe('profiles', () => {
+  test('reads the BepInEx loader mod with a readable name', async () => {
+    const m = await createProfile(paths, 'repo', 'Default')
+    const loader = {
+      id: 'BepInEx-BepInEx',
+      name: 'BepInEx-BepInEx',
+      version: '5.4.23.5',
+      source: {
+        kind: 'github' as const,
+        owner: 'BepInEx',
+        repo: 'BepInEx',
+        tag: 'v5.4.23.5',
+        asset: 'BepInEx_win_x64_5.4.23.5.zip',
+        sha256: ''
+      },
+      enabled: true,
+      files: [],
+      disableable: [],
+      installedAt: ''
+    }
+    await saveProfile(paths, { ...m, mods: [loader] })
+    expect((await getProfile(paths, 'repo', 'default')).mods[0].name).toBe('BepInEx 5 (Mono)')
+    expect((await listProfiles(paths, 'repo'))[0].mods[0].name).toBe('BepInEx 5 (Mono)')
+  })
+
   test('creates dir and manifest', async () => {
     const m = await createProfile(paths, 'repo', 'Default')
     expect(m).toMatchObject({

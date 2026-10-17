@@ -30,6 +30,7 @@ import {
 } from './api'
 import { loadToken, NO_SECURE_STORAGE, saveToken } from './token'
 import { isGhAccessError } from '../../shared/messages'
+import { loaderModName } from '../custom/loaders'
 
 export const GH_CHECK_INTERVAL_MS = 21_600_000
 
@@ -266,22 +267,25 @@ export function createGithubServices(ctx: GhContext): Pick<
         ...(tsCopy?.source.kind === 'thunderstore' ? [tsCopy.source.fullName] : [])
       ])
     ]
+    const source = {
+      kind: 'github' as const,
+      owner,
+      repo,
+      tag: release.tag,
+      asset: chosen.asset.name,
+      sha256: chosen.sha256
+    }
     const { mod, replaced } = await installZipReporting(
       paths,
       def,
       catalog,
       profileId,
       data,
-      {
-        kind: 'github',
-        owner,
-        repo,
-        tag: release.tag,
-        asset: chosen.asset.name,
-        sha256: chosen.sha256
-      },
+      source,
       {
         packageId,
+        // The BepInEx loader's zip has no manifest; it is named by its build instead of its id.
+        name: meta?.name ?? loaderModName(source) ?? undefined,
         version,
         replaces: replacesOf(superseded, packageId),
         github: o.config(previous),
