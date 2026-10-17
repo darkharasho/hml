@@ -308,7 +308,7 @@ function NexusSection(): React.JSX.Element {
       </Field>
 
       <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-fg">Nexus download links</p>
           <p className="mt-0.5 text-xs text-muted">
             {status ? HANDLER_STATUS[status.handler] : 'Checking…'}
@@ -356,7 +356,7 @@ function UpdateSection(): React.JSX.Element {
   const status = updateStatusText(state, asked, result)
   return (
     <div className="flex items-center justify-between gap-4 border-t border-line pt-5">
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-fg">HML {version ? `v${version}` : ''}</p>
         <p className="mt-0.5 text-xs break-words text-muted" aria-live="polite">
           {status ?? 'Updates download in the background and install when HML restarts.'}
@@ -411,7 +411,7 @@ function Field({
         />
         {children}
       </div>
-      <span className="mt-1.5 block text-xs break-all text-muted">{hint}</span>
+      <span className="mt-1.5 block text-xs [overflow-wrap:anywhere] text-muted">{hint}</span>
     </label>
   )
 }

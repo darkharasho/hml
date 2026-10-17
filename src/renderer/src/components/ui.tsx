@@ -28,7 +28,7 @@ export function Button({
   return (
     <button
       type="button"
-      className={`inline-flex items-center justify-center gap-2 rounded-md px-3 h-9 text-sm transition-colors disabled:cursor-not-allowed ${VARIANTS[variant]} ${className}`}
+      className={`inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md px-3 text-sm whitespace-nowrap transition-colors disabled:cursor-not-allowed ${VARIANTS[variant]} ${className}`}
       {...props}
     />
   )
@@ -115,13 +115,13 @@ export function Modal({
         {/* The title and the buttons stay put; only the body scrolls. */}
         <h2
           id={titleId}
-          className="shrink-0 px-5 pt-5 pr-14 pb-1 text-base font-semibold tracking-tight"
+          className="shrink-0 border-b border-line px-5 pt-5 pr-14 pb-4 text-base font-semibold tracking-tight"
         >
           {title}
         </h2>
         <div
           ref={bodyRef}
-          className="min-h-0 flex-1 overflow-y-auto px-5 pt-2 pb-4 text-sm text-muted"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pt-4 pb-5 text-sm text-muted"
         >
           {children}
         </div>

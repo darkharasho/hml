@@ -231,9 +231,10 @@ export function ModList(): React.JSX.Element | null {
         <div className="flex h-11 items-center gap-2 pb-2">
           {activeTab === 'installed' && (
             <>
-              <Button variant="quiet" onClick={() => void openProfileFolder()}>
+              {/* Icon only in a narrow window, so the install buttons still fit beside the tabs. */}
+              <Button variant="quiet" title="Open folder" onClick={() => void openProfileFolder()}>
                 <Icon name="folder" />
-                Open folder
+                <span className="max-[1000px]:sr-only">Open folder</span>
               </Button>
               {githubPrimary ? (
                 <>
