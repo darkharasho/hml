@@ -128,6 +128,9 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
           onChange={(e) => {
             setPrereleases(e.target.checked)
             if (e.target.checked) setPreOnly(null)
+            // The file list came from a release picked with the old setting; look it up again.
+            setChoice(null)
+            setPicked(null)
           }}
           className="size-4 accent-ember"
         />
