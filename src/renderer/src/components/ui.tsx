@@ -171,6 +171,8 @@ export interface MenuItem {
   danger?: boolean
   /** Set (true or false) to make this a radio-style item; true shows a check mark. */
   checked?: boolean
+  /** With `checked`, an on/off item (a checkbox) instead of one of a radio group. */
+  toggle?: boolean
   /** Draws a divider above the item to start a new group. */
   divider?: boolean
 }
@@ -242,7 +244,13 @@ export function Menu({
             {item.divider && <div role="separator" className="my-1 h-px bg-line" />}
             <button
               type="button"
-              role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+              role={
+                item.checked === undefined
+                  ? 'menuitem'
+                  : item.toggle
+                    ? 'menuitemcheckbox'
+                    : 'menuitemradio'
+              }
               aria-checked={item.checked}
               onClick={() => {
                 if (ref.current) ref.current.open = false

@@ -2,7 +2,14 @@ import { useEffect, useRef, useState, type DragEvent } from 'react'
 import type { GhUpdate, InstalledMod, ModSource, ModUpdate, NxUpdate } from '../../../shared/types'
 import { api, errorMessage, pathForFile } from '../api'
 import { sourcesFor } from '../customView'
-import { ghSubline, githubRepoUrl, UPDATE_MODES, updateModeLabel } from '../ghView'
+import {
+  canFollowPrereleases,
+  ghSubline,
+  githubRepoUrl,
+  isPrereleaseInstall,
+  UPDATE_MODES,
+  updateModeLabel
+} from '../ghView'
 import { nexusModUrl } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
 import { initials, UNSUPPORTED_LOADER } from '../tsView'
@@ -331,6 +338,7 @@ function ModRow({
   const runGhUpdate = useStore((s) => s.ghUpdate)
   const runNxUpdate = useStore((s) => s.nxUpdate)
   const setUpdateMode = useStore((s) => s.ghSetUpdateMode)
+  const setPrereleases = useStore((s) => s.ghSetPrereleases)
   const toast = useStore((s) => s.toast)
   const updating = useStore((s) =>
     mod.source.kind === 'thunderstore'
@@ -371,6 +379,17 @@ function ModRow({
         divider: i === 0,
         onSelect: () => void (m !== mode && setUpdateMode(mod.id, m))
       })),
+      ...(canFollowPrereleases(mod)
+        ? [
+            {
+              label: 'Include prereleases',
+              checked: mod.github?.prereleases === true,
+              toggle: true,
+              divider: true,
+              onSelect: () => void setPrereleases(mod.id, mod.github?.prereleases !== true)
+            }
+          ]
+        : []),
       { ...uninstall, divider: true }
     ]
   } else if (source.kind === 'nexus') {
@@ -402,6 +421,14 @@ function ModRow({
         <div className="flex items-baseline gap-2">
           <span className="truncate font-medium">{mod.name}</span>
           <span className="shrink-0 text-xs text-muted tabular-nums">{mod.version}</span>
+          {isPrereleaseInstall(mod) && (
+            <span
+              className="shrink-0 self-center rounded bg-warn/10 px-1.5 py-px text-[10px] font-medium text-warn"
+              title="The installed release is a pre-release"
+            >
+              Pre-release
+            </span>
+          )}
         </div>
         {updating ? (
           <ProgressLine className="mt-0.5" />

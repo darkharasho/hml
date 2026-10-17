@@ -7,6 +7,7 @@ import { ProgressLine } from './PackageDetail'
 import { Button, Icon, Modal } from './ui'
 
 type Choice = Extract<GhInstallResult, { kind: 'choose-asset' }>
+type PreOnly = Extract<GhInstallResult, { kind: 'prerelease-only' }>
 
 /** Paste a GitHub link and install its release; asks which file when the release has several. */
 export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Element {
@@ -17,6 +18,9 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   // The asset question belongs to the link it came from; editing the link drops it.
   const [choice, setChoice] = useState<Choice | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
+  const [prereleases, setPrereleases] = useState(false)
+  // Set when the repo only publishes pre-releases and they weren't included.
+  const [preOnly, setPreOnly] = useState<PreOnly | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const chooser = useRef<HTMLFieldSetElement>(null)
   // False once this dialog unmounts, so a late result never touches a later dialog.
@@ -46,14 +50,18 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   const link = url.trim()
   const canSubmit = !running && link !== '' && (!choice || picked !== null)
 
-  async function submit(): Promise<void> {
+  async function submit(withPrereleases = prereleases): Promise<void> {
     if (!canSubmit) return
     setError(null)
+    setPreOnly(null)
     setRunning(true)
     try {
-      const result = await ghInstall(link, choice ? (picked ?? undefined) : undefined)
+      const result = await ghInstall(link, choice ? (picked ?? undefined) : undefined, {
+        prereleases: withPrereleases
+      })
       if (!mounted.current) return
       if (result.kind === 'installed') return onClose()
+      if (result.kind === 'prerelease-only') return setPreOnly(result)
       setChoice(result)
       setPicked(null)
     } catch (e) {
@@ -94,6 +102,7 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
             setUrl(e.target.value)
             setChoice(null)
             setPicked(null)
+            setPreOnly(null)
             setError(null)
           }}
           onKeyDown={(e) => {
@@ -110,6 +119,48 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
           Paste a repository or release link. HML installs the latest release and keeps it updated.
         </span>
       </label>
+
+      <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-sm text-fg has-[:disabled]:cursor-default has-[:disabled]:opacity-60">
+        <input
+          type="checkbox"
+          checked={prereleases}
+          disabled={running}
+          onChange={(e) => {
+            setPrereleases(e.target.checked)
+            if (e.target.checked) setPreOnly(null)
+          }}
+          className="size-4 accent-ember"
+        />
+        Include prereleases
+      </label>
+
+      {preOnly && (
+        <div role="alert" className="mt-4 rounded-md border border-warn/40 bg-warn/[0.06] p-3">
+          <p className="flex items-start gap-2 text-fg">
+            <Icon name="warn" className="mt-0.5 size-4 shrink-0 text-warn" />
+            <span className="min-w-0 break-words">
+              {preOnly.owner}/{preOnly.repo} only publishes pre-releases.
+            </span>
+          </p>
+          <p className="mt-1 pl-6 text-xs">
+            Include prereleases to install its newest pre-release. HML then keeps it updated with
+            new pre-releases too.
+          </p>
+          <div className="mt-3 pl-6">
+            <Button
+              variant="primary"
+              disabled={running}
+              onClick={() => {
+                setPrereleases(true)
+                void submit(true)
+              }}
+            >
+              <Icon name="download" />
+              Include prereleases and install
+            </Button>
+          </div>
+        </div>
+      )}
 
       {choice && (
         <fieldset ref={chooser} className="mt-5" disabled={running}>
