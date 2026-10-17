@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { TsPackage } from '../../../shared/types'
+import { useEffect, useState } from 'react'
+import type { TsDocKind, TsPackage } from '../../../shared/types'
 import { findInstalledMod } from '../../../shared/modIdentity'
 import { api, errorMessage } from '../api'
 import { useCurrentProfile, useStore } from '../store'
@@ -13,6 +13,7 @@ import {
   splitDependency,
   UNSUPPORTED_LOADER
 } from '../tsView'
+import { Markdown } from './Markdown'
 import { Button, Icon, Modal } from './ui'
 
 /** Package icon with an initials fallback when the image is missing or fails to load. */
@@ -59,6 +60,66 @@ export function ProgressLine({ className = '' }: { className?: string }): React.
 
 const NO_LOADERS: string[] = []
 
+type Tab = TsDocKind | 'deps'
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'readme', label: 'README' },
+  { id: 'changelog', label: 'Changelog' },
+  { id: 'deps', label: 'Dependencies' }
+]
+
+type Doc = { markdown: string | null } | { error: string } | null
+
+/** A package version's README or changelog, fetched from Thunderstore when shown. */
+function PackageDoc({
+  fullName,
+  version,
+  kind
+}: {
+  fullName: string
+  version: string
+  kind: TsDocKind
+}): React.JSX.Element {
+  const [doc, setDoc] = useState<{ key: string; doc: Doc }>({ key: '', doc: null })
+  const [nonce, setNonce] = useState(0)
+  const key = `${fullName}@${version}/${kind}#${nonce}`
+  useEffect(() => {
+    let live = true
+    api.tsGetDoc(fullName, version, kind).then(
+      (markdown) => live && setDoc({ key, doc: { markdown } }),
+      (e) => live && setDoc({ key, doc: { error: errorMessage(e) } })
+    )
+    return () => {
+      live = false
+    }
+  }, [fullName, version, kind, key])
+
+  const shown = doc.key === key ? doc.doc : null
+  const frame = 'max-h-[50vh] overflow-y-auto rounded-lg border border-line bg-ink/40 px-4 py-3'
+  if (!shown) return <p className={frame}>Loading…</p>
+  if ('error' in shown) {
+    return (
+      <div className={`${frame} flex items-center justify-between gap-3`}>
+        <span className="text-danger">{shown.error}</span>
+        <Button variant="ghost" onClick={() => setNonce((n) => n + 1)}>
+          Retry
+        </Button>
+      </div>
+    )
+  }
+  if (!shown.markdown) {
+    return (
+      <p className={frame}>
+        {kind === 'readme' ? 'This version has no README.' : 'This version has no changelog.'}
+      </p>
+    )
+  }
+  return (
+    <div className={frame}>
+      <Markdown source={shown.markdown} />
+    </div>
+  )
+}
+
 export function PackageDetail({
   pkg,
   onClose
@@ -74,6 +135,7 @@ export function PackageDetail({
   const loaderIds = useStore((s) => s.currentGame?.loaderPackageIds) ?? NO_LOADERS
   const [version, setVersion] = useState(() => newestVersion(pkg)?.version ?? '')
   const [websiteRejected, setWebsiteRejected] = useState(false)
+  const [tab, setTab] = useState<Tab>('readme')
 
   const mods = profile?.mods ?? []
   const selected = pkg.versions.find((v) => v.version === version)
@@ -95,7 +157,7 @@ export function PackageDetail({
     <Modal
       title={displayName(pkg.name)}
       onClose={onClose}
-      width="w-[560px]"
+      width="w-[760px]"
       footer={
         <div className="flex w-full items-center justify-between gap-3">
           {installing ? <ProgressLine /> : <span />}
@@ -217,36 +279,61 @@ export function PackageDetail({
         </select>
       </div>
 
-      <h3 className="mt-4 font-medium text-fg">
-        Dependencies
-        <span className="ml-2 text-xs font-normal text-muted tabular-nums">
-          {selected?.dependencies.length ?? 0}
-        </span>
-      </h3>
-      {selected && selected.dependencies.length > 0 ? (
-        <ul className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-line">
-          {selected.dependencies.map((dep) => {
-            const d = splitDependency(dep)
-            return (
-              <li
-                key={dep}
-                className="flex items-baseline gap-2 border-b border-line px-3 py-2 last:border-b-0"
-              >
-                <span className="truncate text-fg">{displayName(d.name)}</span>
-                <span className="truncate text-xs">by {d.owner}</span>
-                <span className="ml-auto shrink-0 text-xs tabular-nums">
-                  {findInstalledMod(mods, d.fullName, loaderIds) && (
-                    <span className="mr-2 text-teal">Installed</span>
-                  )}
-                  {d.version}
-                </span>
-              </li>
-            )
-          })}
-        </ul>
-      ) : (
-        <p className="mt-1">None. This version installs on its own.</p>
-      )}
+      <div
+        role="tablist"
+        aria-label="Package details"
+        className="mt-4 flex gap-1 border-b border-line"
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            type="button"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${
+              tab === t.id ? 'border-ember text-fg' : 'border-transparent hover:text-fg'
+            }`}
+          >
+            {t.label}
+            {t.id === 'deps' && (
+              <span className="ml-1.5 text-xs font-normal text-muted tabular-nums">
+                {selected?.dependencies.length ?? 0}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" className="mt-3">
+        {tab === 'deps' ? (
+          selected && selected.dependencies.length > 0 ? (
+            <ul className="max-h-[50vh] overflow-y-auto rounded-lg border border-line">
+              {selected.dependencies.map((dep) => {
+                const d = splitDependency(dep)
+                return (
+                  <li
+                    key={dep}
+                    className="flex items-baseline gap-2 border-b border-line px-3 py-2 last:border-b-0"
+                  >
+                    <span className="truncate text-fg">{displayName(d.name)}</span>
+                    <span className="truncate text-xs">by {d.owner}</span>
+                    <span className="ml-auto shrink-0 text-xs tabular-nums">
+                      {findInstalledMod(mods, d.fullName, loaderIds) && (
+                        <span className="mr-2 text-teal">Installed</span>
+                      )}
+                      {d.version}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p>None. This version installs on its own.</p>
+          )
+        ) : (
+          <PackageDoc fullName={pkg.fullName} version={version} kind={tab} />
+        )}
+      </div>
     </Modal>
   )
 }

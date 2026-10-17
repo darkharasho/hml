@@ -220,6 +220,9 @@ export interface TsVersion {
   fileSize: number
   dateCreated: string
 }
+/** A Thunderstore package version's document: its README or CHANGELOG. */
+export type TsDocKind = 'readme' | 'changelog'
+
 export interface TsPackage {
   fullName: string // "Owner-Name"
   owner: string

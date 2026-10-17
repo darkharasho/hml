@@ -70,3 +70,95 @@
     transform: scale(0.97);
   }
 }
+
+/* A mod's README or changelog (components/Markdown.tsx). */
+.md {
+  color: color-mix(in oklab, var(--color-fg) 90%, transparent);
+  overflow-wrap: anywhere;
+  > :first-child {
+    margin-top: 0;
+  }
+  :is(h1, h2, h3, h4, h5, h6) {
+    margin: 1.2em 0 0.5em;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--color-fg);
+  }
+  h1 {
+    font-size: 1.45em;
+  }
+  h2 {
+    font-size: 1.25em;
+    padding-bottom: 0.25em;
+    border-bottom: 1px solid var(--color-line);
+  }
+  h3 {
+    font-size: 1.1em;
+  }
+  :is(p, ul, ol, pre, blockquote, table) {
+    margin: 0.7em 0;
+  }
+  ul {
+    list-style: disc;
+    padding-left: 1.4em;
+  }
+  ol {
+    list-style: decimal;
+    padding-left: 1.4em;
+  }
+  li + li {
+    margin-top: 0.2em;
+  }
+  a {
+    color: var(--color-teal);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+  code {
+    font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--color-raised);
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+  }
+  pre {
+    background: var(--color-ink);
+    border: 1px solid var(--color-line);
+    border-radius: 6px;
+    padding: 0.7em 0.9em;
+    overflow-x: auto;
+    code {
+      background: none;
+      padding: 0;
+    }
+  }
+  blockquote {
+    border-left: 3px solid var(--color-line);
+    padding-left: 0.9em;
+    color: var(--color-muted);
+  }
+  img {
+    display: inline-block;
+    max-width: 100%;
+    height: auto;
+  }
+  hr {
+    border: 0;
+    border-top: 1px solid var(--color-line);
+    margin: 1.2em 0;
+  }
+  table {
+    border-collapse: collapse;
+    display: block;
+    overflow-x: auto;
+  }
+  :is(th, td) {
+    border: 1px solid var(--color-line);
+    padding: 0.35em 0.6em;
+  }
+  th {
+    background: var(--color-raised);
+    color: var(--color-fg);
+  }
+}

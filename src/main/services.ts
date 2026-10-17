@@ -91,6 +91,7 @@ import { parseNxm, type HandlerPort } from './nexus/nxm'
 import { findInstalledMod, providesPackage } from '../shared/modIdentity'
 import { createSteamArt, findLibraryCover } from './art/steamArt'
 import { createTsIcons, modIconCandidates, modIconPath } from './art/modIcons'
+import { createTsDocs } from './thunderstore/docs'
 import { serveArt, type ArtSources } from './art/protocol'
 
 export interface DialogPort {
@@ -294,6 +295,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     now
   })
   const tsIcons = createTsIcons({ fetch: deps.fetch, cacheFile: paths.tsIconCache, now })
+  const tsDocs = createTsDocs({ fetch: deps.fetch })
 
   /**
    * Gives custom Steam games and installed Steam games in search the best Steam cover known now.
@@ -1079,6 +1081,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       for (const watch of launchWatches.values()) watch.abort()
     },
     getModIcons,
+    tsGetDoc: (fullName, version, kind) => tsDocs.get(fullName, version, kind),
     // Replacing an installed mod under a running game is refused; a fresh install is allowed.
     ghInstall: (game, profileId, url, asset, opts) =>
       ghInstallWith(game, profileId, url, asset, {

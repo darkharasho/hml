@@ -28,6 +28,7 @@ import type {
   Settings,
   SharePreview,
   TsInstallResult,
+  TsDocKind,
   TsPackage,
   TsQuery,
   TsSearchResult
@@ -82,6 +83,8 @@ export interface HmlApi {
   tsSearch(game: string, q: TsQuery): Promise<TsSearchResult>
   tsRefresh(game: string): Promise<{ count: number; fetchedAt: string; stale: boolean }>
   tsGetPackage(game: string, fullName: string): Promise<TsPackage | null>
+  /** A package version's README or CHANGELOG markdown from Thunderstore, or null if it has none. */
+  tsGetDoc(fullName: string, version: string, kind: TsDocKind): Promise<string | null>
   tsInstall(
     game: string,
     profileId: string,
@@ -210,6 +213,7 @@ const METHOD_TABLE = {
   tsSearch: true,
   tsRefresh: true,
   tsGetPackage: true,
+  tsGetDoc: true,
   tsInstall: true,
   tsCheckUpdates: true,
   tsUpdate: true,
