@@ -27,6 +27,7 @@ import { backupStamp, findManualLoader, moveToBackup } from './manualInstall'
 import { steamCdnCover } from '../art/steamArt'
 import { COVER_EXTS, coverPath, coverPreview, removeCovers, saveCover } from './cover'
 import {
+  catalogTwin,
   customGameDef,
   folderLabel,
   STEAM_PREFIX,
@@ -429,13 +430,12 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
     try {
       const root = knownRoot !== undefined ? knownRoot : await ctx.getSteamRoot()
       if (!root) return []
-      const known = new Set(catalog.games.map((g) => g.steamAppId).filter((id) => id !== null))
       const labels = new Set(catalog.games.map((g) => g.label))
       return (await listInstalledApps(root))
         .filter(
           (a) =>
             a.name.toLowerCase().includes(q) &&
-            !known.has(a.appId) &&
+            !catalogTwin(catalog.games, a) &&
             !labels.has(`${STEAM_PREFIX}${a.appId}`)
         )
         .map((a) => ({

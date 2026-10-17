@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type { AppPaths } from '../store/paths'
 import { readJson, writeJsonAtomic } from '../store/json'
 import type { GameDef, InstallRule, LoaderChoice, Runner } from '../../shared/types'
@@ -56,6 +57,23 @@ export function folderLabel(folderName: string, taken: Set<string>): string {
   for (let n = 2; ; n++) {
     if (!taken.has(`${base}-${n}`)) return `${base}-${n}`
   }
+}
+
+/**
+ * The catalog game an installed Steam app is: the one with its app id or, since the catalog
+ * leaves many games' ids out (RV There Yet has only its folder name), its install folder.
+ */
+export function catalogTwin(
+  games: GameDef[],
+  app: { appId: string; installDir: string }
+): GameDef | undefined {
+  const folder = path.basename(app.installDir).toLowerCase()
+  return games.find(
+    (g) =>
+      !g.custom &&
+      (g.steamAppId === app.appId ||
+        (!g.steamAppId && !!g.steamFolderName && g.steamFolderName.toLowerCase() === folder))
+  )
 }
 
 export function customGameDef(g: StoredCustomGame): GameDef {

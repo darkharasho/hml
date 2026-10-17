@@ -325,6 +325,70 @@ describe('custom game services', () => {
     expect(labels).toContain('steam-3314580')
   })
 
+  describe('a catalog game without a Steam app id (RV There Yet)', () => {
+    /** The fixture plus RV There Yet as the catalog lists it: no Steam id, only its folder. */
+    function serveRv(loader: string): void {
+      const rv = structuredClone(fixture.games.bonelab)
+      rv.label = 'rv-there-yet'
+      rv.meta.displayName = 'RV There Yet?'
+      rv.distributions = []
+      Object.assign(rv.r2modman[0], {
+        meta: { ...rv.r2modman[0].meta, displayName: 'RV There Yet?' },
+        distributions: [],
+        steamFolderName: 'Ride',
+        packageLoader: loader
+      })
+      const catalog = { ...fixture, games: { ...fixture.games, 'rv-there-yet': rv } }
+      deps.fetch = (async () => ({
+        ok: true,
+        json: async () => catalog
+      })) as unknown as typeof fetch
+    }
+    const addRv = (): void => {
+      manifest('3949040', 'RV There Yet?', 'Ride', false)
+      writeFileSync(
+        deps.paths.customGames,
+        JSON.stringify([
+          {
+            label: 'steam-3949040',
+            source: 'steam',
+            displayName: 'RV There Yet?',
+            steamAppId: '3949040',
+            loaderChoice: 'none',
+            exeName: 'Ride.exe',
+            dataFolderName: '',
+            cover: null
+          }
+        ])
+      )
+    }
+    const rvLabels = async (api: ReturnType<typeof createServices>): Promise<string[]> =>
+      (await api.searchGames('rv there')).map((g) => g.label)
+
+    test('its Steam install is matched by folder name, not offered as another game', async () => {
+      serveRv('shimloader')
+      manifest('3949040', 'RV There Yet?', 'Ride', false)
+      expect(await rvLabels(createServices(deps))).toEqual(['rv-there-yet'])
+    })
+
+    test('an added copy wins over the catalog entry when the catalog loader is unsupported', async () => {
+      serveRv('shimloader')
+      addRv()
+      const api = createServices(deps)
+      expect(await rvLabels(api)).toEqual(['steam-3949040'])
+      expect((await api.searchGames('')).map((g) => g.label)).not.toContain('rv-there-yet')
+      // Opened before, it still opens, but lists of used games leave it out.
+      expect(await api.getGame('rv-there-yet')).toMatchObject({ hidden: true })
+      expect((await api.getGame('steam-3949040'))?.hidden).toBeUndefined()
+    })
+
+    test('the catalog entry wins over an added copy when HML supports its loader', async () => {
+      serveRv('bepinex')
+      addRv()
+      expect(await rvLabels(createServices(deps))).toEqual(['rv-there-yet'])
+    })
+  })
+
   test('an empty query lists added custom games but no un-added Steam games', async () => {
     const api = createServices(deps)
     expect((await api.searchGames('')).map((g) => g.label)).not.toContain('steam-3314580')

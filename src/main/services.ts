@@ -75,7 +75,7 @@ import {
   removeDeployment
 } from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
-import { createCustomGames, customGameDef } from './custom/customGames'
+import { catalogTwin, createCustomGames, customGameDef } from './custom/customGames'
 import { listInstalledApps } from './steam/installedApps'
 import { createCustomGameServices, customLoaderSpec, loaderMismatch } from './custom/service'
 import { createNexusServices } from './nexus/service'
@@ -326,12 +326,44 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     })
   }
 
+  /**
+   * Games the picker leaves out because another entry is the same game. A Nexus-only game added
+   * before HML knew it was a catalog game's twin stays usable, but the catalog game shows alone.
+   * An added Steam game can be a catalog game HML didn't recognize when it was added; of the two,
+   * the catalog game shows, unless HML can't mod it but the copy can.
+   */
+  async function hiddenTwins(
+    catalog: Catalog,
+    settings: Settings,
+    steamRoot: string | null
+  ): Promise<Set<string>> {
+    const twins = new Set<string>()
+    for (const g of catalog.games) {
+      if (!g.label.startsWith('nexus-')) continue
+      if (await nexus.twinOf(g.label.slice('nexus-'.length), catalog.games, settings))
+        twins.add(g.label)
+    }
+    const added = catalog.games.filter((g) => g.custom?.source === 'steam' && g.steamAppId)
+    if (added.length > 0 && steamRoot) {
+      const apps = await listInstalledApps(steamRoot).catch(() => [])
+      for (const g of added) {
+        const app = apps.find((a) => a.appId === g.steamAppId)
+        const twin = app && catalogTwin(catalog.games, app)
+        if (twin) twins.add(twin.supported ? g.label : twin.label)
+      }
+    }
+    return twins
+  }
+
   async function getGameSummary(label: string): Promise<GameSummary | null> {
     const catalog = await getCatalog()
     const def = catalog.games.find((g) => g.label === label)
     if (!def) return null
-    const summary = await summarize(def, catalog, await loadSettings(paths), await getSteamRoot())
-    return (await withArt([summary]))[0]
+    const settings = await loadSettings(paths)
+    const steamRoot = await getSteamRoot()
+    const summary = await summarize(def, catalog, settings, steamRoot)
+    const hidden = (await hiddenTwins(catalog, settings, steamRoot)).has(label)
+    return (await withArt([hidden ? { ...summary, hidden } : summary]))[0]
   }
 
   /** Whether the user's Flatpak overrides already give Steam access to HML's games folder. */
@@ -1143,19 +1175,12 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     async searchGames(query: string): Promise<GameSummary[]> {
       const catalog = await getCatalog()
       const settings = await loadSettings(paths)
-      // A Nexus-only game added before HML knew it was a catalog game's twin stays usable, but
-      // the picker shows the catalog game alone.
-      const twins = new Set<string>()
-      for (const g of catalog.games) {
-        if (!g.label.startsWith('nexus-')) continue
-        if (await nexus.twinOf(g.label.slice('nexus-'.length), catalog.games, settings))
-          twins.add(g.label)
-      }
+      const steamRoot = await getSteamRoot()
+      const twins = await hiddenTwins(catalog, settings, steamRoot)
       const ranked = searchGames(
         catalog.games.filter((g) => !twins.has(g.label)),
         query
       )
-      const steamRoot = await getSteamRoot()
       const summaries = await Promise.all(
         ranked.map((g) => summarize(g, catalog, settings, steamRoot))
       )

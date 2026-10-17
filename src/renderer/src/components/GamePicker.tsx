@@ -265,12 +265,13 @@ function useYourGames(reload: number): GameSummary[] | null {
   useEffect(() => {
     let live = true
     const labels = key ? key.split('\n') : []
-    // A game that can't be looked up (a removed custom game) is left out.
+    // A game that can't be looked up (a removed custom game), or that another entry stands in
+    // for, is left out.
     void Promise.all(labels.map((l) => api.getGame(l).catch(() => null))).then((found) => {
       if (!live) return
       setGames(
         found
-          .filter((g): g is GameSummary => g !== null)
+          .filter((g): g is GameSummary => g !== null && !g.hidden)
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
       )
     })

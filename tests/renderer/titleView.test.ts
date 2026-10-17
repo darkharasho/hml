@@ -38,6 +38,12 @@ describe('sortMenuGames', () => {
     expect(r.map((g) => g.label)).toEqual(['r', 'v'])
   })
 
+  test('drops hidden twins unless one is the current game', () => {
+    const twin = { ...game('rv', 'RV There Yet?'), hidden: true }
+    expect(sortMenuGames([twin, game('v', 'Valheim')], null).map((g) => g.label)).toEqual(['v'])
+    expect(sortMenuGames([twin], twin).map((g) => g.label)).toEqual(['rv'])
+  })
+
   test('uses the store copy of the current game and adds it when missing', () => {
     const current = game('r', 'R.E.P.O.')
     expect(sortMenuGames([game('r', 'stale')], current)[0]).toBe(current)

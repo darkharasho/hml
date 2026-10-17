@@ -37,6 +37,8 @@ export interface GameSummary extends GameDef {
   installDir: string | null
   /** Catalog ids of this game's loader packages, e.g. "BepInEx-BepInExPack". */
   loaderPackageIds: string[]
+  /** Another entry for the same game is shown instead, so game lists leave this one out. */
+  hidden?: boolean
 }
 
 export interface HmlApi {
