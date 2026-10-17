@@ -205,6 +205,7 @@ export type LaunchWarning =
   | 'game-not-found'
   | 'loader-unsupported'
   | 'no-bepinex'
+  | 'no-shimloader'
   | 'proton-first-run'
   | 'steam-not-found'
   | 'flatpak-filesystem'

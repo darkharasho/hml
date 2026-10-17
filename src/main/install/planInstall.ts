@@ -68,6 +68,28 @@ function destination(rule: InstallRule, packageId: string, rest: string[]): stri
   return [...base, ...rest].join('/')
 }
 
+/**
+ * unreal_shimloader laid out as r2modman does: the shim `dwmapi.dll` and UE4SS's `ue4ss.dll` and
+ * `UE4SS-settings.ini` at the profile root (launch copies them next to the game's exe), UE4SS's
+ * bundled mods under `shimloader/mod`. Null for a package without a `UE4SS` folder.
+ */
+function planShimloader(items: Item[]): InstallPlan | null {
+  if (!items.some((i) => i.segs.length >= 2 && eq(i.segs[0], 'ue4ss'))) return null
+  const files: PlannedFile[] = []
+  for (const i of items) {
+    const s = i.segs
+    let to: string | null = null
+    if (s.length === 1 && eq(s[0], 'dwmapi.dll')) to = 'dwmapi.dll'
+    else if (s.length === 2 && eq(s[0], 'ue4ss') && eq(s[1], 'ue4ss.dll')) to = 'ue4ss.dll'
+    else if (s.length === 2 && eq(s[0], 'ue4ss') && eq(s[1], 'ue4ss-settings.ini'))
+      to = 'UE4SS-settings.ini'
+    else if (s.length >= 3 && eq(s[0], 'ue4ss') && eq(s[1], 'mods'))
+      to = ['shimloader', 'mod', ...s.slice(2)].join('/')
+    if (to) files.push({ from: i.from, to, disableable: false })
+  }
+  return { files }
+}
+
 export function planInstall(
   entries: string[],
   opts: { packageId: string; rules: InstallRule[]; loaderPackage?: ModloaderPackage }
@@ -75,6 +97,11 @@ export function planInstall(
   const { packageId, rules, loaderPackage } = opts
   const items = entries.map((from) => ({ from, segs: normalize(from) }))
   const stripped = stripWrappers(items, rules, loaderPackage?.rootFolder)
+
+  if (loaderPackage?.loader === 'shimloader') {
+    const shim = planShimloader(stripped)
+    if (shim) return shim
+  }
 
   if (loaderPackage) {
     // An empty root folder means the zip already has the game-folder layout: keep paths as they are.

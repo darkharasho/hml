@@ -76,6 +76,23 @@ export function catalogTwin(
   )
 }
 
+/**
+ * The games with the app id of the installed Steam app in their folder filled in, for catalog
+ * games the catalog lists without one, so HML can launch them and show their Steam art.
+ */
+export function withInstalledSteamIds(
+  games: GameDef[],
+  apps: { appId: string; installDir: string }[]
+): GameDef[] {
+  if (apps.length === 0) return games
+  const byFolder = new Map(apps.map((a) => [path.basename(a.installDir).toLowerCase(), a.appId]))
+  return games.map((g) => {
+    if (g.custom || g.steamAppId || !g.steamFolderName) return g
+    const id = byFolder.get(g.steamFolderName.toLowerCase())
+    return id ? { ...g, steamAppId: id } : g
+  })
+}
+
 export function customGameDef(g: StoredCustomGame): GameDef {
   const none = g.loaderChoice === 'none'
   return {

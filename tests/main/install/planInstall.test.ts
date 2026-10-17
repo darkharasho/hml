@@ -263,6 +263,61 @@ describe('planInstall', () => {
       { from: 'Pack-5.4/BepInExPack/winhttp.dll', to: 'winhttp.dll', disableable: false }
     ])
   })
+
+  describe('unreal_shimloader', () => {
+    const shim = {
+      packageId: 'Thunderstore-unreal_shimloader',
+      rootFolder: '',
+      loader: 'shimloader'
+    }
+    const SHIM_ZIP = [
+      'dwmapi.dll',
+      'icon.png',
+      'manifest.json',
+      'README.md',
+      'UE4SS/',
+      'UE4SS/dwmapi.dll',
+      'UE4SS/LICENSE',
+      'UE4SS/Mods/',
+      'UE4SS/Mods/BPModLoaderMod/Scripts/main.lua',
+      'UE4SS/Mods/mods.txt',
+      'UE4SS/UE4SS-settings.ini',
+      'UE4SS/UE4SS.dll'
+    ]
+
+    test('lays the shim and UE4SS out as r2modman does, UE4SS mods under shimloader/mod', () => {
+      const out = planInstall(SHIM_ZIP, { packageId, rules, loaderPackage: shim }).files
+      expect(out).toEqual([
+        { from: 'dwmapi.dll', to: 'dwmapi.dll', disableable: false },
+        {
+          from: 'UE4SS/Mods/BPModLoaderMod/Scripts/main.lua',
+          to: 'shimloader/mod/BPModLoaderMod/Scripts/main.lua',
+          disableable: false
+        },
+        { from: 'UE4SS/Mods/mods.txt', to: 'shimloader/mod/mods.txt', disableable: false },
+        { from: 'UE4SS/UE4SS-settings.ini', to: 'UE4SS-settings.ini', disableable: false },
+        { from: 'UE4SS/UE4SS.dll', to: 'ue4ss.dll', disableable: false }
+      ])
+    })
+
+    test('finds UE4SS in any case and inside a wrapper folder', () => {
+      const out = planInstall(['pkg/dwmapi.dll', 'pkg/ue4ss/ue4ss.dll'], {
+        packageId,
+        rules,
+        loaderPackage: shim
+      }).files
+      expect(out.map((f) => f.to)).toEqual(['dwmapi.dll', 'ue4ss.dll'])
+    })
+
+    test('a shimloader package without a UE4SS folder keeps its paths', () => {
+      const out = planInstall(['dwmapi.dll', 'other/x.dll'], {
+        packageId,
+        rules,
+        loaderPackage: shim
+      }).files
+      expect(out.map((f) => f.to)).toEqual(['dwmapi.dll', 'other/x.dll'])
+    })
+  })
 })
 
 describe('planDeploy', () => {

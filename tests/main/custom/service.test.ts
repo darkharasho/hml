@@ -336,6 +336,8 @@ describe('custom game services', () => {
         meta: { ...rv.r2modman[0].meta, displayName: 'RV There Yet?' },
         distributions: [],
         steamFolderName: 'Ride',
+        dataFolderName: 'Ride',
+        exeNames: ['Ride.exe'],
         packageLoader: loader
       })
       const catalog = { ...fixture, games: { ...fixture.games, 'rv-there-yet': rv } }
@@ -366,13 +368,13 @@ describe('custom game services', () => {
       (await api.searchGames('rv there')).map((g) => g.label)
 
     test('its Steam install is matched by folder name, not offered as another game', async () => {
-      serveRv('shimloader')
+      serveRv('melonloader')
       manifest('3949040', 'RV There Yet?', 'Ride', false)
       expect(await rvLabels(createServices(deps))).toEqual(['rv-there-yet'])
     })
 
     test('an added copy wins over the catalog entry when the catalog loader is unsupported', async () => {
-      serveRv('shimloader')
+      serveRv('melonloader')
       addRv()
       const api = createServices(deps)
       expect(await rvLabels(api)).toEqual(['steam-3949040'])
@@ -386,6 +388,75 @@ describe('custom game services', () => {
       serveRv('bepinex')
       addRv()
       expect(await rvLabels(createServices(deps))).toEqual(['rv-there-yet'])
+    })
+
+    describe('with unreal_shimloader', () => {
+      let bin: string
+      beforeEach(() => {
+        serveRv('shimloader')
+        const dir = manifest('3949040', 'RV There Yet?', 'Ride', false)
+        writeFileSync(path.join(dir, 'Ride.exe'), '')
+        bin = path.join(dir, 'Ride', 'Binaries', 'Win64')
+        mkdirSync(bin, { recursive: true })
+      })
+
+      test('it is supported and gets the Steam app id of the install in its folder', async () => {
+        const [rv] = await createServices(deps).searchGames('rv there')
+        expect(rv).toMatchObject({ label: 'rv-there-yet', steamAppId: '3949040', supported: true })
+      })
+
+      test('start modded puts the shim next to the exe and points it at the profile', async () => {
+        const api = createServices(deps)
+        const profile = await api.createProfile('rv-there-yet', 'Default')
+        const dir = deps.paths.profileDir('rv-there-yet', profile.id)
+        expect(await api.getLaunchWarnings('rv-there-yet', profile.id)).toContain('no-shimloader')
+        await expect(api.launch('rv-there-yet', profile.id, 'modded')).rejects.toThrow(
+          /unreal_shimloader/
+        )
+        writeFileSync(path.join(dir, 'dwmapi.dll'), 'shim')
+        writeFileSync(path.join(dir, 'ue4ss.dll'), 'ue4ss')
+        const warnings = await api.getLaunchWarnings('rv-there-yet', profile.id)
+        expect(warnings).not.toContain('no-shimloader')
+        expect(warnings).not.toContain('loader-unsupported')
+        expect(warnings).not.toContain('no-bepinex')
+
+        await api.launch('rv-there-yet', profile.id, 'modded')
+        expect(readFileSync(path.join(bin, 'dwmapi.dll'), 'utf8')).toBe('shim')
+        expect(spawned.at(-1)!.args).toEqual([
+          '-applaunch',
+          '3949040',
+          '--mod-dir',
+          `Z:${path.join(dir, 'shimloader', 'mod').replace(/\//g, '\\')}`,
+          '--pak-dir',
+          `Z:${path.join(dir, 'shimloader', 'pak').replace(/\//g, '\\')}`,
+          '--cfg-dir',
+          `Z:${path.join(dir, 'shimloader', 'cfg').replace(/\//g, '\\')}`,
+          '--overlay-dir',
+          `Z:${path.join(dir, 'shimloader', 'overlay').replace(/\//g, '\\')}`
+        ])
+        expect(existsSync(path.join(dir, 'shimloader', 'cfg'))).toBe(true)
+
+        await api.launch('rv-there-yet', profile.id, 'vanilla')
+        expect(existsSync(path.join(bin, 'dwmapi.dll'))).toBe(false)
+        expect(spawned.at(-1)!.args).toEqual(['-applaunch', '3949040'])
+      })
+
+      test("start modded sets dwmapi up in the game's Proton prefix", async () => {
+        const reg = path.join(steamRoot, 'steamapps', 'compatdata', '3949040', 'pfx', 'user.reg')
+        mkdirSync(path.dirname(reg), { recursive: true })
+        writeFileSync(reg, 'WINE REGISTRY Version 2\n')
+        const api = createServices(deps)
+        const profile = await api.createProfile('rv-there-yet', 'Default')
+        const dir = deps.paths.profileDir('rv-there-yet', profile.id)
+        writeFileSync(path.join(dir, 'dwmapi.dll'), 'shim')
+        writeFileSync(path.join(dir, 'ue4ss.dll'), 'ue4ss')
+        expect(await api.getLaunchWarnings('rv-there-yet', profile.id)).not.toContain(
+          'proton-first-run'
+        )
+        await api.launch('rv-there-yet', profile.id, 'modded')
+        expect(readFileSync(reg, 'utf8')).toContain('"dwmapi"="native,builtin"')
+        expect(readFileSync(reg, 'utf8')).not.toContain('winhttp')
+      })
     })
   })
 

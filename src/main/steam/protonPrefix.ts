@@ -4,9 +4,13 @@ import { listLibraries } from './steam'
 
 /** The key, in a Wine prefix's user.reg, that holds the prefix-wide DLL overrides. */
 const SECTION = '[Software\\\\Wine\\\\DllOverrides]'
-/** Wine tries BepInEx's doorstop winhttp.dll in the game folder before its own. */
-const OVERRIDE_LINE = '"winhttp"="native,builtin"'
-const WINHTTP_VALUE = /^"winhttp"="([^"]*)"\s*$/i
+/**
+ * The DLL a loader needs Wine to take from the game folder before its own: BepInEx's doorstop
+ * `winhttp`, or unreal_shimloader's `dwmapi`.
+ */
+export type ProxyDll = 'winhttp' | 'dwmapi'
+const overrideLine = (dll: ProxyDll): string => `"${dll}"="native,builtin"`
+const valueRe = (dll: ProxyDll): RegExp => new RegExp(`^"${dll}"="([^"]*)"\\s*$`, 'i')
 
 export type PrefixOverrideResult = 'set' | 'already-set' | 'no-prefix'
 
@@ -21,40 +25,40 @@ function findSection(lines: string[]): { start: number; end: number } | null {
   return { start: header + 1, end }
 }
 
-/** True when the user.reg text loads winhttp native first (native,builtin / n,b / native). */
-export function hasWinhttpOverride(reg: string): boolean {
+/** True when the user.reg text loads `dll` native first (native,builtin / n,b / native). */
+export function hasDllOverride(reg: string, dll: ProxyDll = 'winhttp'): boolean {
   const lines = reg.split('\n')
   const section = findSection(lines)
   if (!section) return false
   for (let i = section.start; i < section.end; i++) {
-    const m = WINHTTP_VALUE.exec(lines[i])
+    const m = valueRe(dll).exec(lines[i])
     if (m) return ['native', 'n'].includes(m[1].split(',')[0].trim().toLowerCase())
   }
   return false
 }
 
 /**
- * The user.reg text with winhttp set to native,builtin: an existing winhttp value is replaced,
+ * The user.reg text with `dll` set to native,builtin: an existing value for it is replaced,
  * otherwise the line joins the DllOverrides section (created at the end if missing).
  */
-export function addWinhttpOverride(reg: string, nowSeconds: number): string {
-  if (hasWinhttpOverride(reg)) return reg
+export function addDllOverride(reg: string, nowSeconds: number, dll: ProxyDll = 'winhttp'): string {
+  if (hasDllOverride(reg, dll)) return reg
   const lines = reg.split('\n')
   const section = findSection(lines)
   if (!section) {
     const body = reg.endsWith('\n') ? reg : `${reg}\n`
-    return `${body}\n${SECTION} ${nowSeconds}\n${OVERRIDE_LINE}\n`
+    return `${body}\n${SECTION} ${nowSeconds}\n${overrideLine(dll)}\n`
   }
   for (let i = section.start; i < section.end; i++) {
-    if (WINHTTP_VALUE.test(lines[i])) {
-      lines[i] = OVERRIDE_LINE
+    if (valueRe(dll).test(lines[i])) {
+      lines[i] = overrideLine(dll)
       return lines.join('\n')
     }
   }
   // After the header's `#time=` line, if any; Wine doesn't need the values sorted.
   let at = section.start
   while (at < section.end && lines[at].startsWith('#')) at++
-  lines.splice(at, 0, OVERRIDE_LINE)
+  lines.splice(at, 0, overrideLine(dll))
   return lines.join('\n')
 }
 
@@ -78,20 +82,22 @@ export async function findProtonUserReg(root: string, appId: string): Promise<st
 }
 
 /**
- * Makes the game's Proton prefix load BepInEx's winhttp.dll, so mods load without Steam launch
- * options. Wine reads user.reg when the game starts; the first change keeps a `.hml-backup`.
+ * Makes the game's Proton prefix load the loader's `dll` from the game folder, so mods load
+ * without Steam launch options. Wine reads user.reg when the game starts; the first change keeps
+ * a `.hml-backup`.
  */
-export async function ensureWinhttpOverride(
+export async function ensureDllOverride(
   root: string,
   appId: string,
-  nowSeconds: number
+  nowSeconds: number,
+  dll: ProxyDll = 'winhttp'
 ): Promise<PrefixOverrideResult> {
   const reg = await findProtonUserReg(root, appId)
   if (!reg) return 'no-prefix'
   const text = await fs.readFile(reg, 'utf8')
-  if (hasWinhttpOverride(text)) return 'already-set'
+  if (hasDllOverride(text, dll)) return 'already-set'
   await backupOnce(reg)
-  await writeAtomic(reg, addWinhttpOverride(text, nowSeconds))
+  await writeAtomic(reg, addDllOverride(text, nowSeconds, dll))
   return 'set'
 }
 

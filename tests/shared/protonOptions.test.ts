@@ -10,5 +10,7 @@ describe('hasProtonOverride', () => {
     expect(hasProtonOverride('-windowed')).toBe(false)
     expect(hasProtonOverride('')).toBe(false)
     expect(hasProtonOverride(null)).toBe(false)
+    expect(hasProtonOverride('WINEDLLOVERRIDES="dwmapi=n,b" %command%', 'dwmapi')).toBe(true)
+    expect(hasProtonOverride('WINEDLLOVERRIDES="winhttp=n,b" %command%', 'dwmapi')).toBe(false)
   })
 })

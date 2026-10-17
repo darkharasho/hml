@@ -660,7 +660,10 @@ describe('services', () => {
       writeFileSync(deps.paths.settings, JSON.stringify({ steamRootOverride: null }))
       const api = createServices({ ...deps, platform: 'win32' })
       expect((await api.searchGames('repo'))[0].installDir).toBeNull()
-      expect(execCalls).toHaveLength(1)
+      // One for the search, one for the installed-apps list, which is reused for a while.
+      expect(execCalls).toHaveLength(2)
+      await api.searchGames('repo')
+      expect(execCalls).toHaveLength(3)
     })
 
     test('reg is not queried on linux', async () => {

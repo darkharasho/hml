@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import type { Catalog } from '../../shared/types'
 import type { AppPaths } from '../store/paths'
 import { readJson, writeJsonAtomic } from '../store/json'
-import { parseEcosystem } from './ecosystem'
+import { isSupportedLoader, parseEcosystem } from './ecosystem'
 
 export const SCHEMA_URL = 'https://thunderstore.io/api/experimental/schema/dev/latest/'
 
@@ -20,7 +20,11 @@ async function readCache(paths: AppPaths, nowMs: number): Promise<Catalog | null
   if (!Array.isArray(cached.games) || typeof cached.fetchedAt !== 'string') return null
   const ms = Date.parse(cached.fetchedAt)
   if (Number.isNaN(ms) || ms > nowMs) return null
-  return cached
+  // Support is this version's call, not the one that wrote the cache.
+  return {
+    ...cached,
+    games: cached.games.map((g) => ({ ...g, supported: isSupportedLoader(g.loader) }))
+  }
 }
 
 export async function loadCatalog(

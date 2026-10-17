@@ -40,6 +40,12 @@ const WARNINGS: Record<LaunchWarning, { label: string; detail: string; action: W
     detail: 'Install BepInExPack into this profile so mods can load.',
     action: null
   },
+  'no-shimloader': {
+    label: 'Shimloader not installed',
+    detail:
+      'Install unreal_shimloader into this profile so mods can load. Installing a mod that needs it adds it too.',
+    action: null
+  },
   'proton-first-run': {
     label: 'Start the game once first',
     detail:

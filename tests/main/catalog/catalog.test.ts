@@ -34,6 +34,28 @@ describe('loadCatalog', () => {
     expect(got).toEqual(cat)
   })
 
+  it("judges support by this version's loaders, not the cached flag", async () => {
+    const paths = makePaths(tmp)
+    const cat = parseEcosystem(await raw())
+    const games = cat.games.map((g, i) =>
+      i === 0 ? { ...g, loader: 'shimloader', supported: false } : { ...g, supported: true }
+    )
+    await writeJsonAtomic(paths.schemaCache, {
+      ...cat,
+      games,
+      fetchedAt: new Date(1_000).toISOString()
+    })
+    const got = await loadCatalog(
+      paths,
+      vi.fn() as unknown as typeof fetch,
+      fixture,
+      86_400_000,
+      () => 2_000
+    )
+    expect(got.games[0].supported).toBe(true)
+    expect(got.games.find((g) => g.loader === 'melonloader')?.supported).toBe(false)
+  })
+
   it('fetches and writes cache when stale or missing', async () => {
     const paths = makePaths(tmp)
     const fetchFn = await okFetch()

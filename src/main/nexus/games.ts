@@ -11,6 +11,11 @@ interface CacheEntry {
   domain: string | null
   gameId: number | null
   checkedAt: number
+  /**
+   * The lookup also searched the name without punctuation (Nexus has "RV There Yet" for the
+   * catalog's "RV There Yet?"). A "none" found without that search is looked up again.
+   */
+  loose?: boolean
 }
 type Cache = Record<string, CacheEntry>
 interface AddedGame {
@@ -27,9 +32,15 @@ export interface NexusGames {
   searchExtra(query: string, catalog: Catalog, settings: Settings): Promise<GameDef[]>
   /**
    * The game in `games` that is the same game as the Nexus game with domain `domain` (by its
-   * known Nexus domain, else by label), so a game with Thunderstore and Nexus mods shows up once.
+   * known Nexus domain, else by label or by `name` ignoring punctuation), so a game with
+   * Thunderstore and Nexus mods shows up once.
    */
-  twinOf(domain: string, games: GameDef[], settings: Settings): Promise<GameDef | null>
+  twinOf(
+    domain: string,
+    games: GameDef[],
+    settings: Settings,
+    name?: string
+  ): Promise<GameDef | null>
   addGame(domain: string): Promise<GameDef>
   addedGames(): Promise<GameDef[]>
   /** Records a user-chosen domain (already validated) so its game id is known without a request. */
@@ -126,16 +137,23 @@ export function createNexusGames(ctx: {
       return { domain: found.domain, gameId: found.id }
     }
 
-    if (fresh) {
+    if (fresh && (hit.domain !== null || hit.loose)) {
       return hit.domain && hit.gameId !== null ? { domain: hit.domain, gameId: hit.gameId } : null
     }
+    // Only the Nexus game whose domain is the label: a same-named game can be another game.
     const want = normalizeDomain(game.label)
-    const nodes = await findGameByName(client, game.displayName)
-    const match = nodes.find((n) => n.domain === want) ?? null
+    const pick = <T extends { domain: string }>(nodes: T[]): T | null =>
+      nodes.find((n) => n.domain === want) ?? null
+    let match = pick(await findGameByName(client, game.displayName))
+    const loose = game.displayName.replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+    if (!match && loose && loose !== game.displayName) {
+      match = pick(await searchNexusGames(client, loose))
+    }
     await putCache(game.label, {
       domain: match?.domain ?? null,
       gameId: match?.id ?? null,
-      checkedAt: now()
+      checkedAt: now(),
+      loose: true
     })
     return match ? { domain: match.domain, gameId: match.id } : null
   }
@@ -188,7 +206,7 @@ export function createNexusGames(ctx: {
     const out: GameDef[] = []
     for (const n of found) {
       if (!DOMAIN_RE.test(n.domain)) continue
-      if (await twinOf(n.domain, catalog.games, settings, cache)) continue
+      if (await twinOf(n.domain, catalog.games, settings, cache, n.name)) continue
       out.push(nexusGameDef({ name: n.name, domain: n.domain, modCount: n.modCount }))
     }
     return out
@@ -198,9 +216,11 @@ export function createNexusGames(ctx: {
     domain: string,
     games: GameDef[],
     settings: Settings,
-    preloaded?: Cache
+    preloaded?: Cache,
+    name?: string
   ): Promise<GameDef | null> {
     const cache = preloaded ?? (await readCache())
+    const wantName = name ? normalizeDomain(name) : ''
     for (const g of games) {
       if (isNexusOnly(g)) continue
       const known = await cachedDomain(g, settings, cache)
@@ -208,9 +228,10 @@ export function createNexusGames(ctx: {
         if (known === domain) return g
         continue
       }
-      // Not looked up yet (a lookup that found nothing is cached as null): domainFor would pick
-      // the Nexus game whose domain is the label.
-      if (!(g.label in cache) && normalizeDomain(g.label) === domain) return g
+      // No known domain (not looked up, or the lookup found none, which a name search can miss):
+      // the label or the name decides.
+      if (normalizeDomain(g.label) === domain) return g
+      if (wantName && normalizeDomain(g.displayName) === wantName) return g
     }
     return null
   }
@@ -237,7 +258,7 @@ export function createNexusGames(ctx: {
     domainFor,
     cachedDomain,
     searchExtra,
-    twinOf: (domain, games, settings) => twinOf(domain, games, settings),
+    twinOf: (domain, games, settings, name) => twinOf(domain, games, settings, undefined, name),
     addGame,
     addedGames,
     rememberDomain: (label, domain, gameId) =>

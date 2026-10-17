@@ -75,8 +75,13 @@ import {
   removeDeployment
 } from './deploy/deploy'
 import { createNexusGames } from './nexus/games'
-import { catalogTwin, createCustomGames, customGameDef } from './custom/customGames'
-import { listInstalledApps } from './steam/installedApps'
+import {
+  catalogTwin,
+  createCustomGames,
+  customGameDef,
+  withInstalledSteamIds
+} from './custom/customGames'
+import { listInstalledApps, type InstalledApp } from './steam/installedApps'
 import { createCustomGameServices, customLoaderSpec, loaderMismatch } from './custom/service'
 import { createNexusServices } from './nexus/service'
 import { createShareServices } from './share/service'
@@ -92,7 +97,14 @@ import {
   steamHeroUrls
 } from './art/steamArt'
 import { createTsIcons, modIconCandidates, modIconPath } from './art/modIcons'
-import { ensureWinhttpOverride } from './steam/protonPrefix'
+import { ensureDllOverride, type ProxyDll } from './steam/protonPrefix'
+import {
+  hasShimloader,
+  linkShimloader,
+  shimBinDir,
+  shimloaderArgs,
+  unlinkShimloader
+} from './launch/shimloader'
 import { createTsDocs } from './thunderstore/docs'
 import { pickAccent } from './art/accent'
 import { ART_SCHEME, resolveArt, serveArt, steamArtUrl, type ArtSources } from './art/protocol'
@@ -181,6 +193,8 @@ const STALE_RETRY_MS = 30_000
 /** Cover downloads for accent colours give up after this long, or past this size. */
 const ACCENT_FETCH_TIMEOUT_MS = 5_000
 const ACCENT_MAX_BYTES = 8_000_000
+/** How long the installed Steam apps are reused before they are looked up again. */
+const INSTALLED_APPS_TTL_MS = 30_000
 const DEFAULT_PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll'
 
 async function assertZipFile(file: string): Promise<void> {
@@ -220,16 +234,34 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     })
     return catalogPromise
   }
-  /** The ecosystem catalog plus the user's added Nexus-only games. */
+  /**
+   * The installed Steam apps (none without Steam), looked up again after INSTALLED_APPS_TTL_MS or
+   * when the Steam folder may have changed.
+   */
+  let appsCache: { at: number; apps: Promise<InstalledApp[]> } | null = null
+  const installedApps = (): Promise<InstalledApp[]> => {
+    if (!appsCache || now() - appsCache.at > INSTALLED_APPS_TTL_MS) {
+      const apps = getSteamRoot()
+        .then((root) => (root ? listInstalledApps(root) : []))
+        .catch(() => [])
+      appsCache = { at: now(), apps }
+    }
+    return appsCache.apps
+  }
+
+  /**
+   * The ecosystem catalog plus the user's added Nexus-only and custom games, with Steam app ids
+   * the catalog leaves out taken from the installed Steam apps.
+   */
   const getCatalog = async (): Promise<Catalog> => {
     const base = await getBaseCatalog()
     const have = new Set(base.games.map((g) => g.label))
     const added = (await nexus.addedGames()).filter((g) => !have.has(g.label))
-    const games = [...base.games, ...added]
+    const games = withInstalledSteamIds([...base.games, ...added], await installedApps())
     for (const g of await customGames.list()) {
       if (!games.some((x) => x.label === g.label)) games.push(customGameDef(g))
     }
-    return games.length > base.games.length ? { ...base, games } : base
+    return { ...base, games }
   }
 
   /** A deploy game's folder: the override, when it is an existing folder. */
@@ -274,6 +306,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   let steamRootPromise: Promise<string | null> | null = null
   const invalidateSteamRoot = (): void => {
     steamRootPromise = null
+    appsCache = null
   }
   const getSteamRoot = (): Promise<string | null> => {
     if (steamRootPromise) return steamRootPromise
@@ -340,12 +373,14 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     const twins = new Set<string>()
     for (const g of catalog.games) {
       if (!g.label.startsWith('nexus-')) continue
-      if (await nexus.twinOf(g.label.slice('nexus-'.length), catalog.games, settings))
+      if (
+        await nexus.twinOf(g.label.slice('nexus-'.length), catalog.games, settings, g.displayName)
+      )
         twins.add(g.label)
     }
     const added = catalog.games.filter((g) => g.custom?.source === 'steam' && g.steamAppId)
     if (added.length > 0 && steamRoot) {
-      const apps = await listInstalledApps(steamRoot).catch(() => [])
+      const apps = await installedApps()
       for (const g of added) {
         const app = apps.find((a) => a.appId === g.steamAppId)
         const twin = app && catalogTwin(catalog.games, app)
@@ -862,9 +897,13 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   async function addNexusGame(domain: string): Promise<GameSummary> {
     const settings = await loadSettings(paths)
     const d = String(domain).trim().toLowerCase()
-    const twin = await nexus.twinOf(d, (await getCatalog()).games, settings)
-    const def = twin ?? (await nexus.addGame(d))
-    return summarize(def, await getCatalog(), settings, null)
+    const games = (await getCatalog()).games
+    const twin = await nexus.twinOf(d, games, settings)
+    if (twin) return summarize(twin, await getCatalog(), settings, null)
+    const added = await nexus.addGame(d)
+    // Its Nexus name can show it is a game HML has under another name; that one is used.
+    const named = await nexus.twinOf(d, games, settings, added.displayName)
+    return summarize(named ?? added, await getCatalog(), settings, null)
   }
 
   async function nxGetDomain(game: string): Promise<string | null> {
@@ -960,16 +999,49 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   async function prepareProtonPrefix(
     def: GameDef,
     steamRoot: string,
-    appId: string
+    appId: string,
+    dll: ProxyDll = 'winhttp'
   ): Promise<void> {
     try {
-      await ensureWinhttpOverride(steamRoot, appId, Math.floor(now() / 1000))
+      await ensureDllOverride(steamRoot, appId, Math.floor(now() / 1000), dll)
     } catch (cause) {
       throw new Error(
         `Couldn't set up ${def.displayName}'s Proton prefix for mods (${errMsg(cause)}).`,
         { cause }
       )
     }
+  }
+
+  /**
+   * Starts an unreal_shimloader game through Steam. Modded puts the profile's shim next to the
+   * game's exe and points it at the profile's mod folders; vanilla takes the shim back out.
+   */
+  async function launchShimloader(
+    def: GameDef & { steamAppId: string },
+    mode: LaunchMode,
+    at: { steamRoot: string; gameDir: string; profileDir: string; proton: boolean }
+  ): Promise<void> {
+    if (!def.dataFolderName) {
+      throw new Error(`HML doesn't know where ${def.displayName}'s game files are.`)
+    }
+    const binDir = shimBinDir(at.gameDir, def.dataFolderName)
+    const plan = buildSteamPlainPlan({
+      platform,
+      steamRoot: at.steamRoot,
+      steamAppId: def.steamAppId,
+      flatpak: isFlatpakSteam(at.steamRoot)
+    })
+    if (mode === 'modded') {
+      if (!(await hasShimloader(at.profileDir))) {
+        throw new Error('Install unreal_shimloader into this profile so mods can load.')
+      }
+      plan.args.push(...shimloaderArgs({ profileDir: at.profileDir, platform, proton: at.proton }))
+      if (at.proton) await prepareProtonPrefix(def, at.steamRoot, def.steamAppId, 'dwmapi')
+      await linkShimloader(at.profileDir, binDir)
+    } else {
+      await unlinkShimloader(binDir)
+    }
+    await launch(plan, at.profileDir, at.gameDir, deps.spawn)
   }
 
   /** Starts a custom Steam game without a loader: a plain Steam launch, whatever the mode. */
@@ -1424,7 +1496,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       if (!gameDir) {
         throw new Error(`${def.displayName} was not found. Choose its install folder first.`)
       }
-      if (def.loader !== 'bepinex') {
+      if (def.loader !== 'bepinex' && def.loader !== 'shimloader') {
         throw new Error(`${def.displayName} uses a mod loader HML does not support yet.`)
       }
       const proton = await isProtonGame(platform, gameDir, def.exeNames)
@@ -1436,6 +1508,14 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       const profileDir = profileId ? paths.profileDir(game, profileId) : paths.gameDir(game)
       if (profileId) await getProfile(paths, game, profileId)
       const modded = mode === 'modded'
+      if (def.loader === 'shimloader') {
+        return launchShimloader({ ...def, steamAppId: def.steamAppId }, mode, {
+          steamRoot,
+          gameDir,
+          profileDir,
+          proton
+        })
+      }
       const preloader = (modded && (await findPreloader(profileDir))) || DEFAULT_PRELOADER
       const plan = buildLaunchPlan({
         platform,

@@ -56,6 +56,10 @@ function resolveIcon(iconUrl: string | null | undefined): string | null {
   return /^https?:\/\//i.test(iconUrl) ? iconUrl : ICON_BASE + iconUrl.replace(/^\/+/, '')
 }
 
+/** The loaders HML installs and launches for catalog games. */
+export const SUPPORTED_LOADERS = ['bepinex', 'shimloader']
+export const isSupportedLoader = (loader: string): boolean => SUPPORTED_LOADERS.includes(loader)
+
 export function parseEcosystem(json: unknown): Catalog {
   const eco = ecosystemSchema.parse(json)
   const games: GameDef[] = []
@@ -79,7 +83,7 @@ export function parseEcosystem(json: unknown): Catalog {
       packageIndex: r2.packageIndex ?? null,
       searchStrings: r2.additionalSearchStrings ?? [],
       iconUrl: resolveIcon(game.meta.iconUrl),
-      supported: loader === 'bepinex'
+      supported: isSupportedLoader(loader)
     })
   }
   return {

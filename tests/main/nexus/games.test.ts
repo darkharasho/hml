@@ -82,8 +82,33 @@ describe('domainFor', () => {
     })
     const g = make()
     expect(await g.domainFor(repo, defaultSettings())).toBeNull()
+    // The exact name, then the name without punctuation ("R E P O").
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toContain('WILDCARD')
     expect(await g.domainFor(repo, defaultSettings())).toBeNull()
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(2)
+  })
+
+  it('finds a game Nexus names without the punctuation, and looks old misses up again', async () => {
+    const rv: GameDef = { ...repo, label: 'rv-there-yet', displayName: 'RV There Yet?' }
+    handler = (body) =>
+      String(body).includes('EQUALS')
+        ? { data: { games: { nodes: [] } } }
+        : {
+            data: {
+              games: { nodes: [{ id: '8319', name: 'RV There Yet', domainName: 'rvthereyet' }] }
+            }
+          }
+    // A miss cached by the exact-name-only lookup.
+    await fs.mkdir(path.dirname(paths.nxGames), { recursive: true })
+    await fs.writeFile(
+      paths.nxGames,
+      JSON.stringify({ 'rv-there-yet': { domain: null, gameId: null, checkedAt: clock } })
+    )
+    expect(await make().domainFor(rv, defaultSettings())).toEqual({
+      domain: 'rvthereyet',
+      gameId: 8319
+    })
   })
 
   it('uses the label suffix for deploy games and caches the id', async () => {
@@ -159,28 +184,31 @@ describe('searchExtra', () => {
     expect(out[0].nexusModCount).toBe(9)
   })
 
-  it("hides a catalog game's twin before its domain is looked up, by label", async () => {
+  it("hides a catalog game's twin before its domain is looked up, by label or name", async () => {
     const out = await make().searchExtra('sky', emptyCatalog([repo]), defaultSettings())
     expect(out.map((g) => g.label)).toEqual(['nexus-skyrimspecialedition'])
-    // A same-named game with another label is not assumed to be the same game.
-    const other: GameDef = { ...repo, label: 'sse', displayName: 'Skyrim SE' }
+    // Same name ignoring punctuation and case, another label.
+    const other: GameDef = { ...repo, label: 'sse', displayName: 'skyrim se!' }
     expect(
       (await make().searchExtra('sky', emptyCatalog([other]), defaultSettings())).map(
         (g) => g.label
       )
-    ).toEqual(['nexus-skyrimspecialedition', 'nexus-repo'])
+    ).toEqual(['nexus-repo'])
   })
 
-  it('keeps a Nexus game when the catalog game is known to use another domain or none', async () => {
+  it('hides the twin even when a name lookup found no domain for the catalog game', async () => {
     await fs.mkdir(path.dirname(paths.nxGames), { recursive: true })
     await fs.writeFile(
       paths.nxGames,
       JSON.stringify({ REPO: { domain: null, gameId: null, checkedAt: clock } })
     )
+    const out = await make().searchExtra('sky', emptyCatalog([repo]), defaultSettings())
+    expect(out.map((g) => g.label)).toEqual(['nexus-skyrimspecialedition'])
+  })
+
+  it('keeps a Nexus game when the catalog game is set to another domain', async () => {
     const labels = async (s = defaultSettings()): Promise<string[]> =>
       (await make().searchExtra('sky', emptyCatalog([repo]), s)).map((g) => g.label)
-    expect(await labels()).toContain('nexus-repo')
-    await fs.writeFile(paths.nxGames, JSON.stringify({}))
     expect(
       await labels({ ...defaultSettings(), nexusDomainOverrides: { REPO: 'skyrimspecialedition' } })
     ).toEqual(['nexus-repo'])

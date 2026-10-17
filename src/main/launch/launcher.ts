@@ -6,6 +6,7 @@ import { hasProtonOverride } from '../../shared/protonOptions'
 import { isFlatpakSteam, readLaunchOptions } from '../steam/steam'
 import { findProtonUserReg } from '../steam/protonPrefix'
 import type { LaunchPlan } from './launchPlan'
+import { hasShimloader } from './shimloader'
 
 export const NATIVE_LINUX_UNSUPPORTED =
   "Native Linux games aren't supported for modded launch yet. Force Proton for this game in Steam (Properties → Compatibility)."
@@ -80,19 +81,24 @@ export async function launchWarnings(input: {
   // HML doesn't launch deploy games, so none of the launch checks apply.
   if (input.game.loader === 'deploy') return input.gameDir === null ? ['game-not-found'] : []
   const warnings: LaunchWarning[] = []
+  const shim = input.game.loader === 'shimloader'
   if (input.gameDir === null) warnings.push('game-not-found')
-  if (input.game.loader !== 'bepinex') warnings.push('loader-unsupported')
-  if ((await findPreloader(input.profileDir)) === null) warnings.push('no-bepinex')
-  if (input.loaderMismatch) warnings.push('loader-mismatch')
+  if (shim) {
+    if (!(await hasShimloader(input.profileDir))) warnings.push('no-shimloader')
+  } else {
+    if (input.game.loader !== 'bepinex') warnings.push('loader-unsupported')
+    if ((await findPreloader(input.profileDir)) === null) warnings.push('no-bepinex')
+    if (input.loaderMismatch) warnings.push('loader-mismatch')
+  }
   if (input.gameDir !== null) {
     const proton = await isProtonGame(input.platform, input.gameDir, input.game.exeNames)
     if (input.platform === 'linux' && !proton) warnings.push('native-linux-unsupported')
     if (proton && input.game.steamAppId) {
-      // Start modded sets winhttp up in the game's Proton prefix, which exists after the first
-      // launch; launch options that already set it work from the start.
+      // Start modded sets the loader's DLL up in the game's Proton prefix, which exists after
+      // the first launch; launch options that already set it work from the start.
       const opts = await readLaunchOptions(input.steamRoot, input.game.steamAppId)
       if (
-        !hasProtonOverride(opts) &&
+        !hasProtonOverride(opts, shim ? 'dwmapi' : 'winhttp') &&
         !(await findProtonUserReg(input.steamRoot, input.game.steamAppId))
       ) {
         warnings.push('proton-first-run')
