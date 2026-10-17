@@ -64,6 +64,8 @@ export interface HmlApi {
    * exes is running. 'unknown' when HML can't detect the game's process.
    */
   waitForGame(game: string): Promise<LaunchWatchResult>
+  /** Ends the game's running waitForGame with 'cancelled' (the game itself is left alone). */
+  cancelWaitForGame(game: string): Promise<void>
   openProfileFolder(game: string, profileId: string): Promise<void>
   getSettings(): Promise<Settings>
   saveSettings(s: Settings): Promise<void>
@@ -190,6 +192,7 @@ const METHOD_TABLE = {
   getLaunchWarnings: true,
   launch: true,
   waitForGame: true,
+  cancelWaitForGame: true,
   openProfileFolder: true,
   getSettings: true,
   saveSettings: true,

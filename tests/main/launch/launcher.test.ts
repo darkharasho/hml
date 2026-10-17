@@ -190,6 +190,23 @@ describe('launch', () => {
     expect(child.unref).toHaveBeenCalled()
   })
 
+  test("returns a promise of the started program's exit", async () => {
+    const { child, fake } = fakeChild('spawn')
+    const { exited } = await launch(
+      { command: 'game.exe', args: [], copyToGameDir: [], what: 'the game' },
+      profile,
+      gameDir,
+      fake
+    )
+    let done = false
+    void exited.then(() => (done = true))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(done).toBe(false)
+    child.emit('exit', 1, null)
+    await exited
+    expect(done).toBe(true)
+  })
+
   test('rejects when the child emits error', async () => {
     const { fake } = fakeChild('error')
     await expect(

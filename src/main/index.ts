@@ -135,6 +135,11 @@ function createWindow(): void {
       rendererLoaded = false
     }
   })
+  // A reloaded, crashed or closed renderer no longer waits for a launched game.
+  const stopLaunchWatches = (): void => services?.cancelLaunchWatches()
+  mainWindow.webContents.on('did-start-loading', stopLaunchWatches)
+  mainWindow.webContents.on('render-process-gone', stopLaunchWatches)
+  mainWindow.on('closed', stopLaunchWatches)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
