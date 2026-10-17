@@ -25,16 +25,31 @@ export interface ControllableWindow {
   maximize(): void
   unmaximize(): void
   isMaximized(): boolean
+  isFullScreen(): boolean
+  setFullScreen(on: boolean): void
   close(): void
 }
 
+/** Full screen counts as maximized, so the button shows restore and its click leaves full screen. */
 export function windowControls(win: ControllableWindow): {
   [K in keyof WindowApi]: () => Awaited<ReturnType<WindowApi[K]>>
 } {
   return {
     minimize: () => win.minimize(),
-    toggleMaximize: () => (win.isMaximized() ? win.unmaximize() : win.maximize()),
+    toggleMaximize: () => {
+      if (win.isFullScreen()) win.setFullScreen(false)
+      else if (win.isMaximized()) win.unmaximize()
+      else win.maximize()
+    },
     close: () => win.close(),
-    isMaximized: () => win.isMaximized()
+    isMaximized: () => win.isMaximized() || win.isFullScreen()
   }
+}
+
+/** True when an IPC request comes from the page itself, not from a frame embedded in it. */
+export function isMainFrameRequest(e: {
+  senderFrame: unknown
+  sender: { mainFrame: unknown }
+}): boolean {
+  return e.senderFrame !== null && e.senderFrame === e.sender.mainFrame
 }
