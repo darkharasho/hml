@@ -153,7 +153,8 @@ export function setVdfLaunchOptions(text: string, appId: string, value: string):
   if (!/^\d+$/.test(appId)) throw new Error(`Invalid Steam app id: ${appId}`)
   parseVdf(text)
   const store = findPair(buildTree(tokenizeVdf(text)), 'UserLocalConfigStore')
-  if (!store || !isBlock(store.value)) throw new Error('localconfig.vdf has no UserLocalConfigStore')
+  if (!store || !isBlock(store.value))
+    throw new Error('localconfig.vdf has no UserLocalConfigStore')
   const segments = ['Software', 'Valve', 'Steam', 'apps', appId]
   let block = store.value
   while (segments.length > 0) {

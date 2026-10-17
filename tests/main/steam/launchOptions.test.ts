@@ -172,9 +172,7 @@ describe('setVdfLaunchOptions', () => {
       ''
     ].join('\n')
     const anchor = `${T}${T}${T}${T}${T}}\n${T}${T}${T}${T}}\n`
-    expect(after).toBe(
-      before.replace(anchor, `${T}${T}${T}${T}${T}}\n${block}${T}${T}${T}${T}}\n`)
-    )
+    expect(after).toBe(before.replace(anchor, `${T}${T}${T}${T}${T}}\n${block}${T}${T}${T}${T}}\n`))
     expect(read(after, '42')).toBe('opt')
     expect(read(after)).toBeUndefined()
   })
