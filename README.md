@@ -16,6 +16,10 @@ Pick a game, keep separate mod profiles, and start it modded or vanilla with one
 
 [**Download**](#download) · [**Features**](#features) · [**Getting started**](#getting-started) · [**Linux and Proton**](#linux-and-proton) · [**Development**](#development)
 
+<br />
+
+<img src="docs/screenshots/profile.png" alt="HML showing a Lethal Company profile with its installed mods" width="860" />
+
 </div>
 
 ---
@@ -87,6 +91,10 @@ HML works like [r2modman](https://github.com/ebkr/r2modmanPlus), with a modern i
 </td>
 </tr>
 </table>
+
+<p align="center">
+  <img src="docs/screenshots/browse.png" alt="Browsing Thunderstore mods for Lethal Company in HML" width="860" />
+</p>
 
 ## Download
 
