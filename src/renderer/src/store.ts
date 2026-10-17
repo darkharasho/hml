@@ -224,11 +224,8 @@ export const useStore = create<State>()((set, get) => {
   async function runInit(): Promise<void> {
     try {
       const settings = await api.getSettings()
+      // The app always opens on the game picker; lastGame only powers its Back button.
       set({ settings })
-      if (settings.lastGame) {
-        const game = await api.getGame(settings.lastGame)
-        if (game) await get().selectGame(game)
-      }
     } catch (e) {
       fail(e)
     } finally {

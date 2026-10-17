@@ -547,3 +547,16 @@ describe('store launch', () => {
     ])
   })
 })
+
+describe('store init', () => {
+  test('opens on the game picker even when a game was open last time', async () => {
+    api.getSettings.mockReset().mockResolvedValue({ lastProfile: {}, lastGame: 'nexus-x' })
+    api.getGame.mockReset().mockResolvedValue(game)
+    useStore.setState({ currentGame: null, ready: false })
+    await useStore.getState().init()
+    expect(useStore.getState().ready).toBe(true)
+    expect(useStore.getState().currentGame).toBeNull()
+    // The last game stays known, so the picker can offer a way back to it.
+    expect(useStore.getState().settings?.lastGame).toBe('nexus-x')
+  })
+})
