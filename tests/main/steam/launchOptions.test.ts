@@ -362,6 +362,20 @@ describe('writeProtonLaunchOptions', () => {
     await expect(writeProtonLaunchOptions(root, '43')).rejects.toThrow(/which Steam account/)
   })
 
+  test('writes through a symlinked localconfig.vdf to its target', async () => {
+    const real = path.join(root, 'elsewhere', 'localconfig.vdf')
+    const before = steamFile(APPS_WITH_GAME)
+    await put(real, before)
+    await fs.mkdir(path.dirname(configFile('111')), { recursive: true })
+    await fs.symlink(real, configFile('111'))
+    expect(await writeProtonLaunchOptions(root, '3241660')).toEqual([configFile('111')])
+    expect((await fs.lstat(configFile('111'))).isSymbolicLink()).toBe(true)
+    expect(await fs.readFile(real, 'utf8')).toBe(
+      setVdfLaunchOptions(before, '3241660', PROTON_LAUNCH_OPTIONS)
+    )
+    expect(await fs.readdir(path.dirname(real))).toEqual(['localconfig.vdf'])
+  })
+
   test('rejects a non-numeric app id', async () => {
     await expect(writeProtonLaunchOptions(root, '../x')).rejects.toThrow(/app id/)
   })

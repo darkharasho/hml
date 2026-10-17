@@ -283,14 +283,24 @@ async function targetFiles(root: string, appId: string): Promise<string[]> {
   )
 }
 
-/** Replaces `file` through a temporary file in the same folder, keeping its permissions. */
+/**
+ * Replaces `file` through a synced temporary file in the same folder, keeping its permissions.
+ * A symlinked file is written through to its target, so the link stays.
+ */
 async function writeAtomic(file: string, text: string): Promise<void> {
-  const tmp = `${file}.hml-tmp`
-  const { mode } = await fs.stat(file)
+  const target = await fs.realpath(file)
+  const tmp = `${target}.hml-tmp`
+  const { mode } = await fs.stat(target)
   await fs.rm(tmp, { force: true })
-  await fs.writeFile(tmp, text, { mode: mode & 0o777 })
+  const handle = await fs.open(tmp, 'wx', mode & 0o777)
   try {
-    await fs.rename(tmp, file)
+    await handle.writeFile(text, 'utf8')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  try {
+    await fs.rename(tmp, target)
   } catch (e) {
     await fs.rm(tmp, { force: true })
     throw e
