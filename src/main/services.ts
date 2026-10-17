@@ -800,10 +800,13 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     return serialize(game, profileId, () => setModEnabled(paths, def, profileId, modId, enabled))
   }
 
+  /** Adds a Nexus-only game, or returns the game HML already has for that Nexus domain. */
   async function addNexusGame(domain: string): Promise<GameSummary> {
-    const def = await nexus.addGame(domain)
-    const catalog = await getCatalog()
-    return summarize(def, catalog, await loadSettings(paths), null)
+    const settings = await loadSettings(paths)
+    const d = String(domain).trim().toLowerCase()
+    const twin = await nexus.twinOf(d, (await getCatalog()).games, settings)
+    const def = twin ?? (await nexus.addGame(d))
+    return summarize(def, await getCatalog(), settings, null)
   }
 
   async function nxGetDomain(game: string): Promise<string | null> {
@@ -1071,8 +1074,19 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     nxRegisterHandler: () => deps.nxmHandler.register(),
     async searchGames(query: string): Promise<GameSummary[]> {
       const catalog = await getCatalog()
-      const ranked = searchGames(catalog.games, query)
       const settings = await loadSettings(paths)
+      // A Nexus-only game added before HML knew it was a catalog game's twin stays usable, but
+      // the picker shows the catalog game alone.
+      const twins = new Set<string>()
+      for (const g of catalog.games) {
+        if (!g.label.startsWith('nexus-')) continue
+        if (await nexus.twinOf(g.label.slice('nexus-'.length), catalog.games, settings))
+          twins.add(g.label)
+      }
+      const ranked = searchGames(
+        catalog.games.filter((g) => !twins.has(g.label)),
+        query
+      )
       const steamRoot = await getSteamRoot()
       const summaries = await Promise.all(
         ranked.map((g) => summarize(g, catalog, settings, steamRoot))
@@ -1086,7 +1100,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       const extra = await nexus.searchExtra(query, catalog, settings)
       const extras = await Promise.all(extra.map((g) => summarize(g, catalog, settings, steamRoot)))
       const installed = await steamCandidates(query, catalog, steamRoot)
-      return withArt([...sorted, ...installed, ...extras])
+      return withArt([...sorted, ...extras, ...installed])
     },
 
     async getGame(label: string): Promise<GameSummary | null> {

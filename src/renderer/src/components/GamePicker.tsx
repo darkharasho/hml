@@ -114,9 +114,9 @@ export function GamePicker(): React.JSX.Element {
 
   // Every game appears once, so this is the cards badged Installed or On Steam.
   const installedCount = games?.filter((g) => g.installDir).length ?? 0
-  const catalogGames = games?.filter((g) => !isNexusOnly(g) && !isSteamCandidate(g)) ?? []
+  // Nexus-only games sit with the rest, badged Nexus; Steam games HML has no entry for yet follow.
+  const catalogGames = games?.filter((g) => !isSteamCandidate(g)) ?? []
   const steamGames = games?.filter(isSteamCandidate) ?? []
-  const nexusGames = games?.filter(isNexusOnly) ?? []
   const card = (g: GameSummary): React.JSX.Element => (
     <GameCard
       key={g.label}
@@ -186,20 +186,6 @@ export function GamePicker(): React.JSX.Element {
                   <span className="h-px flex-1 bg-line" aria-hidden="true" />
                 </div>
                 <ul className={grid}>{steamGames.map(card)}</ul>
-              </section>
-            )}
-            {nexusGames.length > 0 && (
-              <section
-                aria-labelledby="from-nexus"
-                className={catalogGames.length + steamGames.length ? 'mt-8' : ''}
-              >
-                <div className="mb-4 flex items-center gap-3">
-                  <h2 id="from-nexus" className="shrink-0 text-sm font-semibold text-muted">
-                    From Nexus Mods
-                  </h2>
-                  <span className="h-px flex-1 bg-line" aria-hidden="true" />
-                </div>
-                <ul className={grid}>{nexusGames.map(card)}</ul>
               </section>
             )}
           </>

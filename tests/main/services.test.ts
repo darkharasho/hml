@@ -139,6 +139,25 @@ describe('services', () => {
     expect(urls.some((u) => u.includes('graphql'))).toBe(false)
   })
 
+  test("a Nexus game that is a catalog game's twin shows once, as the catalog game", async () => {
+    const urls: string[] = []
+    const base = deps.fetch
+    deps.fetch = (async (url: string, init?: unknown) => {
+      urls.push(String(url))
+      return (base as (u: string, i?: unknown) => Promise<Response>)(url, init)
+    }) as unknown as typeof fetch
+    // Added before HML knew the catalog's repo was the same game.
+    writeFileSync(deps.paths.nxAddedGames, JSON.stringify([{ name: 'R.E.P.O.', domain: 'repo' }]))
+    const api = createServices(deps)
+    const labels = (await api.searchGames('')).map((g) => g.label)
+    expect(labels).toContain('repo')
+    expect(labels).not.toContain('nexus-repo')
+    // Its profiles stay reachable.
+    expect(await api.getGame('nexus-repo')).toMatchObject({ label: 'nexus-repo' })
+    expect((await api.addNexusGame('repo')).label).toBe('repo')
+    expect(urls.some((u) => u.includes('graphql'))).toBe(false)
+  })
+
   test('addNexusGame persists a Nexus-only game, searchGames appends extras, domains validate', async () => {
     const nx = (game: unknown): unknown => ({ data: { game } })
     deps.fetch = (async (url: string, init?: { body?: string }) => {

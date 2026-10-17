@@ -25,6 +25,11 @@ export interface NexusGames {
   /** `cache` is a preloaded domain cache, to avoid rereading the file per game. */
   cachedDomain(game: GameDef, settings: Settings, cache?: Cache): Promise<string | null>
   searchExtra(query: string, catalog: Catalog, settings: Settings): Promise<GameDef[]>
+  /**
+   * The game in `games` that is the same game as the Nexus game with domain `domain` (by its
+   * known Nexus domain, else by label), so a game with Thunderstore and Nexus mods shows up once.
+   */
+  twinOf(domain: string, games: GameDef[], settings: Settings): Promise<GameDef | null>
   addGame(domain: string): Promise<GameDef>
   addedGames(): Promise<GameDef[]>
   /** Records a user-chosen domain (already validated) so its game id is known without a request. */
@@ -179,15 +184,35 @@ export function createNexusGames(ctx: {
     } catch {
       return []
     }
-    const taken = new Set<string>()
     const cache = await readCache()
-    for (const g of catalog.games) {
-      const d = await cachedDomain(g, settings, cache)
-      if (d) taken.add(d)
+    const out: GameDef[] = []
+    for (const n of found) {
+      if (!DOMAIN_RE.test(n.domain)) continue
+      if (await twinOf(n.domain, catalog.games, settings, cache)) continue
+      out.push(nexusGameDef({ name: n.name, domain: n.domain, modCount: n.modCount }))
     }
-    return found
-      .filter((n) => DOMAIN_RE.test(n.domain) && !taken.has(n.domain))
-      .map((n) => nexusGameDef({ name: n.name, domain: n.domain, modCount: n.modCount }))
+    return out
+  }
+
+  async function twinOf(
+    domain: string,
+    games: GameDef[],
+    settings: Settings,
+    preloaded?: Cache
+  ): Promise<GameDef | null> {
+    const cache = preloaded ?? (await readCache())
+    for (const g of games) {
+      if (isNexusOnly(g)) continue
+      const known = await cachedDomain(g, settings, cache)
+      if (known) {
+        if (known === domain) return g
+        continue
+      }
+      // Not looked up yet (a lookup that found nothing is cached as null): domainFor would pick
+      // the Nexus game whose domain is the label.
+      if (!(g.label in cache) && normalizeDomain(g.label) === domain) return g
+    }
+    return null
   }
 
   async function addGame(domain: string): Promise<GameDef> {
@@ -212,6 +237,7 @@ export function createNexusGames(ctx: {
     domainFor,
     cachedDomain,
     searchExtra,
+    twinOf: (domain, games, settings) => twinOf(domain, games, settings),
     addGame,
     addedGames,
     rememberDomain: (label, domain, gameId) =>

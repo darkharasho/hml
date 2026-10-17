@@ -159,6 +159,39 @@ describe('searchExtra', () => {
     expect(out[0].nexusModCount).toBe(9)
   })
 
+  it("hides a catalog game's twin before its domain is looked up, by label", async () => {
+    const out = await make().searchExtra('sky', emptyCatalog([repo]), defaultSettings())
+    expect(out.map((g) => g.label)).toEqual(['nexus-skyrimspecialedition'])
+    // A same-named game with another label is not assumed to be the same game.
+    const other: GameDef = { ...repo, label: 'sse', displayName: 'Skyrim SE' }
+    expect(
+      (await make().searchExtra('sky', emptyCatalog([other]), defaultSettings())).map(
+        (g) => g.label
+      )
+    ).toEqual(['nexus-skyrimspecialedition', 'nexus-repo'])
+  })
+
+  it('keeps a Nexus game when the catalog game is known to use another domain or none', async () => {
+    await fs.mkdir(path.dirname(paths.nxGames), { recursive: true })
+    await fs.writeFile(
+      paths.nxGames,
+      JSON.stringify({ REPO: { domain: null, gameId: null, checkedAt: clock } })
+    )
+    const labels = async (s = defaultSettings()): Promise<string[]> =>
+      (await make().searchExtra('sky', emptyCatalog([repo]), s)).map((g) => g.label)
+    expect(await labels()).toContain('nexus-repo')
+    await fs.writeFile(paths.nxGames, JSON.stringify({}))
+    expect(
+      await labels({ ...defaultSettings(), nexusDomainOverrides: { REPO: 'skyrimspecialedition' } })
+    ).toEqual(['nexus-repo'])
+  })
+
+  it('twinOf never pairs two Nexus-only games', async () => {
+    const added = nexusGameDef({ name: 'R.E.P.O.', domain: 'repo' })
+    expect(await make().twinOf('repo', [added], defaultSettings())).toBeNull()
+    expect(await make().twinOf('repo', [added, repo], defaultSettings())).toBe(repo)
+  })
+
   it('reads the domain cache once however many catalog games there are', async () => {
     await fs.mkdir(path.dirname(paths.nxGames), { recursive: true })
     await fs.writeFile(paths.nxGames, JSON.stringify({}))
