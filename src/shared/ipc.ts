@@ -246,6 +246,31 @@ export function channel(method: keyof HmlApi): string {
   return `hml:${method}`
 }
 
+/** The window's own controls, for the titlebar HML draws in place of the system frame. */
+export interface WindowApi {
+  minimize(): Promise<void>
+  /** Maximizes, or restores a maximized window. */
+  toggleMaximize(): Promise<void>
+  close(): Promise<void>
+  isMaximized(): Promise<boolean>
+}
+
+const WINDOW_METHOD_TABLE = {
+  minimize: true,
+  toggleMaximize: true,
+  close: true,
+  isMaximized: true
+} satisfies Record<keyof WindowApi, true>
+
+export const WINDOW_METHODS = Object.keys(WINDOW_METHOD_TABLE) as (keyof WindowApi)[]
+
+export function windowChannel(method: keyof WindowApi): string {
+  return `hml:window:${method}`
+}
+
+/** Main sends this with a boolean whenever the window is maximized or restored. */
+export const WINDOW_MAXIMIZED_EVENT = 'hml:window-maximized'
+
 /** Electron wraps handler errors as "Error invoking remote method 'ch': Error: msg". */
 export function stripIpcErrorPrefix(message: string): string {
   return message.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '')
