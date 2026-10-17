@@ -37,7 +37,9 @@ const exportSchema = z.object({
       version: z.string(),
       enabled: z.boolean(),
       name: z.string().optional(),
-      provides: z.array(z.string()).optional()
+      provides: z.array(z.string()).optional(),
+      // A malformed value reads as off instead of refusing the file.
+      prereleases: z.boolean().optional().catch(undefined)
     })
   ),
   customGame: z
@@ -92,7 +94,8 @@ export async function buildHmlFile(
       source: m.source,
       version: m.version,
       enabled: m.enabled,
-      ...(m.provides && m.provides.length > 0 ? { provides: m.provides } : {})
+      ...(m.provides && m.provides.length > 0 ? { provides: m.provides } : {}),
+      ...(m.source.kind === 'github' && m.github?.prereleases ? { prereleases: true } : {})
     })),
     ...(opts.customGame ? { customGame: opts.customGame } : {})
   }

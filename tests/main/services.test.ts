@@ -3854,6 +3854,14 @@ describe('share import', () => {
     expect(prog[prog.length - 1]).toEqual({ type: 'progress', message: 'Done', done: 4, total: 4 })
   })
 
+  test("import carries a GitHub mod's prerelease setting; old codes import it as off", async () => {
+    const on = await importCode([{ ...gh('v1.0.0'), prereleases: true }])
+    expect(on.unresolved).toEqual([])
+    expect(on.profile.mods[0].github).toMatchObject({ updateMode: 'pinned', prereleases: true })
+    const off = await importCode([gh('v1.0.0')])
+    expect(off.profile.mods[0].github?.prereleases).toBeUndefined()
+  })
+
   test('an explicit Thunderstore version wins over one a dependency pulled in', async () => {
     const r = await importCode([ts('Own-Mod', '1.0.0'), ts('Dep-Lib', '1.5.0')])
     expect(r.installed).toBe(2)

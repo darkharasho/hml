@@ -240,7 +240,10 @@ export function createShareServices(ctx: ShareContext): ShareApi {
           const provides = await onThunderstore(game, entry.provides ?? [])
           let r
           try {
-            r = await api.ghInstall(game, profileId, url, { provides })
+            r = await api.ghInstall(game, profileId, url, {
+              provides,
+              prereleases: entry.prereleases === true
+            })
           } catch (e) {
             // A network failure or rate limit keeps GitHub's own message, which says what to do.
             const msg = errMsg(e)

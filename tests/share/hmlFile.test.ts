@@ -195,6 +195,37 @@ describe('hml files', () => {
     await expect(readHmlFile(zipOf({ 'export.json': bad }))).rejects.toThrow(DAMAGED)
   })
 
+  it("carries a GitHub mod's prerelease setting; files without it read as off", async () => {
+    const gh = profile.mods[1]
+    const withPre: ProfileManifest = {
+      ...profile,
+      mods: [
+        { ...gh, github: { updateMode: 'auto', assetPattern: null, prereleases: true } },
+        { ...gh, id: 'B2', github: { updateMode: 'auto', assetPattern: null } },
+        profile.mods[0]
+      ]
+    }
+    const out = await readHmlFile(await buildHmlFile(withPre, dir))
+    expect(out.export.mods[0].prereleases).toBe(true)
+    expect('prereleases' in out.export.mods[1]).toBe(false)
+    expect('prereleases' in out.export.mods[2]).toBe(false)
+    const odd = JSON.stringify({
+      formatVersion: 1,
+      game: 'g',
+      profileName: 'p',
+      mods: [
+        {
+          source: { kind: 'local', fileName: 'f', sha256: 's' },
+          version: '1',
+          enabled: true,
+          prereleases: 'yes'
+        }
+      ]
+    })
+    const read = await readHmlFile(zipOf({ 'export.json': odd }))
+    expect(read.export.mods[0].prereleases).toBeUndefined()
+  })
+
   it('rejects a missing export.json, a newer format and bad export.json', async () => {
     await expect(readHmlFile(zipOf({ 'a.txt': 'x' }))).rejects.toThrow(DAMAGED)
     await expect(
