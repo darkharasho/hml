@@ -2,12 +2,16 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { HmlEvent } from '../shared/types'
 import {
   HML_METHODS,
+  UPDATE_METHODS,
+  UPDATE_STATE_EVENT,
   WINDOW_MAXIMIZED_EVENT,
   WINDOW_METHODS,
   channel,
   stripIpcErrorPrefix,
+  updateChannel,
   windowChannel,
-  type HmlApi
+  type HmlApi,
+  type UpdateState
 } from '../shared/ipc'
 
 const api = Object.fromEntries(
@@ -43,6 +47,18 @@ contextBridge.exposeInMainWorld('hmlWindow', {
     ipcRenderer.on(WINDOW_MAXIMIZED_EVENT, listener)
     return () => {
       ipcRenderer.removeListener(WINDOW_MAXIMIZED_EVENT, listener)
+    }
+  }
+})
+
+// HML's own updates: version, manual check, restart, and the updater's state as it changes.
+contextBridge.exposeInMainWorld('hmlUpdate', {
+  ...Object.fromEntries(UPDATE_METHODS.map((m) => [m, () => ipcRenderer.invoke(updateChannel(m))])),
+  onState(cb: (state: UpdateState) => void): () => void {
+    const listener = (_ev: unknown, state: UpdateState): void => cb(state)
+    ipcRenderer.on(UPDATE_STATE_EVENT, listener)
+    return () => {
+      ipcRenderer.removeListener(UPDATE_STATE_EVENT, listener)
     }
   }
 })

@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import type { HmlApi, WindowApi } from '../../shared/ipc'
+import type { HmlApi, UpdateApi, UpdateState, WindowApi } from '../../shared/ipc'
 import type { HmlEvent } from '../../shared/types'
 
 declare global {
@@ -10,5 +10,6 @@ declare global {
     hmlPlatform?: string
     hmlFiles: { getPathForFile(file: File): string }
     hmlWindow: WindowApi & { onMaximizedChange(cb: (maximized: boolean) => void): () => void }
+    hmlUpdate: UpdateApi & { onState(cb: (state: UpdateState) => void): () => void }
   }
 }

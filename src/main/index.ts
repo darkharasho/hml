@@ -9,6 +9,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { isAllowedNavigation, parseAllowedExternalUrl } from './security'
 import { registerIpc } from './ipc'
 import { registerWindowIpc, reportMaximized, titlebarOptions } from './window'
+import { registerUpdates } from './updateIpc'
 import { createServices } from './services'
 import { findNxmArg, linuxDesktopEntry, type HandlerPort } from './nexus/nxm'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
@@ -240,6 +241,7 @@ if (hasLock)
     const ready = services
     registerIpc(ready)
     registerWindowIpc()
+    const updates = registerUpdates(() => mainWindowRef)
     protocol.handle(ART_SCHEME, (request) => ready.serveArt(request.url))
 
     // A link that launched HML is handled once the renderer can receive the event.
@@ -257,6 +259,9 @@ if (hasLock)
       runGhUpdates()
       setInterval(runGhUpdates, GH_CHECK_INTERVAL_MS)
     }, 10_000)
+
+    // HML's own updates: on launch and every 6 hours, installed builds only.
+    void updates.start()
 
     app.on('activate', function () {
       // On macOS it's common to re-create a window in the app when the

@@ -284,6 +284,44 @@ export function windowChannel(method: keyof WindowApi): string {
 /** Main sends this with a boolean whenever the window is maximized or restored. */
 export const WINDOW_MAXIMIZED_EVENT = 'hml:window-maximized'
 
+/** Where HML's own auto-update (electron-updater) is; main pushes it on every change. */
+export type UpdateState =
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'none' }
+  | { status: 'downloading'; version: string; percent: number | null }
+  | { status: 'downloaded'; version: string }
+  | { status: 'error'; message: string }
+
+export type UpdateCheckResult = { ok: true } | { ok: false; error: string }
+
+/** HML's own updates, separate from mod updates. */
+export interface UpdateApi {
+  /** HML's version (app.getVersion()). */
+  getVersion(): Promise<string>
+  getState(): Promise<UpdateState>
+  /** A manual check; in a dev build it answers without checking. */
+  check(): Promise<UpdateCheckResult>
+  /** Quits and installs a downloaded update; does nothing before one is downloaded. */
+  restart(): Promise<void>
+}
+
+const UPDATE_METHOD_TABLE = {
+  getVersion: true,
+  getState: true,
+  check: true,
+  restart: true
+} satisfies Record<keyof UpdateApi, true>
+
+export const UPDATE_METHODS = Object.keys(UPDATE_METHOD_TABLE) as (keyof UpdateApi)[]
+
+export function updateChannel(method: keyof UpdateApi): string {
+  return `hml:update:${method}`
+}
+
+/** Main sends this with the UpdateState whenever it changes. */
+export const UPDATE_STATE_EVENT = 'hml:update-state'
+
 /** Electron wraps handler errors as "Error invoking remote method 'ch': Error: msg". */
 export function stripIpcErrorPrefix(message: string): string {
   return message.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '')
