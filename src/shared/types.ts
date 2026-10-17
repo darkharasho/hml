@@ -168,6 +168,8 @@ export interface SharePreview {
   mods: { name: string; version: string; kind: ModSource['kind'] }[]
   configFiles: number
   needsFolder?: boolean
+  /** Set for an r2modman code or file, which doesn't say its game: it imports into `game`. */
+  fromR2modman?: true
 }
 
 export interface UnresolvedMod {

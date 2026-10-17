@@ -62,7 +62,7 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
     setError(null)
     setOpening('code' in input ? 'code' : 'file')
     try {
-      const p = await api.previewShare(input)
+      const p = await api.previewShare({ ...input, game: currentGame ?? undefined })
       if (!mounted.current || !p) return
       setPreview(p)
       setName(p.profileName)
@@ -156,6 +156,12 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
               {preview.mods.length} {preview.mods.length === 1 ? 'mod' : 'mods'}
             </span>
           </div>
+          {preview.fromR2modman && (
+            <p className="mt-1.5 text-xs">
+              From r2modman. Its codes don&apos;t say which game they&apos;re for, so it imports
+              into the game you have open.
+            </p>
+          )}
           {mismatch && (
             <p className="mt-1.5 flex items-start gap-2 text-warn">
               <Icon name="warn" className="mt-0.5 size-4 shrink-0" />
@@ -244,7 +250,7 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
                   setCode(e.target.value)
                   setError(null)
                 }}
-                placeholder="Share code"
+                placeholder="HML or r2modman code"
                 spellCheck={false}
                 autoComplete="off"
                 className={`${FIELD} tracking-wider uppercase placeholder:tracking-normal placeholder:normal-case`}
@@ -255,7 +261,9 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
             </Button>
           </form>
           <div className="mt-4 flex items-center gap-3 border-t border-line pt-4">
-            <span className="flex-1 text-xs">Or open a .hml file someone sent you.</span>
+            <span className="flex-1 text-xs">
+              Or open a .hml or r2modman .r2z file someone sent you.
+            </span>
             <Button variant="ghost" disabled={busy} onClick={() => void open({ file: true })}>
               <Icon name="folder" />
               {opening === 'file' ? 'Opening…' : 'Choose file…'}

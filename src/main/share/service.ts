@@ -19,6 +19,7 @@ import type { ServiceDeps } from '../services'
 import type { GhInstallOptions } from '../github/service'
 import { buildHmlFile, IMPORT_TOO_BIG, MAX_HML_BYTES, readHmlFile } from './hmlFile'
 import { downloadShare, uploadShare } from './client'
+import { downloadR2modman, isR2modmanCode, readR2modman } from './r2modman'
 
 /** The in-process service methods an import uses; each takes the profile lock itself. */
 export type ShareInstallers = Pick<
@@ -61,6 +62,8 @@ type ShareApi = Pick<HmlApi, 'exportProfileFile' | 'shareProfile' | 'previewShar
 
 const PENDING_MS = 600_000
 const EXPIRED = 'This import has expired. Open the code or file again.'
+const R2_NO_GAME =
+  "r2modman profiles don't say which game they're for. Open the game first, then import."
 const NEXUS_PREFIX = 'nexus-'
 const NEXUS_DOMAIN_RE = /^[a-z0-9_-]{1,64}$/
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -391,24 +394,36 @@ export function createShareServices(ctx: ShareContext): ShareApi {
 
     async previewShare(input) {
       let data: Uint8Array
+      let r2: boolean
       if (input && typeof input === 'object' && 'file' in input && input.file === true) {
         const files = await deps.dialog.pickFiles({
           title: 'Import profile',
-          filters: [{ name: 'HML profile', extensions: ['hml'] }]
+          filters: [{ name: 'HML or r2modman profile', extensions: ['hml', 'r2z'] }]
         })
         if (files.length === 0) return null
+        r2 = files[0].toLowerCase().endsWith('.r2z')
         // Checked before reading, so a huge file is never loaded into memory.
         if ((await fs.stat(files[0])).size > MAX_HML_BYTES) throw new Error(IMPORT_TOO_BIG)
         data = new Uint8Array(await fs.readFile(files[0]))
       } else if (input && typeof input === 'object' && 'code' in input) {
-        data = await downloadShare(
-          { fetch: deps.fetch, base: deps.shareBaseUrl },
-          String(input.code)
-        )
+        const code = String(input.code)
+        r2 = isR2modmanCode(code)
+        data = r2
+          ? await downloadR2modman({ fetch: deps.fetch }, code)
+          : await downloadShare({ fetch: deps.fetch, base: deps.shareBaseUrl }, code)
       } else {
         throw new Error('Expected a share code or a file.')
       }
-      const read = await readHmlFile(data, { forImport: true })
+      // An r2modman profile doesn't name its game, so it goes to the open one, as in r2modman.
+      let r2game: string | null = null
+      if (r2) {
+        const label = typeof input.game === 'string' ? input.game : ''
+        if (!label || !(await findGame(label))) throw new Error(R2_NO_GAME)
+        r2game = label
+      }
+      const read = r2game
+        ? readR2modman(data, r2game)
+        : await readHmlFile(data, { forImport: true })
       const exp = read.export
       const def = await findGame(exp.game)
       const domain = def || exp.customGame ? null : nexusDomainOf(exp.game)
@@ -426,7 +441,8 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         profileName: exp.profileName,
         mods: exp.mods.map((m) => ({ name: modName(m), version: m.version, kind: m.source.kind })),
         configFiles: read.configs.size,
-        ...(plan?.needsFolder ? { needsFolder: true } : {})
+        ...(plan?.needsFolder ? { needsFolder: true } : {}),
+        ...(r2game ? { fromR2modman: true as const } : {})
       }
     },
 

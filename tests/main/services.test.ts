@@ -3931,6 +3931,9 @@ describe('share import', () => {
     if (u.host === 'cf-files.nexusmods.com')
       return new Response(zipOf('CoolMod', '1.0.0') as BodyInit)
     if (url === `https://share.test/v1/profiles/${CODE}`) return new Response(hml as BodyInit)
+    if (url === `https://thunderstore.io/api/experimental/legacyprofile/get/${R2_CODE}/`) {
+      return new Response(`#r2modman\n${Buffer.from(r2z).toString('base64')}`)
+    }
     return { ok: true, json: async () => fixture }
   }) as unknown as typeof fetch
 
@@ -3971,6 +3974,13 @@ describe('share import', () => {
         })
       ),
       ...Object.fromEntries(Object.entries(o.configs ?? {}).map(([k, v]) => [k, strToU8(v)]))
+    })
+  const R2_CODE = '018f2c3a-1b2c-7d4e-8f90-a1b2c3d4e5f6'
+  let r2z: Uint8Array = new Uint8Array()
+  const makeR2z = (r2x: string, files: Record<string, string> = {}): Uint8Array =>
+    zipSync({
+      'export.r2x': strToU8(r2x),
+      ...Object.fromEntries(Object.entries(files).map(([k, v]) => [k, strToU8(v)]))
     })
   const progressOf = (): Extract<HmlEvent, { type: 'progress' }>[] =>
     emitted.filter((e): e is Extract<HmlEvent, { type: 'progress' }> => e.type === 'progress')
@@ -4033,7 +4043,7 @@ describe('share import', () => {
       }
     })
     expect(await a.previewShare({ file: true })).toBeNull()
-    expect(filters).toEqual([{ name: 'HML profile', extensions: ['hml'] }])
+    expect(filters).toEqual([{ name: 'HML or r2modman profile', extensions: ['hml', 'r2z'] }])
     const file = path.join(tmp, 'p.hml')
     writeFileSync(file, makeHml([local], { profileName: 'From file' }))
     picked = [file]
@@ -4077,6 +4087,76 @@ describe('share import', () => {
       ['Importing Cool Mod', 3, 4]
     ])
     expect(prog[prog.length - 1]).toEqual({ type: 'progress', message: 'Done', done: 4, total: 4 })
+  })
+
+  test('an r2modman code imports into the open game, with its configs', async () => {
+    r2z = makeR2z(
+      [
+        'profileName: Lethal crew',
+        'mods:',
+        '  - name: Dep-Lib',
+        '    version: { major: 1, minor: 0, patch: 0 }',
+        '    enabled: true',
+        '  - name: Own-Mod',
+        '    version: { major: 1, minor: 0, patch: 0 }',
+        '    enabled: false'
+      ].join('\n'),
+      { 'config/sub/a.cfg': 'r2=1', 'BepInEx/plugins/Own-Mod/x.dll': 'nope' }
+    )
+    const p = await api.previewShare({ code: R2_CODE.toUpperCase(), game: 'repo' })
+    expect(p).toMatchObject({
+      game: 'repo',
+      gameName: 'R.E.P.O.',
+      profileName: 'Lethal crew',
+      configFiles: 1,
+      fromR2modman: true,
+      mods: [
+        { name: 'Dep-Lib', version: '1.0.0', kind: 'thunderstore' },
+        { name: 'Own-Mod', version: '1.0.0', kind: 'thunderstore' }
+      ]
+    })
+    const r = await api.importShare(p!.token, '')
+    expect(r.unresolved).toEqual([])
+    expect(r.profile.name).toBe('Lethal crew')
+    const byId = Object.fromEntries(r.profile.mods.map((m) => [m.id, m]))
+    expect(byId['Own-Mod']).toMatchObject({ version: '1.0.0', enabled: false })
+    expect(byId['Dep-Lib']).toMatchObject({ version: '1.0.0', enabled: true })
+    const dir = deps.paths.profileDir('repo', r.profile.id)
+    expect(readFileSync(path.join(dir, 'BepInEx', 'config', 'sub', 'a.cfg'), 'utf8')).toBe('r2=1')
+  })
+
+  test('an r2modman code needs an open game HML knows', async () => {
+    r2z = makeR2z('profileName: x\nmods: []')
+    const msg =
+      "r2modman profiles don't say which game they're for. Open the game first, then import."
+    await expect(api.previewShare({ code: R2_CODE })).rejects.toThrow(msg)
+    await expect(api.previewShare({ code: R2_CODE, game: 'no-such-game' })).rejects.toThrow(msg)
+    // HML codes ignore the open game: they name their own.
+    hml = makeHml([], { game: 'repo' })
+    expect(await api.previewShare({ code: '01234-56789', game: 'no-such-game' })).toMatchObject({
+      game: 'repo'
+    })
+  })
+
+  test('a picked .r2z file imports into the open game', async () => {
+    const file = path.join(tmp, 'p.r2z')
+    writeFileSync(
+      file,
+      makeR2z(
+        'profileName: From r2\nmods:\n  - name: Own-Mod\n    version: { major: 1, minor: 0, patch: 0 }\n    enabled: true'
+      )
+    )
+    const a = createServices({
+      ...deps,
+      fetch: impFetch,
+      dialog: { ...dialog, pickFiles: async () => [file] }
+    })
+    expect(await a.previewShare({ file: true, game: 'repo' })).toMatchObject({
+      game: 'repo',
+      profileName: 'From r2',
+      fromR2modman: true,
+      mods: [{ name: 'Own-Mod', kind: 'thunderstore' }]
+    })
   })
 
   test("import carries a GitHub mod's prerelease setting; old codes import it as off", async () => {

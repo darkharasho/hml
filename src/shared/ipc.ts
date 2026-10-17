@@ -131,8 +131,13 @@ export interface HmlApi {
   exportProfileFile(game: string, profileId: string): Promise<string | null>
   /** Uploads the profile and returns its share code plus how many local mods won't resolve for others. */
   shareProfile(game: string, profileId: string): Promise<{ code: string; localMods: number }>
-  /** Reads a share code or a picked `.hml` file and holds it for importShare; null when the file dialog is cancelled. */
-  previewShare(input: { code: string } | { file: true }): Promise<SharePreview | null>
+  /**
+   * Reads a share code or a picked `.hml` file and holds it for importShare; null when the file
+   * dialog is cancelled. r2modman codes and `.r2z` files import into `game`, the open game.
+   */
+  previewShare(
+    input: ({ code: string } | { file: true }) & { game?: string }
+  ): Promise<SharePreview | null>
   /** Rebuilds the previewed profile as a new profile; a blank name uses the shared profile's name. */
   importShare(token: string, name: string, folder?: string): Promise<ImportResult>
   /** Copies the profile's enabled mods into the game folder (deploy games), replacing any current deployment. */
