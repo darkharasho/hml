@@ -31,6 +31,18 @@ const exists = (p: string): Promise<boolean> =>
   )
 
 describe('profiles', () => {
+  test('reads a hand-edited manifest whose mod has no source', async () => {
+    await createProfile(paths, 'repo', 'Default')
+    const file = path.join(paths.profileDir('repo', 'default'), 'hml-profile.json')
+    const m = JSON.parse(await fs.readFile(file, 'utf8'))
+    await fs.writeFile(file, JSON.stringify({ ...m, mods: [{ id: 'x', name: 'x' }, null] }))
+    expect((await getProfile(paths, 'repo', 'default')).mods).toEqual([
+      { id: 'x', name: 'x' },
+      null
+    ])
+    expect((await listProfiles(paths, 'repo'))[0].mods).toHaveLength(2)
+  })
+
   test('reads the BepInEx loader mod with a readable name', async () => {
     const m = await createProfile(paths, 'repo', 'Default')
     const loader = {

@@ -39,7 +39,15 @@ const manifestPath = (paths: AppPaths, game: string, id: string): string =>
 
 /** A manifest as read: loaders saved under their raw id get their readable name (kept on next save). */
 const readable = (m: ProfileManifest): ProfileManifest =>
-  Array.isArray(m.mods) ? { ...m, mods: m.mods.map(withReadableName) } : m
+  Array.isArray(m.mods)
+    ? {
+        ...m,
+        // A hand-edited entry without a source is left as it is.
+        mods: m.mods.map((mod) =>
+          mod && typeof mod === 'object' && mod.source ? withReadableName(mod) : mod
+        )
+      }
+    : m
 
 export async function createProfile(
   paths: AppPaths,
