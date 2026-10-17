@@ -131,10 +131,8 @@ export function GamePicker(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-4 border-b border-line px-6 py-4">
-        <div className="flex items-baseline gap-2">
-          <span className="text-lg font-bold tracking-tight text-ember">HML</span>
-          <span className="hidden text-sm text-muted sm:inline">Choose a game</span>
-        </div>
+        {/* The HML logo and name are in the titlebar above. */}
+        <h1 className="shrink-0 text-base font-semibold tracking-tight">Choose a game</h1>
         <label className="relative flex-1">
           <span className="sr-only">Search games</span>
           <Icon

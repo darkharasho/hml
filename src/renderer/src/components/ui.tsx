@@ -185,6 +185,10 @@ export interface MenuItem {
   toggle?: boolean
   /** Draws a divider above the item to start a new group. */
   divider?: boolean
+  /** Shown before the label, e.g. a small game cover. */
+  icon?: ReactNode
+  /** React key when labels can repeat; defaults to the label. */
+  id?: string
 }
 
 /** A small popover menu anchored to a trigger; closes on outside click or Escape. */
@@ -192,13 +196,22 @@ export function Menu({
   label,
   items,
   className = '',
-  position = 'relative'
+  position = 'relative',
+  trigger,
+  triggerClassName,
+  align = 'auto'
 }: {
   label: string
   items: MenuItem[]
   className?: string
   /** Tailwind position class for the trigger; an absolute one is still the dropdown's anchor. */
   position?: string
+  /** Contents of the trigger in place of the ⋮ icon. */
+  trigger?: ReactNode
+  /** Classes for the trigger in place of the icon button's. */
+  triggerClassName?: string
+  /** Which edge of the trigger the dropdown lines up with; auto avoids clipping on the left. */
+  align?: 'auto' | 'left'
 }): React.JSX.Element {
   const [up, setUp] = useState(false)
   const [alignLeft, setAlignLeft] = useState(false)
@@ -231,16 +244,19 @@ export function Menu({
           setUp(r.bottom > window.innerHeight * 0.6)
           // A wide menu near the window's left edge opens rightward instead of being clipped.
           const menuWidth = menuRef.current?.offsetWidth ?? 0
-          setAlignLeft(r.right - menuWidth < 0)
+          setAlignLeft(align === 'left' || r.right - menuWidth < 0)
         }
       }}
     >
       <summary
         aria-label={label}
         title={label}
-        className="grid size-8 cursor-pointer list-none place-items-center rounded-md text-muted hover:bg-raised hover:text-fg [&::-webkit-details-marker]:hidden"
+        className={`cursor-pointer list-none [&::-webkit-details-marker]:hidden ${
+          triggerClassName ??
+          'grid size-8 place-items-center rounded-md text-muted hover:bg-raised hover:text-fg'
+        }`}
       >
-        <Icon name="dots" />
+        {trigger ?? <Icon name="dots" />}
       </summary>
       <div
         ref={menuRef}
@@ -250,7 +266,7 @@ export function Menu({
         }`}
       >
         {items.map((item) => (
-          <Fragment key={item.label}>
+          <Fragment key={item.id ?? item.label}>
             {item.divider && <div role="separator" className="my-1 h-px bg-line" />}
             <button
               type="button"
@@ -275,6 +291,7 @@ export function Menu({
                   {item.checked && <Icon name="check" className="size-3.5" />}
                 </span>
               )}
+              {item.icon}
               {item.label}
             </button>
           </Fragment>
