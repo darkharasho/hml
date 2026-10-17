@@ -88,6 +88,9 @@ describe('launchWarnings', () => {
     expect(await launchWarnings(input())).toEqual(['proton-launch-options'])
     await writeLaunchOptions('-foo')
     expect(await launchWarnings(input())).toEqual(['proton-launch-options'])
+    // After %command% it is a game argument, which Proton never sees.
+    await writeLaunchOptions('%command% WINEDLLOVERRIDES=winhttp=n,b')
+    expect(await launchWarnings(input())).toEqual(['proton-launch-options'])
   })
 
   test('no warning when present', async () => {

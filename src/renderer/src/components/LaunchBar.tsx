@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { PROTON_LAUNCH_OPTIONS } from '../../../shared/protonOptions'
 import type { LaunchWarning } from '../../../shared/types'
 import { api, errorMessage } from '../api'
 import { installedLoaderLabel, isLinux, shortLoaderLabel } from '../customView'
@@ -6,8 +7,6 @@ import { deploymentLabel } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
 import { EditGameDialog } from './AddGameDialog'
 import { Button, ConfirmDialog, Icon, Modal } from './ui'
-
-const PROTON_LAUNCH_OPTIONS = 'WINEDLLOVERRIDES="winhttp=n,b" %command%'
 
 /** Single-quotes a path for the shell only when it needs it. */
 function shellQuote(p: string): string {

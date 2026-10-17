@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { DoorstopVersion, GameDef, LaunchWarning, Runner } from '../../shared/types'
+import { hasProtonOverride } from '../../shared/protonOptions'
 import { isFlatpakSteam, readLaunchOptions } from '../steam/steam'
 import type { LaunchPlan } from './launchPlan'
 
@@ -87,7 +88,7 @@ export async function launchWarnings(input: {
     if (input.platform === 'linux' && !proton) warnings.push('native-linux-unsupported')
     if (proton && input.game.steamAppId) {
       const opts = await readLaunchOptions(input.steamRoot, input.game.steamAppId)
-      if (!opts || !opts.includes('winhttp=n,b')) warnings.push('proton-launch-options')
+      if (!hasProtonOverride(opts)) warnings.push('proton-launch-options')
     }
   }
   if (
