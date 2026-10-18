@@ -207,6 +207,12 @@ export interface SharePreview {
   fromR2modman?: true
 }
 
+/** What an import preview shows of a shared mod beyond its name: looked up from its source. */
+export interface ShareModDetail {
+  iconUrl: string | null
+  description: string
+}
+
 export interface UnresolvedMod {
   name: string
   version: string

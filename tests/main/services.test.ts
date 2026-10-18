@@ -3999,6 +3999,12 @@ describe('share import', () => {
           json: async () => ({})
         }
       }
+      if (u.pathname === '/repos/owner/thing') {
+        return reply({
+          description: 'Does a thing',
+          owner: { avatar_url: 'https://avatars.githubusercontent.com/u/1' }
+        })
+      }
       const m = /^\/repos\/owner\/thing\/releases\/tags\/(.+)$/.exec(u.pathname)
       const tag = m && decodeURIComponent(m[1])
       return tag && ghReleases[tag]
@@ -4120,6 +4126,27 @@ describe('share import', () => {
       ]
     })
     expect(typeof p!.token).toBe('string')
+  })
+
+  test('preview details give each mod its icon and description from its source', async () => {
+    hml = makeHml([ts('Own-Mod', '1.0.0'), gh('v1.0.0'), nx(), local])
+    const p = await api.previewShare({ code: '01234-56789' })
+    const details = await api.shareModDetails(p!.token)
+    expect(details).toEqual([
+      { iconUrl: expect.any(String), description: expect.stringMatching(/^Mod /) },
+      { iconUrl: 'https://avatars.githubusercontent.com/u/1', description: 'Does a thing' },
+      { iconUrl: null, description: 's' },
+      null
+    ])
+  })
+
+  test('preview details leave a mod bare when its source is unreachable', async () => {
+    ghDown = true
+    nexusDown = true
+    hml = makeHml([gh('v1.0.0'), nx()])
+    const p = await api.previewShare({ code: '01234-56789' })
+    expect(await api.shareModDetails(p!.token)).toEqual([null, null])
+    await expect(api.shareModDetails('nope')).rejects.toThrow(/expired/)
   })
 
   test('a file preview reads the picked .hml, and cancel returns null', async () => {

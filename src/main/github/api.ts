@@ -209,6 +209,22 @@ async function cachedGet(
   }
 }
 
+/** A repo's description and its owner's avatar, through the release cache; null when it's gone. */
+export async function fetchRepoInfo(
+  opts: GhClientOpts & { owner: string; repo: string; maxAgeMs?: number }
+): Promise<{ description: string; avatarUrl: string | null } | null> {
+  const slug = `${opts.owner}/${opts.repo}`
+  const get = await cachedGet(opts, slug)
+  const res = await get(`${API_ROOT}/repos/${slug}`)
+  if (res.status === 'notfound') return null
+  const body = res.body as { description?: unknown; owner?: { avatar_url?: unknown } } | null
+  const avatar = body?.owner?.avatar_url
+  return {
+    description: typeof body?.description === 'string' ? body.description : '',
+    avatarUrl: typeof avatar === 'string' && /^https:\/\//.test(avatar) ? avatar : null
+  }
+}
+
 /** The repo's published (non-draft) releases, newest first as GitHub lists them, at most 100. */
 export async function fetchReleaseList(
   opts: GhClientOpts & { owner: string; repo: string; maxAgeMs?: number }

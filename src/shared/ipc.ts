@@ -28,6 +28,7 @@ import type {
   ProfileManifest,
   Runner,
   Settings,
+  ShareModDetail,
   SharePreview,
   TsInstallResult,
   TsDocKind,
@@ -174,6 +175,11 @@ export interface HmlApi {
   previewShare(
     input: ({ code: string } | { file: true }) & { game?: string }
   ): Promise<SharePreview | null>
+  /**
+   * Icons and descriptions for a preview's mods, in the order of its `mods`: null for a mod its
+   * source couldn't describe (a local file, or offline).
+   */
+  shareModDetails(token: string): Promise<(ShareModDetail | null)[]>
   /** Rebuilds the previewed profile as a new profile; a blank name uses the shared profile's name. */
   importShare(token: string, name: string, folder?: string): Promise<ImportResult>
   /** Copies the profile's enabled mods into the game folder (deploy games), replacing any current deployment. */
@@ -282,6 +288,7 @@ const METHOD_TABLE = {
   exportProfileFile: true,
   shareProfile: true,
   previewShare: true,
+  shareModDetails: true,
   importShare: true,
   deployProfile: true,
   removeDeployment: true,
