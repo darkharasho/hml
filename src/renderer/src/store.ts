@@ -96,6 +96,7 @@ interface State {
   selectProfile(id: string): Promise<void>
   createProfile(name: string): Promise<void>
   renameProfile(id: string, name: string): Promise<void>
+  duplicateProfile(id: string): Promise<void>
   deleteProfile(id: string): Promise<void>
   /** Switches to a game's profile (after an import) and reloads its list. */
   openImportedProfile(game: string, profileId: string): Promise<void>
@@ -566,6 +567,21 @@ export const useStore = create<State>()((set, get) => {
         await api.renameProfile(game.label, id, name)
         await reloadProfiles()
       })
+    },
+
+    async duplicateProfile(id) {
+      const game = get().currentGame
+      const source = get().profiles.find((p) => p.id === id)
+      if (!game || !source) return
+      const created = await busy(async () => {
+        const profile = await api.duplicateProfile(game.label, id, `${source.name} (copy)`)
+        await reloadProfiles()
+        return profile
+      })
+      if (created !== failed) {
+        get().toast('success', `Created ${created.name}`)
+        await get().selectProfile(created.id)
+      }
     },
 
     async deleteProfile(id) {

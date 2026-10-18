@@ -16,6 +16,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const selectProfile = useStore((s) => s.selectProfile)
   const createProfile = useStore((s) => s.createProfile)
   const renameProfile = useStore((s) => s.renameProfile)
+  const duplicateProfile = useStore((s) => s.duplicateProfile)
   const deleteProfile = useStore((s) => s.deleteProfile)
   const openProfileFolder = useStore((s) => s.openProfileFolder)
   const leaveGame = useStore((s) => s.leaveGame)
@@ -188,6 +189,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
                 items={[
                   { label: 'Share…', onSelect: () => setSharing(p) },
                   { label: 'Rename', onSelect: () => setRenaming(p.id) },
+                  { label: 'Duplicate', onSelect: () => void duplicateProfile(p.id) },
                   {
                     label: 'Open folder',
                     onSelect: () => void selectProfile(p.id).then(() => openProfileFolder())

@@ -55,6 +55,8 @@ export interface HmlApi {
   listProfiles(game: string): Promise<ProfileManifest[]>
   createProfile(game: string, name: string): Promise<ProfileManifest>
   renameProfile(game: string, id: string, name: string): Promise<void>
+  /** A new profile named `name` with a copy of `id`'s mods and configs. */
+  duplicateProfile(game: string, id: string, name: string): Promise<ProfileManifest>
   deleteProfile(game: string, id: string): Promise<void>
   /** Multi-select .zip dialog; installs with source kind 'local'. Cancel returns []. */
   installFromFile(game: string, profileId: string): Promise<InstalledMod[]>
@@ -197,6 +199,7 @@ const METHOD_TABLE = {
   listProfiles: true,
   createProfile: true,
   renameProfile: true,
+  duplicateProfile: true,
   deleteProfile: true,
   installFromFile: true,
   installFromPaths: true,

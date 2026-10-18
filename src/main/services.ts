@@ -30,6 +30,7 @@ import { isDirectory, loadSettings, resolveGameDir, updateSettings } from './sto
 import {
   createProfile,
   deleteProfile,
+  duplicateProfile,
   getProfile,
   listProfiles,
   renameProfile,
@@ -1356,6 +1357,9 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     },
     renameProfile: (game, id, name) =>
       serialize(game, id, () => renameProfile(paths, game, id, name)),
+    // Serialized on the source, so an install in progress doesn't land half copied.
+    duplicateProfile: (game, id, name) =>
+      serialize(game, id, () => duplicateProfile(paths, game, id, name)),
     deleteProfile: (game, id) => serialize(game, id, () => deleteProfile(paths, game, id)),
 
     async installFromFile(game: string, profileId: string): Promise<InstalledMod[]> {
