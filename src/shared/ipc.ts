@@ -33,7 +33,8 @@ import type {
   TsDocKind,
   TsPackage,
   TsQuery,
-  TsSearchResult
+  TsSearchResult,
+  UpdateSummary
 } from './types'
 import type { ModDeps } from './modDeps'
 
@@ -68,6 +69,10 @@ export interface HmlApi {
   installFromPaths(game: string, profileId: string, paths: string[]): Promise<InstalledMod[]>
   setModEnabled(game: string, profileId: string, modId: string, enabled: boolean): Promise<void>
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
+  /** Mod update counts from the last background check. */
+  getUpdateSummary(): Promise<UpdateSummary>
+  /** Records the renderer's own update count for a profile in the summary. */
+  reportUpdateCount(game: string, profileId: string, count: number): Promise<void>
   /** The mod loader's log for a profile, from byte `from` on (0 reads its end). */
   readModLog(game: string, profileId: string, from: number): Promise<ModLogRead>
   /** Opens the log file in the system's text editor. */
@@ -234,6 +239,8 @@ const METHOD_TABLE = {
   setModHeld: true,
   listConfigs: true,
   readModLog: true,
+  getUpdateSummary: true,
+  reportUpdateCount: true,
   openModLog: true,
   readConfig: true,
   writeConfig: true,

@@ -949,7 +949,8 @@ describe('services', () => {
       lastProfile: {},
       nexusDomainOverrides: {},
       manualLoaderKept: [],
-      gameColors: true
+      gameColors: true,
+      updateNotifications: true
     })
   })
 
@@ -1700,7 +1701,14 @@ describe('services', () => {
 
   test('HML_METHODS covers every HmlApi key', () => {
     // These are for the main process, not IPC methods.
-    const mainOnly = ['ghAutoUpdateAll', 'handleNxm', 'serveArt', 'cancelLaunchWatches']
+    const mainOnly = [
+      'ghAutoUpdateAll',
+      'runBackgroundChecks',
+      'emitOpenProfile',
+      'handleNxm',
+      'serveArt',
+      'cancelLaunchWatches'
+    ]
     const keys = Object.keys(createServices(deps)).filter((k) => !mainOnly.includes(k))
     expect([...HML_METHODS].sort()).toEqual(keys.sort())
   })

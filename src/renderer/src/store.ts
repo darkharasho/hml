@@ -16,7 +16,8 @@ import type {
   NxInstallResult,
   NxUpdate,
   ProfileManifest,
-  Settings
+  Settings,
+  UpdateSummary
 } from '../../shared/types'
 import { api, errorMessage } from './api'
 import { isGhAccessError } from '../../shared/messages'
@@ -51,6 +52,8 @@ interface State {
   busy: boolean
   /** Thunderstore updates for the current profile, from tsCheckUpdates. */
   updates: ModUpdate[]
+  /** Update counts per game and profile, from the background check. */
+  updateSummary: UpdateSummary
   /** fullNames of Thunderstore packages being installed or updated. */
   tsInstalling: string[]
   /** GitHub updates for the current profile, from ghCheckUpdates. */
@@ -161,6 +164,7 @@ interface State {
   pickGamePath(label: string): Promise<string | null>
   setSettingsOpen(open: boolean): void
   setGameColors(on: boolean): Promise<void>
+  setUpdateNotifications(on: boolean): Promise<void>
   setCreatingProfile(open: boolean): void
   toast(kind: ToastKind, message: string, action?: ToastAction): void
   dismissToast(id: number): void
@@ -240,6 +244,11 @@ export const useStore = create<State>()((set, get) => {
       const settings = await api.getSettings()
       // The app always opens on the game picker; lastGame only powers its Back button.
       set({ settings })
+      // Not ready at startup (the first check runs a little later); the event brings it then.
+      void api.getUpdateSummary().then(
+        (updateSummary) => set({ updateSummary }),
+        () => undefined
+      )
     } catch (e) {
       fail(e)
     } finally {
@@ -425,6 +434,7 @@ export const useStore = create<State>()((set, get) => {
     busyCount: 0,
     busy: false,
     updates: [],
+    updateSummary: {},
     tsInstalling: [],
     ghUpdates: [],
     ghUpdating: [],
@@ -1076,9 +1086,17 @@ export const useStore = create<State>()((set, get) => {
         get().toast('info', message)
       }
       await Promise.all([ts?.catch(() => {}), gh.catch(ghFailed), nx?.catch(() => {})])
+      // This check is newer than the background one: badges show its count.
+      if (current()) {
+        const { updates, ghUpdates, nxUpdates } = get()
+        const count = updates.length + ghUpdates.length + nxUpdates.length
+        void api.reportUpdateCount(currentGame.label, currentProfile, count).catch(() => undefined)
+      }
     },
 
     handleEvent(e) {
+      if (e.type === 'update-summary') return set({ updateSummary: e.summary })
+      if (e.type === 'open-profile') return void get().openImportedProfile(e.game, e.profileId)
       if (e.type === 'github-updated') return void onGithubUpdated(e)
       if (e.type === 'github-updates-available') return void onGithubUpdatesAvailable(e)
       if (e.type === 'nexus-installed') return void onNexusInstalled(e)
@@ -1161,6 +1179,10 @@ export const useStore = create<State>()((set, get) => {
 
     async setGameColors(on) {
       await persist((s) => ({ ...s, gameColors: on })).catch(fail)
+    },
+
+    async setUpdateNotifications(on) {
+      await persist((s) => ({ ...s, updateNotifications: on })).catch(fail)
     },
 
     setCreatingProfile(open) {

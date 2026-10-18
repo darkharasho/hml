@@ -20,6 +20,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const deleteProfile = useStore((s) => s.deleteProfile)
   const openProfileFolder = useStore((s) => s.openProfileFolder)
   const leaveGame = useStore((s) => s.leaveGame)
+  const updateCounts = useStore((s) => (game ? s.updateSummary[game.label] : undefined))
   const removeCustomGame = useStore((s) => s.removeCustomGame)
   const toast = useStore((s) => s.toast)
   const openSettings = useStore((s) => s.setSettingsOpen)
@@ -180,6 +181,14 @@ export function ProfileSidebar(): React.JSX.Element | null {
                   aria-hidden="true"
                 />
                 <span className="flex-1 truncate">{p.name}</span>
+                {(updateCounts?.[p.id] ?? 0) > 0 && (
+                  <span
+                    className="rounded-full bg-ember/15 px-1.5 text-[10px] font-semibold text-ember tabular-nums"
+                    title={`${updateCounts![p.id]} mod ${updateCounts![p.id] === 1 ? 'update' : 'updates'}`}
+                  >
+                    {updateCounts![p.id]}↑
+                  </span>
+                )}
                 <span className="text-xs text-muted tabular-nums">{p.mods.length}</span>
               </button>
               <Menu

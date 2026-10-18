@@ -25,7 +25,9 @@ const api = vi.hoisted(() => ({
   cancelWaitForGame: vi.fn(),
   setModEnabled: vi.fn(),
   uninstallMod: vi.fn(),
-  getModDeps: vi.fn()
+  getModDeps: vi.fn(),
+  reportUpdateCount: vi.fn(async () => undefined),
+  getUpdateSummary: vi.fn(async () => ({}))
 }))
 vi.mock('../../src/renderer/src/api', () => ({
   api,

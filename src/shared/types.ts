@@ -107,6 +107,8 @@ export interface Settings {
   manualLoaderKept: string[]
   /** Tint the app with each game's colour and show its banner art. */
   gameColors: boolean
+  /** Show a system notification when the background check finds mod updates. */
+  updateNotifications: boolean
 }
 
 export type ModSource =
@@ -138,6 +140,9 @@ export interface InstalledMod {
    */
   held?: true
 }
+
+/** Mod updates found by the background check: game label → profile id → count (no zeros). */
+export type UpdateSummary = Record<string, Record<string, number>>
 
 /** A read of the mod loader's log, from readModLog. */
 export interface ModLogRead {
@@ -433,5 +438,9 @@ export type HmlEvent =
       mod: { name: string; version: string }
     }
   | { type: 'nexus-failed'; message: string }
+  /** Mod update counts from the background check (or a profile's own check). */
+  | { type: 'update-summary'; summary: UpdateSummary }
+  /** A notification was clicked: show this profile. */
+  | { type: 'open-profile'; game: string; profileId: string }
   /** Notify-mode GitHub mods with a release not announced before this session. */
   | { type: 'github-updates-available'; game: string; profileId: string; count: number }

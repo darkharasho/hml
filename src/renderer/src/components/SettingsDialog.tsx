@@ -55,6 +55,7 @@ function SettingsForm({ onClose }: { onClose(): void }): React.JSX.Element {
         )}
 
         <GameColorsRow />
+        <UpdateNotificationsRow />
 
         <UpdateSection />
       </div>
@@ -141,6 +142,23 @@ function GameColorsRow(): React.JSX.Element {
         </p>
       </div>
       <Toggle checked={on} label="Game colors" onChange={(v) => void setGameColors(v)} />
+    </div>
+  )
+}
+
+function UpdateNotificationsRow(): React.JSX.Element {
+  const on = useStore((s) => s.settings?.updateNotifications ?? true)
+  const setOn = useStore((s) => s.setUpdateNotifications)
+  return (
+    <div className="flex items-center justify-between gap-4 border-t border-line pt-5">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-fg">Update notifications</p>
+        <p className="mt-0.5 text-xs text-muted">
+          HML checks your profiles for mod updates every few hours while it runs. Tell me when it
+          finds some and HML isn&apos;t in front.
+        </p>
+      </div>
+      <Toggle checked={on} label="Update notifications" onChange={(v) => void setOn(v)} />
     </div>
   )
 }

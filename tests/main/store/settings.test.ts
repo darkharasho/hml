@@ -61,7 +61,8 @@ describe('settings store', () => {
       lastProfile: {},
       nexusDomainOverrides: {},
       manualLoaderKept: [],
-      gameColors: true
+      gameColors: true,
+      updateNotifications: true
     })
   })
 
@@ -74,7 +75,8 @@ describe('settings store', () => {
       lastProfile: { repo: 'default' },
       nexusDomainOverrides: {},
       manualLoaderKept: [],
-      gameColors: true
+      gameColors: true,
+      updateNotifications: true
     }
     await saveSettings(paths, s)
     expect(await loadSettings(paths)).toEqual(s)
@@ -98,7 +100,8 @@ describe('settings store', () => {
       lastProfile: {},
       nexusDomainOverrides: {},
       manualLoaderKept: [],
-      gameColors: true
+      gameColors: true,
+      updateNotifications: true
     })
   })
 
@@ -112,7 +115,8 @@ describe('settings store', () => {
       lastProfile: {},
       nexusDomainOverrides: {},
       manualLoaderKept: [],
-      gameColors: true
+      gameColors: true,
+      updateNotifications: true
     })
   })
 })
@@ -133,7 +137,8 @@ describe('resolveGameDir', () => {
     lastProfile: {},
     nexusDomainOverrides: {},
     manualLoaderKept: [],
-    gameColors: true
+    gameColors: true,
+    updateNotifications: true
   }
 
   test('override beats steam detection', async () => {

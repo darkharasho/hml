@@ -40,6 +40,7 @@ import { installZip, setModEnabled, uninstallMod } from './install/installer'
 import { buildModDeps } from './thunderstore/modDeps'
 import { listConfigFiles, readConfigFile, writeConfigFile } from './config/configFiles'
 import { readLogFrom } from './logs/logTail'
+import { createBackgroundChecks } from './updates/backgroundChecks'
 import { buildDirectLaunchPlan, buildLaunchPlan, buildSteamPlainPlan } from './launch/launchPlan'
 import {
   isGameProcessRunning,
@@ -172,6 +173,10 @@ export interface ServiceDeps {
   procFs?: ProcFsPort
   /** Clock and timer for waitForGame; default to the real ones. */
   launchWatch?: { now(): number; sleep(ms: number): Promise<void> }
+  /** Shows a system notification; clicking it emits `open-profile`. Unset shows none. */
+  notify?: (n: { title: string; body: string; game: string; profileId: string }) => void
+  /** True while HML's window has focus; unset counts as unfocused. */
+  isFocused?: () => boolean
 }
 
 interface LoadedIndex extends TsIndex {
@@ -216,6 +221,10 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
 export function createServices(deps: ServiceDeps): HmlApi & {
   ghAutoUpdateAll(): Promise<void>
+  /** Checks every profile for mod updates, publishes the counts and notifies of new ones. */
+  runBackgroundChecks(): Promise<void>
+  /** Tells the renderer to show a profile (an update notification was clicked). */
+  emitOpenProfile(game: string, profileId: string): void
   handleNxm(raw: string): Promise<void>
   /** Answers an `hml-art://` request (the protocol handler in index.ts). */
   serveArt(url: string): Promise<Response>
@@ -1271,9 +1280,42 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     }
   }
 
+  const background = createBackgroundChecks({
+    async games() {
+      const dirs = await fs.readdir(paths.gamesDir, { withFileTypes: true }).catch(() => [])
+      const out: { label: string; displayName: string }[] = []
+      for (const d of dirs) {
+        if (!d.isDirectory()) continue
+        const def = await requireGame(d.name).catch(() => null)
+        if (def?.supported) out.push({ label: def.label, displayName: def.displayName })
+      }
+      return out
+    },
+    profiles: (game) => listProfiles(paths, game),
+    checks: {
+      thunderstore: async (game, profileId) => await tsServices.tsCheckUpdates(game, profileId),
+      github: async (game, profileId) => await ghServices.ghCheckUpdates(game, profileId),
+      nexus: async (game, profileId) => await nexusApi.nxCheckUpdates(game, profileId)
+    },
+    publish: (summary) => deps.emit({ type: 'update-summary', summary }),
+    notify: (n) => deps.notify?.(n),
+    async shouldNotify() {
+      if (!deps.notify || deps.isFocused?.()) return false
+      return (await loadSettings(paths)).updateNotifications
+    }
+  })
+
   return {
     ...tsServices,
     ...ghServices,
+    runBackgroundChecks: async () => void (await background.run()),
+    emitOpenProfile: (game, profileId) => deps.emit({ type: 'open-profile', game, profileId }),
+    getUpdateSummary: async () => background.summary(),
+    async reportUpdateCount(game, profileId, count) {
+      if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return
+      await getProfile(paths, game, profileId)
+      background.setCount(game, profileId, count)
+    },
     ...nexusApi,
     ...shareApi,
     ...customApi,
