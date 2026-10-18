@@ -31,6 +31,7 @@ import { Button, Icon, Menu, Toggle, type MenuItem } from './ui'
 import { DisableDialog, UninstallDialog } from './ModDepsDialogs'
 import { GhVersionDialog } from './GhVersionDialog'
 import { ConfigEditor } from './ConfigEditor'
+import { LogViewer } from './LogViewer'
 import { configsForMod } from '../configView'
 import { dependentsOf, orphanedBy } from '../../../shared/modDeps'
 
@@ -148,7 +149,10 @@ export function ModList(): React.JSX.Element | null {
   const { online, githubPrimary } = sourcesFor(game, currentDomain)
   const hasOnline = online.length > 0
   // The domain can change while the Online tab is open; fall back to Installed if it vanishes.
-  const activeTab = hasOnline ? tab : 'installed'
+  // Only loaders HML knows the log of get a Log tab.
+  const hasLog = game.loader === 'bepinex' || game.loader === 'shimloader'
+  const activeTab =
+    (tab === 'online' && !hasOnline) || (tab === 'log' && !hasLog) ? 'installed' : tab
   const openConfig = (path: string | null): void => {
     setTab('config')
     setConfigOpened(true)
@@ -273,6 +277,11 @@ export function ModList(): React.JSX.Element | null {
           >
             Config
           </TabButton>
+          {hasLog && (
+            <TabButton selected={activeTab === 'log'} onSelect={() => setTab('log')}>
+              Log
+            </TabButton>
+          )}
         </div>
         <div className="flex h-11 items-center gap-2 pb-2">
           {activeTab === 'installed' && (
@@ -316,6 +325,9 @@ export function ModList(): React.JSX.Element | null {
             onOpen={setConfigOpen}
           />
         </div>
+      )}
+      {activeTab === 'log' && (
+        <LogViewer game={game.label} profileId={profile.id} mods={profile.mods} active />
       )}
       {activeTab !== 'installed' ? null : mods.length === 0 ? (
         <EmptyState

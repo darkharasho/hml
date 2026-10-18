@@ -39,6 +39,7 @@ import {
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
 import { buildModDeps } from './thunderstore/modDeps'
 import { listConfigFiles, readConfigFile, writeConfigFile } from './config/configFiles'
+import { readLogFrom } from './logs/logTail'
 import { buildDirectLaunchPlan, buildLaunchPlan, buildSteamPlainPlan } from './launch/launchPlan'
 import {
   isGameProcessRunning,
@@ -919,6 +920,24 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     serialize
   })
 
+  /**
+   * Where the profile's mod loader logs: BepInEx runs from the profile, so its log is there;
+   * UE4SS writes next to the game's exe. Null for other loaders.
+   */
+  async function modLogFile(game: string, profileId: string): Promise<string | null> {
+    const def = await requireGame(game)
+    await getProfile(paths, game, profileId)
+    if (def.loader === 'bepinex') {
+      return path.join(paths.profileDir(game, profileId), 'BepInEx', 'LogOutput.log')
+    }
+    if (def.loader === 'shimloader' && def.dataFolderName) {
+      const steamRoot = await getSteamRoot()
+      const gameDir = await resolveGameDir(def, await loadSettings(paths), steamRoot)
+      return gameDir ? path.join(shimBinDir(gameDir, def.dataFolderName), 'UE4SS.log') : null
+    }
+    return null
+  }
+
   async function setModEnabledService(
     game: string,
     profileId: string,
@@ -1426,6 +1445,18 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     },
 
     setModEnabled: setModEnabledService,
+
+    async readModLog(game, profileId, from) {
+      const file = await modLogFile(game, profileId)
+      if (!file) return { file: null, size: 0, next: 0, text: '', reset: true }
+      return { file, ...(await readLogFrom(file, from)) }
+    },
+    async openModLog(game, profileId) {
+      const file = await modLogFile(game, profileId)
+      if (!file) throw new Error("HML doesn't know where this game's mod loader writes its log.")
+      const error = await deps.shell.openPath(file)
+      if (error) throw new Error(`Could not open the log: ${error}`)
+    },
 
     async listConfigs(game, profileId) {
       await getProfile(paths, game, profileId)

@@ -16,6 +16,7 @@ import type {
   LaunchMode,
   LaunchWarning,
   LaunchWatchResult,
+  ModLogRead,
   ModUpdate,
   NxInstallResult,
   NxModDetail,
@@ -67,6 +68,10 @@ export interface HmlApi {
   installFromPaths(game: string, profileId: string, paths: string[]): Promise<InstalledMod[]>
   setModEnabled(game: string, profileId: string, modId: string, enabled: boolean): Promise<void>
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
+  /** The mod loader's log for a profile, from byte `from` on (0 reads its end). */
+  readModLog(game: string, profileId: string, from: number): Promise<ModLogRead>
+  /** Opens the log file in the system's text editor. */
+  openModLog(game: string, profileId: string): Promise<void>
   /** The profile's mod config files. */
   listConfigs(game: string, profileId: string): Promise<ConfigFile[]>
   readConfig(game: string, profileId: string, path: string): Promise<string>
@@ -228,6 +233,8 @@ const METHOD_TABLE = {
   getModDeps: true,
   setModHeld: true,
   listConfigs: true,
+  readModLog: true,
+  openModLog: true,
   readConfig: true,
   writeConfig: true,
   getLaunchWarnings: true,

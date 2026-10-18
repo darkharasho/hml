@@ -139,6 +139,19 @@ export interface InstalledMod {
   held?: true
 }
 
+/** A read of the mod loader's log, from readModLog. */
+export interface ModLogRead {
+  /** The log's path; null when HML doesn't know where the game's loader logs. */
+  file: string | null
+  size: number
+  /** Pass as `from` to get what was written after this read. */
+  next: number
+  /** Complete lines only. */
+  text: string
+  /** The text starts the view over: a first read, or the game started a new log. */
+  reset: boolean
+}
+
 /** A mod's settings file in a profile. */
 export interface ConfigFile {
   /** Relative to the profile folder, posix separators. */
