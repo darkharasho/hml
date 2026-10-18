@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ImportResult, SharePreview } from '../../../shared/types'
+import type { ImportResult, ShareModDetail, SharePreview } from '../../../shared/types'
 import { api, errorMessage } from '../api'
 import { SHARE_SOURCE_BADGE, gameMismatchNote, importProgress, importSummary } from '../shareView'
 import { useStore } from '../store'
+import { initials } from '../tsView'
+import { useFallbackSrc } from '../useFallbackSrc'
 import { Button, Icon, Modal } from './ui'
 
 type Progress = NonNullable<ReturnType<typeof importProgress>>
@@ -24,6 +26,11 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   const [progress, setProgress] = useState<Progress | null>(null)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Icons and descriptions arrive after the preview; rows show without them meanwhile.
+  const [details, setDetails] = useState<{
+    token: string
+    list: (ShareModDetail | null)[]
+  } | null>(null)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -43,6 +50,20 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
       if (p) setProgress(p)
     })
   }, [])
+
+  const token = preview?.token
+  useEffect(() => {
+    if (!token) return
+    let live = true
+    api.shareModDetails(token).then(
+      (list) => live && setDetails({ token, list }),
+      () => undefined
+    )
+    return () => {
+      live = false
+    }
+  }, [token])
+  const shownDetails = details && details.token === token ? details.list : []
 
   const busy = opening !== null || importing
   const done = (): void => {
@@ -145,7 +166,7 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   )
 
   return (
-    <Modal title="Import profile" onClose={close} width="w-[520px]" footer={footer}>
+    <Modal title="Import profile" onClose={close} width="w-[560px]" footer={footer}>
       {result ? (
         <ImportResultView result={result} />
       ) : preview ? (
@@ -206,21 +227,32 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
               className={`mt-1.5 ${FIELD}`}
             />
           </label>
-          <ul className="mt-4 flex max-h-64 flex-col overflow-y-auto rounded-md border border-line">
+          <ul className="mt-4 flex max-h-80 flex-col overflow-y-auto rounded-md border border-line">
             {preview.mods.length === 0 && (
               <li className="px-3 py-2 text-xs">This profile has no mods.</li>
             )}
             {preview.mods.map((m, i) => {
               const badge = SHARE_SOURCE_BADGE[m.kind]
+              const detail = shownDetails[i] ?? null
               return (
                 <li
                   key={`${m.name}-${i}`}
-                  className="flex items-center gap-3 border-line px-3 py-1.5 not-last:border-b"
+                  className="flex items-center gap-3 border-line px-3 py-2 not-last:border-b"
                 >
-                  <span className="min-w-0 flex-1 truncate text-fg" title={m.name}>
-                    {m.name}
-                  </span>
-                  <span className="shrink-0 text-xs tabular-nums">{m.version}</span>
+                  <ShareModIcon name={m.name} url={detail?.iconUrl ?? null} />
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-baseline gap-2">
+                      <span className="min-w-0 truncate text-fg" title={m.name}>
+                        {m.name}
+                      </span>
+                      <span className="shrink-0 text-xs tabular-nums">{m.version}</span>
+                    </p>
+                    {detail?.description && (
+                      <p className="mt-0.5 line-clamp-2 text-xs" title={detail.description}>
+                        {detail.description}
+                      </p>
+                    )}
+                  </div>
                   <span
                     className={`w-[84px] shrink-0 rounded px-1.5 py-0.5 text-center text-[11px] font-medium ${badge.className}`}
                   >
@@ -279,6 +311,32 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
         </p>
       )}
     </Modal>
+  )
+}
+
+/** A shared mod's icon, with a letter tile until it loads or when it has none. */
+function ShareModIcon({ name, url }: { name: string; url: string | null }): React.JSX.Element {
+  const { src, onError } = useFallbackSrc([url])
+  const shape = 'size-9 shrink-0 overflow-hidden rounded bg-raised'
+  if (src) {
+    return (
+      <img
+        key={src}
+        src={src}
+        alt=""
+        loading="lazy"
+        draggable={false}
+        onError={onError}
+        className={`${shape} object-cover`}
+      />
+    )
+  }
+  return (
+    <span
+      className={`${shape} grid place-items-center bg-[linear-gradient(160deg,#1f3a43,#132329)] text-[11px] font-bold text-muted`}
+    >
+      {initials(name)}
+    </span>
   )
 }
 

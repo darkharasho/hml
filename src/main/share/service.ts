@@ -9,6 +9,7 @@ import type {
   HmlExport,
   HmlExportMod,
   ImportResult,
+  ModSource,
   ProfileManifest,
   TsPackage,
   UnresolvedMod
@@ -56,9 +57,14 @@ export interface ShareContext {
   isSteamAppInstalled(appId: string): Promise<boolean>
   /** The stored custom-game entry for a label, if it is one. */
   getCustomGame(label: string): Promise<HmlCustomGame | null>
+  /** Icons and descriptions of mods shared for `game`, in order; never throws. */
+  describeMods(game: string, sources: ModSource[]): ReturnType<HmlApi['shareModDetails']>
 }
 
-type ShareApi = Pick<HmlApi, 'exportProfileFile' | 'shareProfile' | 'previewShare' | 'importShare'>
+type ShareApi = Pick<
+  HmlApi,
+  'exportProfileFile' | 'shareProfile' | 'previewShare' | 'shareModDetails' | 'importShare'
+>
 
 const PENDING_MS = 600_000
 const EXPIRED = 'This import has expired. Open the code or file again.'
@@ -444,6 +450,16 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         ...(plan?.needsFolder ? { needsFolder: true } : {}),
         ...(r2game ? { fromR2modman: true as const } : {})
       }
+    },
+
+    async shareModDetails(token) {
+      const held = typeof token === 'string' ? pending.get(token) : undefined
+      if (!held || held.expiresAt <= now()) throw new Error(EXPIRED)
+      const exp = held.export
+      return ctx.describeMods(
+        exp.game,
+        exp.mods.map((m) => m.source)
+      )
     },
 
     async importShare(token, name, folder) {

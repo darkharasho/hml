@@ -71,7 +71,9 @@ import {
 } from './thunderstore/resolve'
 import { downloadPackage } from './thunderstore/download'
 import { parseAllowedExternalUrl } from './security'
-import type { SecretPort } from './github/token'
+import { loadToken, type SecretPort } from './github/token'
+import { fetchRepoInfo } from './github/api'
+import { describeMods } from './share/modDetails'
 import { createGithubServices, unsupportedLoaderMessage } from './github/service'
 import {
   deployedProfileId,
@@ -91,7 +93,7 @@ import { listInstalledApps, type InstalledApp } from './steam/installedApps'
 import { createCustomGameServices, customLoaderSpec, loaderMismatch } from './custom/service'
 import { createNexusServices } from './nexus/service'
 import { createShareServices } from './share/service'
-import { gameByDomain } from './nexus/api'
+import { gameByDomain, getMod } from './nexus/api'
 import { parseNxm, type HandlerPort } from './nexus/nxm'
 import { findInstalledMod, providesPackage } from '../shared/modIdentity'
 import {
@@ -1150,6 +1152,38 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       const root = await getSteamRoot().catch(() => null)
       if (!root) return false
       return (await listInstalledApps(root)).some((a) => a.appId === appId)
+    },
+    describeMods: async (game, sources) => {
+      const def = await requireGame(game).catch(() => null)
+      const idx = def?.packageIndex ? await loadIndex(def, false).catch(() => null) : null
+      const ghToken = sources.some((s) => s.kind === 'github')
+        ? await loadToken(paths, deps.secrets).catch(() => null)
+        : null
+      return describeMods(sources, {
+        async thunderstore(fullName) {
+          const pkg = idx?.byName.get(fullName)
+          if (pkg) return { iconUrl: pkg.iconUrl || null, description: pkg.description }
+          // Games without a package index (or a game not added yet) get the icon alone.
+          const icon = (await tsIcons.icons([fullName])).get(fullName)
+          return icon ? { iconUrl: icon, description: '' } : null
+        },
+        async github(owner, repo) {
+          const info = await fetchRepoInfo({
+            fetch: deps.fetch,
+            token: ghToken,
+            cacheFile: paths.ghCache,
+            now,
+            owner,
+            repo,
+            maxAgeMs: 86_400_000
+          })
+          return info && { iconUrl: info.avatarUrl, description: info.description }
+        },
+        async nexus(domain, modId) {
+          const mod = await getMod(nexusClient, domain, modId)
+          return { iconUrl: mod.thumbnailUrl ?? mod.pictureUrl, description: mod.summary }
+        }
+      })
     },
     getCustomGame: async (label) => {
       const g = await customGames.get(label)
