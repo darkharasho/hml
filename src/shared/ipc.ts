@@ -1,5 +1,6 @@
 import type {
   AddCustomGameInput,
+  ConfigFile,
   CustomGameUpdate,
   GameDef,
   GameDetection,
@@ -66,6 +67,10 @@ export interface HmlApi {
   installFromPaths(game: string, profileId: string, paths: string[]): Promise<InstalledMod[]>
   setModEnabled(game: string, profileId: string, modId: string, enabled: boolean): Promise<void>
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
+  /** The profile's mod config files. */
+  listConfigs(game: string, profileId: string): Promise<ConfigFile[]>
+  readConfig(game: string, profileId: string, path: string): Promise<string>
+  writeConfig(game: string, profileId: string, path: string, text: string): Promise<void>
   /** Holds a Thunderstore or Nexus mod at its version (update checks skip it), or frees it. */
   setModHeld(game: string, profileId: string, modId: string, held: boolean): Promise<void>
   /** How the profile's mods depend on each other (Thunderstore metadata). */
@@ -222,6 +227,9 @@ const METHOD_TABLE = {
   uninstallMod: true,
   getModDeps: true,
   setModHeld: true,
+  listConfigs: true,
+  readConfig: true,
+  writeConfig: true,
   getLaunchWarnings: true,
   launch: true,
   waitForGame: true,

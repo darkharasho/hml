@@ -139,6 +139,14 @@ export interface InstalledMod {
   held?: true
 }
 
+/** A mod's settings file in a profile. */
+export interface ConfigFile {
+  /** Relative to the profile folder, posix separators. */
+  path: string
+  size: number
+  modifiedAt: string
+}
+
 export interface ProfileManifest {
   formatVersion: 1
   id: string

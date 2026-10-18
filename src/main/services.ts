@@ -38,6 +38,7 @@ import {
 } from './profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
 import { buildModDeps } from './thunderstore/modDeps'
+import { listConfigFiles, readConfigFile, writeConfigFile } from './config/configFiles'
 import { buildDirectLaunchPlan, buildLaunchPlan, buildSteamPlainPlan } from './launch/launchPlan'
 import {
   isGameProcessRunning,
@@ -1425,6 +1426,21 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     },
 
     setModEnabled: setModEnabledService,
+
+    async listConfigs(game, profileId) {
+      await getProfile(paths, game, profileId)
+      return listConfigFiles(paths.profileDir(game, profileId))
+    },
+    async readConfig(game, profileId, file) {
+      await getProfile(paths, game, profileId)
+      return readConfigFile(paths.profileDir(game, profileId), file)
+    },
+    async writeConfig(game, profileId, file, text) {
+      await getProfile(paths, game, profileId)
+      return serialize(game, profileId, () =>
+        writeConfigFile(paths.profileDir(game, profileId), file, text)
+      )
+    },
 
     async setModHeld(game, profileId, modId, held) {
       await requireGame(game)

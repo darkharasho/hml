@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import type {
+  ConfigFile,
   GhUpdate,
   InstalledMod,
   ModSource,
@@ -29,6 +30,8 @@ import { PackageDetail, ProgressLine } from './PackageDetail'
 import { Button, Icon, Menu, Toggle, type MenuItem } from './ui'
 import { DisableDialog, UninstallDialog } from './ModDepsDialogs'
 import { GhVersionDialog } from './GhVersionDialog'
+import { ConfigEditor } from './ConfigEditor'
+import { configsForMod } from '../configView'
 import { dependentsOf, orphanedBy } from '../../../shared/modDeps'
 
 /** Thunderstore is where most mods come from, so only the other sources get a badge. */
@@ -100,7 +103,32 @@ export function ModList(): React.JSX.Element | null {
     (s) => s.tsInstalling.length > 0 || s.ghUpdating.length > 0 || s.nxInstalling.length > 0
   )
   const [githubOpen, setGithubOpen] = useState(false)
-  const [tab, setTab] = useState<'installed' | 'online'>('installed')
+  const [tab, setTab] = useState<'installed' | 'online' | 'config' | 'log'>('installed')
+  const gameLabel = game?.label
+  const profileId = profile?.id
+  const modCount = profile?.mods.length ?? 0
+  // Both are kept per profile: another profile's config files and open file aren't this one's.
+  const profileKey = `${gameLabel}/${profileId}`
+  const [configList, setConfigList] = useState<{ key: string; files: ConfigFile[] } | null>(null)
+  const [configPick, setConfigPick] = useState<{ key: string; path: string | null } | null>(null)
+  const configFiles = configList?.key === profileKey ? configList.files : null
+  const configOpen = configPick?.key === profileKey ? configPick.path : null
+  const setConfigOpen = (path: string | null): void => setConfigPick({ key: profileKey, path })
+  const [configOpened, setConfigOpened] = useState(false)
+  const [configNonce, setConfigNonce] = useState(0)
+  // Mods write their configs on first run and installs add some, so look again on each change.
+  useEffect(() => {
+    if (!gameLabel || !profileId) return
+    let live = true
+    const key = `${gameLabel}/${profileId}`
+    api.listConfigs(gameLabel, profileId).then(
+      (files) => live && setConfigList({ key, files }),
+      () => live && setConfigList({ key, files: [] })
+    )
+    return () => {
+      live = false
+    }
+  }, [gameLabel, profileId, modCount, configNonce])
   // Browse mounts on first visit and then stays mounted, so search and filters survive tab switches.
   const [onlineOpened, setOnlineOpened] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -121,6 +149,11 @@ export function ModList(): React.JSX.Element | null {
   const hasOnline = online.length > 0
   // The domain can change while the Online tab is open; fall back to Installed if it vanishes.
   const activeTab = hasOnline ? tab : 'installed'
+  const openConfig = (path: string | null): void => {
+    setTab('config')
+    setConfigOpened(true)
+    setConfigOpen(path)
+  }
   const custom = !!game.custom
   const fileButton = (
     <Button
@@ -230,6 +263,16 @@ export function ModList(): React.JSX.Element | null {
               Online
             </TabButton>
           )}
+          <TabButton
+            selected={activeTab === 'config'}
+            onSelect={() => {
+              setTab('config')
+              setConfigOpened(true)
+              setConfigNonce((n) => n + 1)
+            }}
+          >
+            Config
+          </TabButton>
         </div>
         <div className="flex h-11 items-center gap-2 pb-2">
           {activeTab === 'installed' && (
@@ -260,7 +303,21 @@ export function ModList(): React.JSX.Element | null {
           <Browse key={game.label} game={game.label} />
         </div>
       )}
-      {activeTab === 'online' ? null : mods.length === 0 ? (
+      {configOpened && (
+        <div className={activeTab === 'config' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+          <ConfigEditor
+            key={`${game.label}/${profile.id}`}
+            active={activeTab === 'config'}
+            game={game.label}
+            profileId={profile.id}
+            files={configFiles}
+            onRefresh={() => setConfigNonce((n) => n + 1)}
+            open={configOpen}
+            onOpen={setConfigOpen}
+          />
+        </div>
+      )}
+      {activeTab !== 'installed' ? null : mods.length === 0 ? (
         <EmptyState
           onPick={() => void installFromFile()}
           onGithub={openGithub}
@@ -349,6 +406,8 @@ export function ModList(): React.JSX.Element | null {
                       ? () => void openDetail(m)
                       : undefined
                   }
+                  config={configFiles ? configsForMod(m, configFiles)[0]?.path : undefined}
+                  onEditConfig={openConfig}
                 />
               ))}
             </ul>
@@ -466,10 +525,15 @@ function ModRow({
   ghUpdate,
   nxUpdate,
   supported,
-  onOpen
+  onOpen,
+  config,
+  onEditConfig
 }: {
   mod: InstalledMod
   icons: string[]
+  /** The mod's config file, when one is found. */
+  config?: string
+  onEditConfig(path: string): void
   update?: ModUpdate
   ghUpdate?: GhUpdate
   nxUpdate?: NxUpdate
@@ -596,6 +660,14 @@ function ModRow({
     ]
   }
   if (source.kind === 'nexus' && onOpen) menu = [{ label: 'Details…', onSelect: onOpen }, ...menu]
+  if (config) {
+    const at = onOpen ? 1 : 0
+    menu = [
+      ...menu.slice(0, at),
+      { label: 'Edit config…', onSelect: () => onEditConfig(config) },
+      ...menu.slice(at)
+    ]
+  }
 
   async function openOnThunderstore(): Promise<void> {
     if (source.kind !== 'thunderstore') return
