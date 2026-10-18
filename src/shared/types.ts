@@ -132,6 +132,11 @@ export interface InstalledMod {
    * Thunderstore copy, or a raw loader release. Dependencies on them count as satisfied.
    */
   provides?: string[]
+  /**
+   * Kept at this version: update checks skip it. Thunderstore and Nexus mods; GitHub mods use
+   * their update mode ('pinned') instead.
+   */
+  held?: true
 }
 
 export interface ProfileManifest {
@@ -296,6 +301,17 @@ export interface GhPrereleaseResult {
 export interface GhInstallRequest {
   /** Install and follow the newest release even when it is a pre-release. */
   prereleases?: boolean
+}
+/** A release offered by a GitHub mod's Change version dialog. */
+export interface GhReleaseChoice {
+  tag: string
+  name: string
+  prerelease: boolean
+  publishedAt: string
+  /** The release the mod has installed now. */
+  installed: boolean
+  /** The release has a file matching the one the mod uses. */
+  hasAsset: boolean
 }
 export interface GhAsset {
   name: string

@@ -56,6 +56,7 @@ import {
 import { loadPackageIndex, type TsIndex } from './thunderstore/packageIndex'
 import { allCategories, searchPackages } from './thunderstore/search'
 import {
+  compareVersions,
   findUpdates,
   githubByName,
   installedVersions,
@@ -633,12 +634,13 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   /**
    * Installs a resolved plan in order (dependencies first), inside the profile's queue. A local
    * mod whose id is a planned package's manifest name, or a mod that `provides` the package, is
-   * replaced by the Thunderstore copy.
+   * replaced by the Thunderstore copy. A package in `held` is held (or freed) as it installs.
    */
   async function installPlan(
     def: GameDef,
     profileId: string,
-    plan: PlannedPackage[]
+    plan: PlannedPackage[],
+    held: ReadonlyMap<string, boolean> = new Map()
   ): Promise<{ installed: InstalledMod[]; replaced: string[] }> {
     const catalog = await getCatalog()
     const loaders = await loaderIds(def)
@@ -680,7 +682,8 @@ export function createServices(deps: ServiceDeps): HmlApi & {
               packageId: pkg.fullName,
               name: pkg.name,
               version: pkg.version,
-              replaces: supersedes
+              replaces: supersedes,
+              held: held.get(pkg.fullName)
             }
           )
         )
@@ -786,7 +789,16 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       await recordStandIns(def, profileId, standIns)
       const satisfied = skipped.filter((s) => s !== fullName)
       const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
-      const { installed, replaced } = await installPlan(def, profileId, plan)
+      // Picking an older version holds the mod there, so updates don't undo the rollback;
+      // picking the newest frees it.
+      const held = new Map<string, boolean>()
+      const versions = idx.byName.get(fullName)?.versions ?? []
+      if (version !== undefined && versions.length > 0)
+        held.set(
+          fullName,
+          versions.some((v) => compareVersions(v.version, version) > 0)
+        )
+      const { installed, replaced } = await installPlan(def, profileId, plan, held)
       return { installed, skipped, missing, replaced, enabled }
     })
   }
@@ -1262,6 +1274,10 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       await assertGameClosed(await requireGame(game))
       return ghServices.ghUpdate(game, profileId, modIds)
     },
+    async ghInstallRelease(game, profileId, modId, tag) {
+      await assertGameClosed(await requireGame(game))
+      return ghServices.ghInstallRelease(game, profileId, modId, tag)
+    },
     async nxUpdate(game, profileId, modIds) {
       await assertGameClosed(await requireGame(game))
       return nexusApi.nxUpdate(game, profileId, modIds)
@@ -1409,6 +1425,25 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     },
 
     setModEnabled: setModEnabledService,
+
+    async setModHeld(game, profileId, modId, held) {
+      await requireGame(game)
+      return serialize(game, profileId, async () => {
+        const profile = await getProfile(paths, game, profileId)
+        const mod = profile.mods.find((m) => m.id === modId)
+        if (!mod) throw new Error(`${modId} isn't installed in this profile.`)
+        if (mod.source.kind === 'github')
+          throw new Error('GitHub mods are held with their update setting.')
+        const rest = { ...mod }
+        delete rest.held
+        await saveProfile(paths, {
+          ...profile,
+          mods: profile.mods.map((m) =>
+            m.id === modId ? (held ? { ...rest, held: true } : rest) : m
+          )
+        })
+      })
+    },
 
     async uninstallMod(game, profileId, modId): Promise<void> {
       const def = await requireGame(game)

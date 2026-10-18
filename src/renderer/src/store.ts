@@ -119,6 +119,10 @@ interface State {
   ghInstall(url: string, asset?: string, opts?: GhInstallRequest): Promise<GhInstallResult>
   ghUpdate(updates: GhUpdate[]): Promise<void>
   ghSetUpdateMode(modId: string, mode: GhUpdateMode): Promise<void>
+  /** Holds a Thunderstore or Nexus mod at its version, or lets it update again. */
+  setModHeld(modId: string, held: boolean): Promise<void>
+  /** Installs one release of a GitHub mod (any but the newest pins it). */
+  ghInstallRelease(modId: string, tag: string): Promise<void>
   /** Saves a GitHub mod's pre-release setting; an update it reveals is applied per update mode. */
   ghSetPrereleases(modId: string, on: boolean): Promise<void>
   /** Saves a token, or removes it with null. Resolves false when that failed. */
@@ -806,6 +810,31 @@ export const useStore = create<State>()((set, get) => {
         await reloadProfiles()
       })
       if (ok !== failed) await get().checkUpdates()
+    },
+
+    async setModHeld(modId, held) {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) return
+      const ok = await busy(async () => {
+        await api.setModHeld(currentGame.label, currentProfile, modId, held)
+        await reloadProfiles()
+      })
+      if (ok !== failed) await get().checkUpdates()
+    },
+
+    async ghInstallRelease(modId, tag) {
+      const { currentGame, currentProfile, ghUpdating } = get()
+      if (!currentGame || !currentProfile || ghUpdating.includes(modId)) return
+      const mod = await markedRun('ghUpdating', [modId], () =>
+        api.ghInstallRelease(currentGame.label, currentProfile, modId, tag)
+      )
+      if (mod === failed) return
+      get().toast(
+        'success',
+        mod.github?.updateMode === 'pinned'
+          ? `Installed ${mod.name} ${tag}. It stays on this release until you change its updates.`
+          : `Installed ${mod.name} ${tag}`
+      )
     },
 
     async ghSetPrereleases(modId, on) {

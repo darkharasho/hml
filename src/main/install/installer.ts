@@ -271,6 +271,8 @@ export async function installZipReporting(
     github?: GhModConfig
     /** Thunderstore packages the new mod stands in for, recorded on it. */
     provides?: string[]
+    /** Hold the mod at this version (or not); unset keeps the hold of the mod it replaces. */
+    held?: boolean
   } = {}
 ): Promise<{ mod: InstalledMod; replaced: string[] }> {
   const profile = await getProfile(paths, game.label, profileId)
@@ -345,6 +347,7 @@ export async function installZipReporting(
   }
   const prior = previous.find((m) => m.id === packageId) ?? previous[0]
   const enabled = prior ? prior.enabled : true
+  const held = opts.held ?? previous.some((m) => m.id === packageId && m.held === true)
 
   const written: string[] = []
   const files: string[] = []
@@ -377,7 +380,8 @@ export async function installZipReporting(
       disableable,
       installedAt: new Date().toISOString(),
       ...(opts.github ? { github: opts.github } : {}),
-      ...(provides.length > 0 ? { provides } : {})
+      ...(provides.length > 0 ? { provides } : {}),
+      ...(held ? { held: true as const } : {})
     }
     const current = await getProfile(paths, game.label, profileId)
     await saveProfile(paths, {

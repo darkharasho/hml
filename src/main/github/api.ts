@@ -159,24 +159,18 @@ function tagMajor(tag: string): number | null {
 
 type Fetched = { status: 'ok'; body: unknown } | { status: 'notfound' }
 
-export async function fetchRelease(
-  opts: GhClientOpts & {
-    owner: string
-    repo: string
-    tag?: string
-    maxAgeMs?: number
-    track?: GhTrack
-    /** Newest release of any kind (not drafts) instead of the newest stable one. */
-    prereleases?: boolean
-  }
-): Promise<GhRelease> {
-  const { owner, repo, tag, maxAgeMs, track, prereleases } = opts
+/**
+ * A GET of the GitHub API through the release cache: fresh within `maxAgeMs`, else revalidated
+ * with its ETag, and the cached body when GitHub can't be asked.
+ */
+async function cachedGet(
+  opts: GhClientOpts & { maxAgeMs?: number },
+  slug: string
+): Promise<(url: string) => Promise<Fetched>> {
+  const { maxAgeMs } = opts
   const now = opts.now ?? Date.now
-  const slug = `${owner}/${repo}`
-  const base = `${API_ROOT}/repos/${owner}/${repo}`
   const cache = await readCache(opts.cacheFile)
-
-  const get = async (url: string): Promise<Fetched> => {
+  return async (url: string): Promise<Fetched> => {
     const key = opts.token ? `${url}#auth` : url
     const cached = cache[key]
     if (cached && maxAgeMs !== undefined && now() - cached.fetchedAt < maxAgeMs) {
@@ -213,6 +207,39 @@ export async function fetchRelease(
     })
     return { status: 'ok', body }
   }
+}
+
+/** The repo's published (non-draft) releases, newest first as GitHub lists them, at most 100. */
+export async function fetchReleaseList(
+  opts: GhClientOpts & { owner: string; repo: string; maxAgeMs?: number }
+): Promise<GhRelease[]> {
+  const slug = `${opts.owner}/${opts.repo}`
+  const get = await cachedGet(opts, slug)
+  const list = await get(`${API_ROOT}/repos/${slug}/releases?per_page=100`)
+  if (list.status === 'notfound') {
+    throw new Error(
+      `Couldn't find github.com/${slug}. Check the URL; private repositories need a GitHub token in Settings.`
+    )
+  }
+  const all = Array.isArray(list.body) ? (list.body as Record<string, unknown>[]) : []
+  return all.filter((r) => r.draft !== true).map(normalizeRelease)
+}
+
+export async function fetchRelease(
+  opts: GhClientOpts & {
+    owner: string
+    repo: string
+    tag?: string
+    maxAgeMs?: number
+    track?: GhTrack
+    /** Newest release of any kind (not drafts) instead of the newest stable one. */
+    prereleases?: boolean
+  }
+): Promise<GhRelease> {
+  const { owner, repo, tag, track, prereleases } = opts
+  const slug = `${owner}/${repo}`
+  const base = `${API_ROOT}/repos/${owner}/${repo}`
+  const get = await cachedGet(opts, slug)
 
   if (tag !== undefined) {
     const got = await get(`${base}/releases/tags/${encodeURIComponent(tag)}`)

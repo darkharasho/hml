@@ -28,6 +28,7 @@ import { NexusDetail } from './NexusDetail'
 import { PackageDetail, ProgressLine } from './PackageDetail'
 import { Button, Icon, Menu, Toggle, type MenuItem } from './ui'
 import { DisableDialog, UninstallDialog } from './ModDepsDialogs'
+import { GhVersionDialog } from './GhVersionDialog'
 import { dependentsOf, orphanedBy } from '../../../shared/modDeps'
 
 /** Thunderstore is where most mods come from, so only the other sources get a badge. */
@@ -492,11 +493,13 @@ function ModRow({
         ? s.nxInstalling.includes(mod.source.modId)
         : s.ghUpdating.includes(mod.id)
   )
+  const setModHeld = useStore((s) => s.setModHeld)
   const loadModDeps = useStore((s) => s.loadModDeps)
   const profileMods = useCurrentProfile()?.mods ?? []
   const [dialog, setDialog] = useState<
     | { kind: 'disable'; dependents: InstalledMod[] }
     | { kind: 'uninstall'; dependents: InstalledMod[]; orphans: InstalledMod[] }
+    | { kind: 'version' }
     | null
   >(null)
   const byIds = (ids: string[]): InstalledMod[] => profileMods.filter((m) => ids.includes(m.id))
@@ -533,6 +536,13 @@ function ModRow({
     danger: true,
     onSelect: () => void askUninstall()
   }
+  const hold: MenuItem = {
+    label: 'Hold at this version',
+    checked: mod.held === true,
+    toggle: true,
+    divider: true,
+    onSelect: () => void setModHeld(mod.id, mod.held !== true)
+  }
   let menu: MenuItem[] = [uninstall]
   if (source.kind === 'thunderstore') {
     menu = [
@@ -541,6 +551,7 @@ function ModRow({
         label: 'Open on Thunderstore',
         onSelect: () => void openOnThunderstore()
       },
+      hold,
       { ...uninstall, divider: true }
     ]
   } else if (source.kind === 'github') {
@@ -551,6 +562,7 @@ function ModRow({
         onSelect: () =>
           void api.openExternal(githubRepoUrl(source)).catch((e) => toast('error', errorMessage(e)))
       },
+      { label: 'Change version…', onSelect: () => setDialog({ kind: 'version' }) },
       ...UPDATE_MODES.map((m, i): MenuItem => ({
         label: updateModeLabel(m),
         checked: m === mode,
@@ -579,6 +591,7 @@ function ModRow({
             .openExternal(nexusModUrl(source.domain, source.modId))
             .catch((e) => toast('error', errorMessage(e)))
       },
+      hold,
       { ...uninstall, divider: true }
     ]
   }
@@ -610,6 +623,14 @@ function ModRow({
               title="The installed release is a pre-release"
             >
               Pre-release
+            </span>
+          )}
+          {mod.held && (
+            <span
+              className="shrink-0 self-center rounded bg-teal/10 px-1.5 py-px text-[10px] font-medium text-teal"
+              title="Held at this version: HML doesn't offer updates for it"
+            >
+              Held
             </span>
           )}
         </div>
@@ -688,6 +709,7 @@ function ModRow({
           onClose={() => setDialog(null)}
         />
       )}
+      {dialog?.kind === 'version' && <GhVersionDialog mod={mod} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'uninstall' && (
         <UninstallDialog
           mod={mod}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { TsDocKind, TsPackage } from '../../../shared/types'
 import { findInstalledMod } from '../../../shared/modIdentity'
+import { compareVersions } from '../../../shared/version'
 import { api, errorMessage } from '../api'
 import { useCurrentProfile, useStore } from '../store'
 import {
@@ -143,6 +144,10 @@ export function PackageDetail({
   // Only the package's own copy blocks installing that version; a GitHub stand-in that provides
   // it can be replaced by the Thunderstore package at any version.
   const isInstalled = ownInstalledVersion(pkg, mods, loaderIds) === version
+  // An older version than the newest is held there once installed (see tsInstall).
+  const older = !!selected && selected !== newestVersion(pkg)
+  const rollback =
+    older && installedVersion !== null && compareVersions(version, installedVersion) < 0
 
   async function openWebsite(): Promise<void> {
     try {
@@ -172,7 +177,13 @@ export function PackageDetail({
               onClick={() => void tsInstall(pkg, version)}
             >
               <Icon name="download" />
-              {installing ? 'Installing…' : isInstalled ? 'Installed' : `Install ${version}`}
+              {installing
+                ? 'Installing…'
+                : isInstalled
+                  ? 'Installed'
+                  : rollback
+                    ? `Roll back to ${version}`
+                    : `Install ${version}`}
             </Button>
           </div>
         </div>
@@ -278,6 +289,12 @@ export function PackageDetail({
           ))}
         </select>
       </div>
+      {older && !isInstalled && (
+        <p className="mt-2 text-xs text-muted">
+          An older version stays held once installed: HML won&apos;t offer updates for it until you
+          install the newest or turn off Hold.
+        </p>
+      )}
 
       <div
         role="tablist"

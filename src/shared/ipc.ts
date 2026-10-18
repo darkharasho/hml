@@ -6,6 +6,7 @@ import type {
   GhInstallRequest,
   GhInstallResult,
   GhPrereleaseResult,
+  GhReleaseChoice,
   GhUpdate,
   GhUpdateMode,
   DeploymentStatus,
@@ -65,6 +66,8 @@ export interface HmlApi {
   installFromPaths(game: string, profileId: string, paths: string[]): Promise<InstalledMod[]>
   setModEnabled(game: string, profileId: string, modId: string, enabled: boolean): Promise<void>
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
+  /** Holds a Thunderstore or Nexus mod at its version (update checks skip it), or frees it. */
+  setModHeld(game: string, profileId: string, modId: string, held: boolean): Promise<void>
   /** How the profile's mods depend on each other (Thunderstore metadata). */
   getModDeps(game: string, profileId: string): Promise<ModDeps>
   getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]>
@@ -112,6 +115,15 @@ export interface HmlApi {
     modId: string,
     on: boolean
   ): Promise<GhPrereleaseResult>
+  /** A GitHub mod's published releases, newest first. */
+  ghListReleases(game: string, profileId: string, modId: string): Promise<GhReleaseChoice[]>
+  /** Installs one release of a GitHub mod; any but the newest holds it there (pinned). */
+  ghInstallRelease(
+    game: string,
+    profileId: string,
+    modId: string,
+    tag: string
+  ): Promise<InstalledMod>
   /** Saves (after verifying) or, with null/empty, removes the GitHub token. Never returns it. */
   ghSetToken(token: string | null): Promise<{ login: string | null }>
   ghTokenStatus(): Promise<{ set: boolean; encryptionAvailable: boolean }>
@@ -209,6 +221,7 @@ const METHOD_TABLE = {
   setModEnabled: true,
   uninstallMod: true,
   getModDeps: true,
+  setModHeld: true,
   getLaunchWarnings: true,
   launch: true,
   waitForGame: true,
@@ -229,6 +242,8 @@ const METHOD_TABLE = {
   ghUpdate: true,
   ghSetUpdateMode: true,
   ghSetPrereleases: true,
+  ghListReleases: true,
+  ghInstallRelease: true,
   ghSetToken: true,
   ghTokenStatus: true,
   addNexusGame: true,

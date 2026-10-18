@@ -397,6 +397,11 @@ describe('findUpdates', () => {
       { modId: 'O-A', fullName: 'O-A', current: '1.0.0', latest: '1.2.0' }
     ])
   })
+
+  it('skips held mods', () => {
+    const i = idx(pkg('O-A', { '1.0.0': [], '1.2.0': [] }))
+    expect(findUpdates([{ ...ts('O-A', '1.0.0'), held: true }], i)).toEqual([])
+  })
 })
 
 describe('mergePlans', () => {
