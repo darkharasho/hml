@@ -2,9 +2,9 @@
 
 HML ships signed, auto-updating desktop builds. A push of a `v*` tag runs
 `.github/workflows/release.yml`, which builds Linux/Windows/macOS artifacts,
-publishes them to a GitHub Release, fills the notes from `RELEASE_NOTES.md`, and
-(optionally) posts to Discord. Installed copies of HML update themselves from
-that release via `electron-updater` (`src/main/updater.ts`).
+publishes them to a GitHub Release, and fills the notes from `RELEASE_NOTES.md`.
+Installed copies of HML update themselves from that release via
+`electron-updater` (`src/main/updater.ts`).
 
 ## Cutting a release
 
@@ -46,7 +46,6 @@ draft (the publish job needs every build).
 | `APPLE_ID` | secret | Apple ID email (for notarization). |
 | `APPLE_APP_SPECIFIC_PASSWORD` | secret | app-specific password (for notarization). |
 | `APPLE_TEAM_ID` | secret | Apple Developer Team ID (`YMPSC6RQ4F`). |
-| `DISCORD_WEBHOOK_URL` | variable | Optional. If set, posts the release to Discord. |
 
 `GITHUB_TOKEN` is provided automatically. Release notes are written by hand, so
 no AI API key is needed.
@@ -82,8 +81,8 @@ op read "$ITEM/juapwaxqpqluusuqhjaax6im2i"  | gh secret set APPLE_TEAM_ID -R dar
   x64 and arm64) — `npm run build` then `electron-builder … --publish always`
   uploads to a **draft** GitHub release for the tag. The mac job signs +
   notarizes.
-- **publish** — sets the release body from `RELEASE_NOTES.md`, flips the release
-  out of draft, and posts to Discord if `DISCORD_WEBHOOK_URL` is set.
+- **publish** — sets the release body from `RELEASE_NOTES.md` and flips the
+  release out of draft.
 
 ## Release files
 

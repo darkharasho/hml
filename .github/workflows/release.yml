@@ -154,30 +154,3 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${GITHUB_REF#refs/tags/}" --draft=false
-
-      - name: Post to Discord
-        if: ${{ vars.DISCORD_WEBHOOK_URL != '' }}
-        env:
-          DISCORD_WEBHOOK_URL: ${{ vars.DISCORD_WEBHOOK_URL }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          export TAG="$tag"
-          export RELEASE_URL="https://github.com/darkharasho/hml/releases/tag/${tag}"
-          export NOTES="$(gh release view "$tag" --json body --jq '.body' 2>/dev/null || echo '')"
-          payload=$(python3 -c "
-          import json, os
-          tag = os.environ['TAG']
-          notes = os.environ.get('NOTES', '')
-          if len(notes) > 3800:
-              notes = notes[:3800] + '\n\n*... see full notes on GitHub*'
-          print(json.dumps({'embeds': [{
-              'title': f'HML {tag}',
-              'url': os.environ['RELEASE_URL'],
-              'description': notes or 'A new version of HML is available!',
-              'color': 0xFF9A3C,
-              'thumbnail': {'url': 'https://raw.githubusercontent.com/darkharasho/hml/main/build/icon.png'},
-              'footer': {'text': 'HML Release'},
-          }]}))
-          ")
-          curl -s -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"

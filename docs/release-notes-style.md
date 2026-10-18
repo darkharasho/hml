@@ -1,8 +1,8 @@
 # Release Notes Style Guide
 
 Style rules for the release notes Claude writes into `RELEASE_NOTES.md` at
-release time. They become the GitHub release body (and the Discord post), so
-they're read by players, not just developers.
+release time. They become the GitHub release body, so they're read by players,
+not just developers.
 
 ## Voice & Tone
 - Write like the developer of the app, not a marketing team or a git changelog.
