@@ -16,10 +16,12 @@ import type {
   NxInstallResult,
   NxUpdate,
   ProfileManifest,
-  Settings
+  Settings,
+  UpdateSummary
 } from '../../shared/types'
 import { api, errorMessage } from './api'
 import { isGhAccessError } from '../../shared/messages'
+import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
 import { displayName, installToast, progressLabel } from './tsView'
@@ -50,6 +52,8 @@ interface State {
   busy: boolean
   /** Thunderstore updates for the current profile, from tsCheckUpdates. */
   updates: ModUpdate[]
+  /** Update counts per game and profile, from the background check. */
+  updateSummary: UpdateSummary
   /** fullNames of Thunderstore packages being installed or updated. */
   tsInstalling: string[]
   /** GitHub updates for the current profile, from ghCheckUpdates. */
@@ -96,20 +100,32 @@ interface State {
   selectProfile(id: string): Promise<void>
   createProfile(name: string): Promise<void>
   renameProfile(id: string, name: string): Promise<void>
+  duplicateProfile(id: string): Promise<void>
   deleteProfile(id: string): Promise<void>
   /** Switches to a game's profile (after an import) and reloads its list. */
   openImportedProfile(game: string, profileId: string): Promise<void>
   openProfileFolder(): Promise<void>
   installFromFile(): Promise<void>
   installFromPaths(paths: string[]): Promise<void>
-  setModEnabled(modId: string, enabled: boolean): Promise<void>
-  uninstallMod(mod: InstalledMod): Promise<void>
+  /** The current profile's dependency graph; null when it can't be read. */
+  loadModDeps(): Promise<ModDeps | null>
+  /**
+   * Turns a mod on or off, with `also` alongside it. Turning one on also turns on the disabled
+   * mods it needs.
+   */
+  setModEnabled(modId: string, enabled: boolean, also?: string[]): Promise<void>
+  /** Uninstalls a mod, then each of `also` (dependencies only it needed). */
+  uninstallMod(mod: InstalledMod, also?: InstalledMod[]): Promise<void>
   tsInstall(pkg: { fullName: string; name: string }, version?: string): Promise<void>
   tsUpdate(updates: ModUpdate[]): Promise<void>
   /** Throws on failure so the GitHub dialog can show the error inline. */
   ghInstall(url: string, asset?: string, opts?: GhInstallRequest): Promise<GhInstallResult>
   ghUpdate(updates: GhUpdate[]): Promise<void>
   ghSetUpdateMode(modId: string, mode: GhUpdateMode): Promise<void>
+  /** Holds a Thunderstore or Nexus mod at its version, or lets it update again. */
+  setModHeld(modId: string, held: boolean): Promise<void>
+  /** Installs one release of a GitHub mod (any but the newest pins it). */
+  ghInstallRelease(modId: string, tag: string): Promise<void>
   /** Saves a GitHub mod's pre-release setting; an update it reveals is applied per update mode. */
   ghSetPrereleases(modId: string, on: boolean): Promise<void>
   /** Saves a token, or removes it with null. Resolves false when that failed. */
@@ -148,6 +164,7 @@ interface State {
   pickGamePath(label: string): Promise<string | null>
   setSettingsOpen(open: boolean): void
   setGameColors(on: boolean): Promise<void>
+  setUpdateNotifications(on: boolean): Promise<void>
   setCreatingProfile(open: boolean): void
   toast(kind: ToastKind, message: string, action?: ToastAction): void
   dismissToast(id: number): void
@@ -227,6 +244,11 @@ export const useStore = create<State>()((set, get) => {
       const settings = await api.getSettings()
       // The app always opens on the game picker; lastGame only powers its Back button.
       set({ settings })
+      // Not ready at startup (the first check runs a little later); the event brings it then.
+      void api.getUpdateSummary().then(
+        (updateSummary) => set({ updateSummary }),
+        () => undefined
+      )
     } catch (e) {
       fail(e)
     } finally {
@@ -412,6 +434,7 @@ export const useStore = create<State>()((set, get) => {
     busyCount: 0,
     busy: false,
     updates: [],
+    updateSummary: {},
     tsInstalling: [],
     ghUpdates: [],
     ghUpdating: [],
@@ -568,6 +591,21 @@ export const useStore = create<State>()((set, get) => {
       })
     },
 
+    async duplicateProfile(id) {
+      const game = get().currentGame
+      const source = get().profiles.find((p) => p.id === id)
+      if (!game || !source) return
+      const created = await busy(async () => {
+        const profile = await api.duplicateProfile(game.label, id, `${source.name} (copy)`)
+        await reloadProfiles()
+        return profile
+      })
+      if (created !== failed) {
+        get().toast('success', `Created ${created.name}`)
+        await get().selectProfile(created.id)
+      }
+    },
+
     async deleteProfile(id) {
       const game = get().currentGame
       if (!game) return
@@ -614,34 +652,74 @@ export const useStore = create<State>()((set, get) => {
       await install(() => api.installFromPaths(currentGame.label, currentProfile, paths))
     },
 
-    async setModEnabled(modId, enabled) {
+    async loadModDeps() {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) return null
+      try {
+        return await api.getModDeps(currentGame.label, currentProfile)
+      } catch {
+        return null
+      }
+    },
+
+    async setModEnabled(modId, enabled, also = []) {
       const { currentGame, currentProfile } = get()
       if (!currentGame || !currentProfile) return
+      const mods = get().profiles.find((p) => p.id === currentProfile)?.mods ?? []
+      const flip = (ids: string[]): void =>
+        set({
+          profiles: get().profiles.map((p) =>
+            p.id !== currentProfile
+              ? p
+              : { ...p, mods: p.mods.map((m) => (ids.includes(m.id) ? { ...m, enabled } : m)) }
+          )
+        })
       // Optimistic flip so the toggle responds immediately; reload reconciles either way.
-      set({
-        profiles: get().profiles.map((p) =>
-          p.id !== currentProfile
-            ? p
-            : { ...p, mods: p.mods.map((m) => (m.id === modId ? { ...m, enabled } : m)) }
-        )
-      })
+      flip([modId, ...also])
+      let needed: string[] = []
+      if (enabled) {
+        const graph = await get().loadModDeps()
+        needed = graph
+          ? disabledDependencies(graph, mods, modId).filter((id) => !also.includes(id))
+          : []
+        flip(needed)
+      }
+      const done: string[] = []
       try {
-        await api.setModEnabled(currentGame.label, currentProfile, modId, enabled)
+        for (const id of [modId, ...also, ...needed]) {
+          await api.setModEnabled(currentGame.label, currentProfile, id, enabled)
+          done.push(id)
+        }
       } catch (e) {
         fail(e)
+      }
+      const turnedOn = needed.filter((id) => done.includes(id))
+      if (turnedOn.length > 0) {
+        const names = turnedOn.map((id) => displayName(mods.find((m) => m.id === id)?.name ?? id))
+        get().toast('info', `Also turned on ${names.join(', ')}, which it needs.`)
       }
       await reloadProfiles().catch(fail)
       await refreshWarnings()
     },
 
-    async uninstallMod(mod) {
+    async uninstallMod(mod, also = []) {
       const { currentGame, currentProfile } = get()
       if (!currentGame || !currentProfile) return
       const ok = await busy(async () => {
-        await api.uninstallMod(currentGame.label, currentProfile, mod.id)
-        await reloadProfiles()
+        try {
+          for (const m of [mod, ...also])
+            await api.uninstallMod(currentGame.label, currentProfile, m.id)
+        } finally {
+          await reloadProfiles()
+        }
       })
-      if (ok !== failed) get().toast('success', `Uninstalled ${mod.name}`)
+      if (ok !== failed)
+        get().toast(
+          'success',
+          also.length > 0
+            ? `Uninstalled ${mod.name} and ${also.length} ${also.length === 1 ? 'dependency' : 'dependencies'}`
+            : `Uninstalled ${mod.name}`
+        )
       await refreshWarnings()
       await get().checkUpdates()
     },
@@ -742,6 +820,31 @@ export const useStore = create<State>()((set, get) => {
         await reloadProfiles()
       })
       if (ok !== failed) await get().checkUpdates()
+    },
+
+    async setModHeld(modId, held) {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) return
+      const ok = await busy(async () => {
+        await api.setModHeld(currentGame.label, currentProfile, modId, held)
+        await reloadProfiles()
+      })
+      if (ok !== failed) await get().checkUpdates()
+    },
+
+    async ghInstallRelease(modId, tag) {
+      const { currentGame, currentProfile, ghUpdating } = get()
+      if (!currentGame || !currentProfile || ghUpdating.includes(modId)) return
+      const mod = await markedRun('ghUpdating', [modId], () =>
+        api.ghInstallRelease(currentGame.label, currentProfile, modId, tag)
+      )
+      if (mod === failed) return
+      get().toast(
+        'success',
+        mod.github?.updateMode === 'pinned'
+          ? `Installed ${mod.name} ${tag}. It stays on this release until you change its updates.`
+          : `Installed ${mod.name} ${tag}`
+      )
     },
 
     async ghSetPrereleases(modId, on) {
@@ -983,9 +1086,17 @@ export const useStore = create<State>()((set, get) => {
         get().toast('info', message)
       }
       await Promise.all([ts?.catch(() => {}), gh.catch(ghFailed), nx?.catch(() => {})])
+      // This check is newer than the background one: badges show its count.
+      if (current()) {
+        const { updates, ghUpdates, nxUpdates } = get()
+        const count = updates.length + ghUpdates.length + nxUpdates.length
+        void api.reportUpdateCount(currentGame.label, currentProfile, count).catch(() => undefined)
+      }
     },
 
     handleEvent(e) {
+      if (e.type === 'update-summary') return set({ updateSummary: e.summary })
+      if (e.type === 'open-profile') return void get().openImportedProfile(e.game, e.profileId)
       if (e.type === 'github-updated') return void onGithubUpdated(e)
       if (e.type === 'github-updates-available') return void onGithubUpdatesAvailable(e)
       if (e.type === 'nexus-installed') return void onNexusInstalled(e)
@@ -1068,6 +1179,10 @@ export const useStore = create<State>()((set, get) => {
 
     async setGameColors(on) {
       await persist((s) => ({ ...s, gameColors: on })).catch(fail)
+    },
+
+    async setUpdateNotifications(on) {
+      await persist((s) => ({ ...s, updateNotifications: on })).catch(fail)
     },
 
     setCreatingProfile(open) {

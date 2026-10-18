@@ -291,6 +291,9 @@ function GameCard({
   const installed = game.installDir !== null
   const nexus = isNexusOnly(game)
   const candidate = isSteamCandidate(game)
+  const updates = useStore((s) =>
+    Object.values(s.updateSummary[game.label] ?? {}).reduce((n, c) => n + c, 0)
+  )
   return (
     <li className="group flex flex-col">
       <button
@@ -300,6 +303,14 @@ function GameCard({
         className="relative block aspect-[3/4] overflow-hidden rounded-lg bg-raised ring-1 ring-line group-hover:ring-2 group-hover:ring-ember/70"
       >
         <GameCover game={game} />
+        {updates > 0 && (
+          <span
+            className="absolute top-2 right-2 rounded-full bg-ember px-2 py-0.5 text-[11px] font-semibold text-ink tabular-nums shadow"
+            title={`${updates} mod ${updates === 1 ? 'update' : 'updates'} in your profiles`}
+          >
+            {updates} {updates === 1 ? 'update' : 'updates'}
+          </span>
+        )}
         <span className="absolute inset-x-2 bottom-2 flex flex-wrap gap-1">
           {nexus && (
             <span className="rounded bg-ink/85 px-1.5 py-0.5 text-[11px] font-medium text-warn backdrop-blur-sm">

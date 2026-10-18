@@ -149,6 +149,32 @@ export async function renameProfile(
   await saveProfile(paths, { ...m, name })
 }
 
+/** A new profile named `name` with a copy of `id`'s mods, configs and files. */
+export async function duplicateProfile(
+  paths: AppPaths,
+  game: string,
+  id: string,
+  name: string
+): Promise<ProfileManifest> {
+  if (typeof name !== 'string' || !name.trim()) {
+    throw new Error('Profile name must not be empty.')
+  }
+  const source = await getProfile(paths, game, id)
+  const created = await createProfile(paths, game, name)
+  const from = paths.profileDir(game, id)
+  const to = paths.profileDir(game, created.id)
+  try {
+    const manifest = path.join(from, MANIFEST)
+    await fs.cp(from, to, { recursive: true, filter: (p) => p !== manifest })
+    const copy: ProfileManifest = { ...created, mods: source.mods }
+    await saveProfile(paths, copy)
+    return copy
+  } catch (e) {
+    await fs.rm(to, { recursive: true, force: true })
+    throw e
+  }
+}
+
 export async function deleteProfile(paths: AppPaths, game: string, id: string): Promise<void> {
   assertSafe('game', game)
   assertSafe('profile id', id)

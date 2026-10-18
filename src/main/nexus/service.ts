@@ -274,6 +274,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     const { mods } = await getProfile(paths, game, profileId)
     const out: NxUpdate[] = []
     for (const m of mods.filter(isNxMod)) {
+      if (m.held) continue
       try {
         const latest = newerFile(m, await memoFiles(domain, gameId, m.source.modId))
         if (latest) {

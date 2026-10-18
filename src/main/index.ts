@@ -1,4 +1,13 @@
-import { app, shell, dialog, BrowserWindow, nativeImage, protocol, safeStorage } from 'electron'
+import {
+  app,
+  shell,
+  dialog,
+  BrowserWindow,
+  nativeImage,
+  Notification,
+  protocol,
+  safeStorage
+} from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir, release as osRelease, type as osType } from 'node:os'
@@ -23,6 +32,16 @@ const execFileAsync = promisify(execFile)
 const indexHtml = join(__dirname, '../renderer/index.html')
 
 let mainWindowRef: BrowserWindow | null = null
+/** Shown notifications, kept so their click handlers aren't collected before a click. */
+const notifications = new Set<Notification>()
+
+function showMainWindow(): void {
+  const win = mainWindowRef
+  if (!win || win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
 
 const NXM_DESKTOP = 'hml-nxm.desktop'
 const NXM_DEV_REFUSAL = 'Nexus download links can only be handled by an installed build of HML.'
@@ -250,7 +269,21 @@ if (hasLock)
         }
         return out
       },
-      shareBaseUrl: process.env.HML_SHARE_URL ?? 'https://hml-share.project96.workers.dev'
+      shareBaseUrl: process.env.HML_SHARE_URL ?? 'https://hml-share.project96.workers.dev',
+      isFocused: () => mainWindowRef?.isFocused() === true,
+      notify(n) {
+        if (!Notification.isSupported()) return
+        const note = new Notification({ title: n.title, body: n.body, icon })
+        notifications.add(note)
+        const forget = (): void => void notifications.delete(note)
+        note.on('click', () => {
+          forget()
+          showMainWindow()
+          services?.emitOpenProfile(n.game, n.profileId)
+        })
+        note.on('close', forget)
+        note.show()
+      }
     })
     const ready = services
     registerIpc(ready)
@@ -263,11 +296,18 @@ if (hasLock)
     if (launchLink) pendingNxm.push(launchLink)
     createWindow()
 
-    // Check GitHub mods for updates shortly after startup and then periodically.
+    // Check mods for updates shortly after startup and then periodically: GitHub auto-updates
+    // first, then the count of what's left in every profile.
     const runGhUpdates = (): void => {
-      ready.ghAutoUpdateAll().catch((e) => {
-        console.warn(`GitHub auto-update failed: ${e instanceof Error ? e.message : String(e)}`)
-      })
+      ready
+        .ghAutoUpdateAll()
+        .catch((e) => {
+          console.warn(`GitHub auto-update failed: ${e instanceof Error ? e.message : String(e)}`)
+        })
+        .then(() => ready.runBackgroundChecks())
+        .catch((e) => {
+          console.warn(`Update check failed: ${e instanceof Error ? e.message : String(e)}`)
+        })
     }
     setTimeout(() => {
       runGhUpdates()

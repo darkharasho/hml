@@ -5,6 +5,7 @@ import type {
   GameDef,
   GhModConfig,
   GhPrereleaseResult,
+  GhReleaseChoice,
   GhTrack,
   GhUpdate,
   GhUpdateMode,
@@ -25,6 +26,7 @@ import {
   downloadAsset,
   fetchLogin,
   fetchRelease,
+  fetchReleaseList,
   GH_RELEASE_MEMO_MS,
   GhPrereleaseOnlyError,
   isNewerRelease,
@@ -123,6 +125,8 @@ export function createGithubServices(ctx: GhContext): Pick<
   | 'ghUpdate'
   | 'ghSetUpdateMode'
   | 'ghSetPrereleases'
+  | 'ghListReleases'
+  | 'ghInstallRelease'
   | 'ghSetToken'
   | 'ghTokenStatus'
 > & {
@@ -781,6 +785,89 @@ export function createGithubServices(ctx: GhContext): Pick<
     }
   }
 
+  async function ghMod(game: string, profileId: string, modId: string): Promise<GhMod> {
+    const { mods } = await getProfile(paths, game, profileId)
+    const mod = mods.find((m) => m.id === modId)
+    if (!mod || !isGhMod(mod)) throw new Error(`${modId} isn't a GitHub mod.`)
+    return mod
+  }
+
+  async function listReleases(
+    game: string,
+    profileId: string,
+    modId: string
+  ): Promise<GhReleaseChoice[]> {
+    await ctx.requireGame(game)
+    const mod = await ghMod(game, profileId, modId)
+    const releases = await fetchReleaseList({
+      fetch: deps.fetch,
+      token: await loadToken(paths, deps.secrets),
+      cacheFile: paths.ghCache,
+      now: deps.now,
+      owner: mod.source.owner,
+      repo: mod.source.repo,
+      maxAgeMs: GH_RELEASE_MEMO_MS
+    })
+    const pattern = patternOf(mod)
+    return releases.map((r) => ({
+      tag: r.tag,
+      name: r.name,
+      prerelease: r.prerelease,
+      publishedAt: r.publishedAt,
+      installed: r.tag === mod.source.tag,
+      // A release without the file the mod uses can't be installed over it.
+      hasAsset: r.assets.some((a) => matchesAssetPattern(pattern, a.name))
+    }))
+  }
+
+  /**
+   * Installs release `tag` of a GitHub mod. Any release but the newest one the mod follows holds
+   * it there (update mode 'pinned'); the newest one lets a held mod update again.
+   */
+  async function installRelease(
+    game: string,
+    profileId: string,
+    modId: string,
+    tag: string
+  ): Promise<InstalledMod> {
+    const def = await ctx.requireGame(game)
+    if (!def.supported) throw new Error(unsupportedLoaderMessage(def))
+    const catalog = await ctx.getCatalog()
+    const mod = await ghMod(game, profileId, modId)
+    const { owner, repo } = mod.source
+    const token = await loadToken(paths, deps.secrets)
+    const release = await lookup(token, owner, repo, { tag })
+    const newest = await latestFor(game, profileId, mod, memoLookup(token)).then(
+      (r) => r.latest.tag,
+      () => null
+    )
+    const pin = release.tag !== newest
+    const chosen = await chooseByPattern(token, release, patternOf(mod))
+    if ('ask' in chosen) {
+      throw new Error(
+        `${owner}/${repo} ${release.tag} has several files and HML can't tell which one replaces ${mod.source.asset}.`
+      )
+    }
+    return serialize(game, profileId, async () => {
+      const current = await ghMod(game, profileId, modId)
+      const keep = configOf(current)
+      const updateMode: GhUpdateMode = pin
+        ? 'pinned'
+        : keep.updateMode === 'pinned'
+          ? 'auto'
+          : keep.updateMode
+      const { mod: installed } = await installChosen(def, catalog, profileId, {
+        owner,
+        repo,
+        release,
+        chosen,
+        packageId: current.id,
+        config: () => ({ ...keep, updateMode })
+      })
+      return installed
+    })
+  }
+
   let running: Promise<void> | null = null
   return {
     ghSetToken: setToken,
@@ -792,6 +879,8 @@ export function createGithubServices(ctx: GhContext): Pick<
     ghUpdate: update,
     ghSetUpdateMode: setUpdateMode,
     ghSetPrereleases: setPrereleases,
+    ghListReleases: listReleases,
+    ghInstallRelease: installRelease,
     ghAutoUpdateAll() {
       running ??= runAutoUpdate().finally(() => {
         running = null

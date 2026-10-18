@@ -107,6 +107,8 @@ export interface Settings {
   manualLoaderKept: string[]
   /** Tint the app with each game's colour and show its banner art. */
   gameColors: boolean
+  /** Show a system notification when the background check finds mod updates. */
+  updateNotifications: boolean
 }
 
 export type ModSource =
@@ -132,6 +134,35 @@ export interface InstalledMod {
    * Thunderstore copy, or a raw loader release. Dependencies on them count as satisfied.
    */
   provides?: string[]
+  /**
+   * Kept at this version: update checks skip it. Thunderstore and Nexus mods; GitHub mods use
+   * their update mode ('pinned') instead.
+   */
+  held?: true
+}
+
+/** Mod updates found by the background check: game label → profile id → count (no zeros). */
+export type UpdateSummary = Record<string, Record<string, number>>
+
+/** A read of the mod loader's log, from readModLog. */
+export interface ModLogRead {
+  /** The log's path; null when HML doesn't know where the game's loader logs. */
+  file: string | null
+  size: number
+  /** Pass as `from` to get what was written after this read. */
+  next: number
+  /** Complete lines only. */
+  text: string
+  /** The text starts the view over: a first read, or the game started a new log. */
+  reset: boolean
+}
+
+/** A mod's settings file in a profile. */
+export interface ConfigFile {
+  /** Relative to the profile folder, posix separators. */
+  path: string
+  size: number
+  modifiedAt: string
 }
 
 export interface ProfileManifest {
@@ -297,6 +328,17 @@ export interface GhInstallRequest {
   /** Install and follow the newest release even when it is a pre-release. */
   prereleases?: boolean
 }
+/** A release offered by a GitHub mod's Change version dialog. */
+export interface GhReleaseChoice {
+  tag: string
+  name: string
+  prerelease: boolean
+  publishedAt: string
+  /** The release the mod has installed now. */
+  installed: boolean
+  /** The release has a file matching the one the mod uses. */
+  hasAsset: boolean
+}
 export interface GhAsset {
   name: string
   size: number
@@ -396,5 +438,9 @@ export type HmlEvent =
       mod: { name: string; version: string }
     }
   | { type: 'nexus-failed'; message: string }
+  /** Mod update counts from the background check (or a profile's own check). */
+  | { type: 'update-summary'; summary: UpdateSummary }
+  /** A notification was clicked: show this profile. */
+  | { type: 'open-profile'; game: string; profileId: string }
   /** Notify-mode GitHub mods with a release not announced before this session. */
   | { type: 'github-updates-available'; game: string; profileId: string; count: number }

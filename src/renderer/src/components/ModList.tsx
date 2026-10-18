@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import type {
+  ConfigFile,
   GhUpdate,
   InstalledMod,
   ModSource,
@@ -26,7 +27,13 @@ import { Browse } from './Browse'
 import { GithubDialog } from './GithubDialog'
 import { NexusDetail } from './NexusDetail'
 import { PackageDetail, ProgressLine } from './PackageDetail'
-import { Button, ConfirmDialog, Icon, Menu, Toggle, type MenuItem } from './ui'
+import { Button, Icon, Menu, Toggle, type MenuItem } from './ui'
+import { DisableDialog, UninstallDialog } from './ModDepsDialogs'
+import { GhVersionDialog } from './GhVersionDialog'
+import { ConfigEditor } from './ConfigEditor'
+import { LogViewer } from './LogViewer'
+import { configsForMod } from '../configView'
+import { dependentsOf, orphanedBy } from '../../../shared/modDeps'
 
 /** Thunderstore is where most mods come from, so only the other sources get a badge. */
 const SOURCE_BADGE: Record<
@@ -97,7 +104,32 @@ export function ModList(): React.JSX.Element | null {
     (s) => s.tsInstalling.length > 0 || s.ghUpdating.length > 0 || s.nxInstalling.length > 0
   )
   const [githubOpen, setGithubOpen] = useState(false)
-  const [tab, setTab] = useState<'installed' | 'online'>('installed')
+  const [tab, setTab] = useState<'installed' | 'online' | 'config' | 'log'>('installed')
+  const gameLabel = game?.label
+  const profileId = profile?.id
+  const modCount = profile?.mods.length ?? 0
+  // Both are kept per profile: another profile's config files and open file aren't this one's.
+  const profileKey = `${gameLabel}/${profileId}`
+  const [configList, setConfigList] = useState<{ key: string; files: ConfigFile[] } | null>(null)
+  const [configPick, setConfigPick] = useState<{ key: string; path: string | null } | null>(null)
+  const configFiles = configList?.key === profileKey ? configList.files : null
+  const configOpen = configPick?.key === profileKey ? configPick.path : null
+  const setConfigOpen = (path: string | null): void => setConfigPick({ key: profileKey, path })
+  const [configOpened, setConfigOpened] = useState(false)
+  const [configNonce, setConfigNonce] = useState(0)
+  // Mods write their configs on first run and installs add some, so look again on each change.
+  useEffect(() => {
+    if (!gameLabel || !profileId) return
+    let live = true
+    const key = `${gameLabel}/${profileId}`
+    api.listConfigs(gameLabel, profileId).then(
+      (files) => live && setConfigList({ key, files }),
+      () => live && setConfigList({ key, files: [] })
+    )
+    return () => {
+      live = false
+    }
+  }, [gameLabel, profileId, modCount, configNonce])
   // Browse mounts on first visit and then stays mounted, so search and filters survive tab switches.
   const [onlineOpened, setOnlineOpened] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -117,7 +149,15 @@ export function ModList(): React.JSX.Element | null {
   const { online, githubPrimary } = sourcesFor(game, currentDomain)
   const hasOnline = online.length > 0
   // The domain can change while the Online tab is open; fall back to Installed if it vanishes.
-  const activeTab = hasOnline ? tab : 'installed'
+  // Only loaders HML knows the log of get a Log tab.
+  const hasLog = game.loader === 'bepinex' || game.loader === 'shimloader'
+  const activeTab =
+    (tab === 'online' && !hasOnline) || (tab === 'log' && !hasLog) ? 'installed' : tab
+  const openConfig = (path: string | null): void => {
+    setTab('config')
+    setConfigOpened(true)
+    setConfigOpen(path)
+  }
   const custom = !!game.custom
   const fileButton = (
     <Button
@@ -227,6 +267,21 @@ export function ModList(): React.JSX.Element | null {
               Online
             </TabButton>
           )}
+          <TabButton
+            selected={activeTab === 'config'}
+            onSelect={() => {
+              setTab('config')
+              setConfigOpened(true)
+              setConfigNonce((n) => n + 1)
+            }}
+          >
+            Config
+          </TabButton>
+          {hasLog && (
+            <TabButton selected={activeTab === 'log'} onSelect={() => setTab('log')}>
+              Log
+            </TabButton>
+          )}
         </div>
         <div className="flex h-11 items-center gap-2 pb-2">
           {activeTab === 'installed' && (
@@ -257,7 +312,24 @@ export function ModList(): React.JSX.Element | null {
           <Browse key={game.label} game={game.label} />
         </div>
       )}
-      {activeTab === 'online' ? null : mods.length === 0 ? (
+      {configOpened && (
+        <div className={activeTab === 'config' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+          <ConfigEditor
+            key={`${game.label}/${profile.id}`}
+            active={activeTab === 'config'}
+            game={game.label}
+            profileId={profile.id}
+            files={configFiles}
+            onRefresh={() => setConfigNonce((n) => n + 1)}
+            open={configOpen}
+            onOpen={setConfigOpen}
+          />
+        </div>
+      )}
+      {activeTab === 'log' && (
+        <LogViewer game={game.label} profileId={profile.id} mods={profile.mods} active />
+      )}
+      {activeTab !== 'installed' ? null : mods.length === 0 ? (
         <EmptyState
           onPick={() => void installFromFile()}
           onGithub={openGithub}
@@ -346,6 +418,8 @@ export function ModList(): React.JSX.Element | null {
                       ? () => void openDetail(m)
                       : undefined
                   }
+                  config={configFiles ? configsForMod(m, configFiles)[0]?.path : undefined}
+                  onEditConfig={openConfig}
                 />
               ))}
             </ul>
@@ -463,10 +537,15 @@ function ModRow({
   ghUpdate,
   nxUpdate,
   supported,
-  onOpen
+  onOpen,
+  config,
+  onEditConfig
 }: {
   mod: InstalledMod
   icons: string[]
+  /** The mod's config file, when one is found. */
+  config?: string
+  onEditConfig(path: string): void
   update?: ModUpdate
   ghUpdate?: GhUpdate
   nxUpdate?: NxUpdate
@@ -490,7 +569,33 @@ function ModRow({
         ? s.nxInstalling.includes(mod.source.modId)
         : s.ghUpdating.includes(mod.id)
   )
-  const [confirming, setConfirming] = useState(false)
+  const setModHeld = useStore((s) => s.setModHeld)
+  const loadModDeps = useStore((s) => s.loadModDeps)
+  const profileMods = useCurrentProfile()?.mods ?? []
+  const [dialog, setDialog] = useState<
+    | { kind: 'disable'; dependents: InstalledMod[] }
+    | { kind: 'uninstall'; dependents: InstalledMod[]; orphans: InstalledMod[] }
+    | { kind: 'version' }
+    | null
+  >(null)
+  const byIds = (ids: string[]): InstalledMod[] => profileMods.filter((m) => ids.includes(m.id))
+
+  async function toggle(enabled: boolean): Promise<void> {
+    if (enabled) return setModEnabled(mod.id, true)
+    const graph = await loadModDeps()
+    const dependents = graph ? byIds(dependentsOf(graph, profileMods, mod.id)) : []
+    if (dependents.length === 0) return setModEnabled(mod.id, false)
+    setDialog({ kind: 'disable', dependents })
+  }
+
+  async function askUninstall(): Promise<void> {
+    const graph = await loadModDeps()
+    setDialog({
+      kind: 'uninstall',
+      dependents: graph ? byIds(dependentsOf(graph, profileMods, mod.id)) : [],
+      orphans: graph ? byIds(orphanedBy(graph, profileMods, mod.id)) : []
+    })
+  }
   const badge = mod.source.kind === 'thunderstore' ? null : SOURCE_BADGE[mod.source.kind]
   const canToggle = mod.disableable.length > 0
   const source = mod.source
@@ -505,7 +610,14 @@ function ModRow({
   const uninstall: MenuItem = {
     label: 'Uninstall…',
     danger: true,
-    onSelect: () => setConfirming(true)
+    onSelect: () => void askUninstall()
+  }
+  const hold: MenuItem = {
+    label: 'Hold at this version',
+    checked: mod.held === true,
+    toggle: true,
+    divider: true,
+    onSelect: () => void setModHeld(mod.id, mod.held !== true)
   }
   let menu: MenuItem[] = [uninstall]
   if (source.kind === 'thunderstore') {
@@ -515,6 +627,7 @@ function ModRow({
         label: 'Open on Thunderstore',
         onSelect: () => void openOnThunderstore()
       },
+      hold,
       { ...uninstall, divider: true }
     ]
   } else if (source.kind === 'github') {
@@ -525,6 +638,7 @@ function ModRow({
         onSelect: () =>
           void api.openExternal(githubRepoUrl(source)).catch((e) => toast('error', errorMessage(e)))
       },
+      { label: 'Change version…', onSelect: () => setDialog({ kind: 'version' }) },
       ...UPDATE_MODES.map((m, i): MenuItem => ({
         label: updateModeLabel(m),
         checked: m === mode,
@@ -553,10 +667,19 @@ function ModRow({
             .openExternal(nexusModUrl(source.domain, source.modId))
             .catch((e) => toast('error', errorMessage(e)))
       },
+      hold,
       { ...uninstall, divider: true }
     ]
   }
   if (source.kind === 'nexus' && onOpen) menu = [{ label: 'Details…', onSelect: onOpen }, ...menu]
+  if (config) {
+    const at = onOpen ? 1 : 0
+    menu = [
+      ...menu.slice(0, at),
+      { label: 'Edit config…', onSelect: () => onEditConfig(config) },
+      ...menu.slice(at)
+    ]
+  }
 
   async function openOnThunderstore(): Promise<void> {
     if (source.kind !== 'thunderstore') return
@@ -586,6 +709,14 @@ function ModRow({
               Pre-release
             </span>
           )}
+          {mod.held && (
+            <span
+              className="shrink-0 self-center rounded bg-teal/10 px-1.5 py-px text-[10px] font-medium text-teal"
+              title="Held at this version: HML doesn't offer updates for it"
+            >
+              Held
+            </span>
+          )}
         </div>
         {updating ? (
           <ProgressLine className="mt-0.5" />
@@ -608,7 +739,7 @@ function ModRow({
         <Toggle
           checked={mod.enabled}
           label={`${mod.enabled ? 'Disable' : 'Enable'} ${mod.name}`}
-          onChange={(v) => void setModEnabled(mod.id, v)}
+          onChange={(v) => void toggle(v)}
         />
       ) : (
         <span
@@ -648,13 +779,28 @@ function ModRow({
         </span>
       )}
       <Menu label={`Actions for ${mod.name}`} items={menu} />
-      {confirming && (
-        <ConfirmDialog
-          title={`Uninstall ${mod.name}?`}
-          body="Its files are removed from this profile. Other profiles are not affected."
-          confirmLabel="Uninstall"
-          onConfirm={() => void uninstallMod(mod)}
-          onClose={() => setConfirming(false)}
+      {dialog?.kind === 'disable' && (
+        <DisableDialog
+          mod={mod}
+          dependents={dialog.dependents}
+          onDisable={(also) =>
+            void setModEnabled(
+              mod.id,
+              false,
+              also.map((m) => m.id)
+            )
+          }
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'version' && <GhVersionDialog mod={mod} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'uninstall' && (
+        <UninstallDialog
+          mod={mod}
+          dependents={dialog.dependents}
+          orphans={dialog.orphans}
+          onUninstall={(also) => void uninstallMod(mod, also)}
+          onClose={() => setDialog(null)}
         />
       )}
     </li>

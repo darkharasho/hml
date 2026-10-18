@@ -98,6 +98,25 @@ describe('installer', () => {
     expect(readFileSync(cfg, 'utf8')).toBe('user')
   })
 
+  test('reinstall keeps a hold unless told otherwise', async () => {
+    const opts = { packageId: 'A-Mod' }
+    expect((await installZip(paths, game, catalog, pid, modZip('1'), src, opts)).held).toBe(
+      undefined
+    )
+    const held = await installZip(paths, game, catalog, pid, modZip('2'), src, {
+      ...opts,
+      held: true
+    })
+    expect(held.held).toBe(true)
+    expect((await installZip(paths, game, catalog, pid, modZip('3'), src, opts)).held).toBe(true)
+    const freed = await installZip(paths, game, catalog, pid, modZip('4'), src, {
+      ...opts,
+      held: false
+    })
+    expect(freed.held).toBe(undefined)
+    expect((await getProfile(paths, 'repo', pid)).mods[0].held).toBe(undefined)
+  })
+
   test('existing config is not overwritten nor owned', async () => {
     const cfg = path.join(profDir, 'BepInEx/config/mod.cfg')
     mkdirSync(path.dirname(cfg), { recursive: true })

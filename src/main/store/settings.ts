@@ -12,7 +12,8 @@ export function defaultSettings(): Settings {
     lastProfile: {},
     nexusDomainOverrides: {},
     manualLoaderKept: [],
-    gameColors: true
+    gameColors: true,
+    updateNotifications: true
   }
 }
 
@@ -46,7 +47,11 @@ export function normalizeSettings(stored: unknown): Settings {
     manualLoaderKept: Array.isArray(stored.manualLoaderKept)
       ? stored.manualLoaderKept.filter((x): x is string => typeof x === 'string')
       : defaults.manualLoaderKept,
-    gameColors: typeof stored.gameColors === 'boolean' ? stored.gameColors : defaults.gameColors
+    gameColors: typeof stored.gameColors === 'boolean' ? stored.gameColors : defaults.gameColors,
+    updateNotifications:
+      typeof stored.updateNotifications === 'boolean'
+        ? stored.updateNotifications
+        : defaults.updateNotifications
   }
 }
 

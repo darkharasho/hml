@@ -6,6 +6,7 @@ import { makePaths, type AppPaths } from '../../../src/main/store/paths'
 import {
   createProfile,
   deleteProfile,
+  duplicateProfile,
   getProfile,
   listProfiles,
   renameProfile,
@@ -138,6 +139,46 @@ describe('profiles', () => {
     })
     await saveProfile(paths, m)
     expect((await getProfile(paths, 'repo', 'default')).mods).toHaveLength(1)
+  })
+
+  test('duplicate copies mods, configs and files under a new id and name', async () => {
+    const m = await createProfile(paths, 'repo', 'Default')
+    const mod = {
+      id: 'a-b',
+      name: 'b',
+      version: '1.0.0',
+      source: { kind: 'thunderstore' as const, fullName: 'a-b' },
+      enabled: false,
+      files: ['BepInEx/plugins/b.dll'],
+      disableable: [],
+      installedAt: '2020-01-01T00:00:00.000Z'
+    }
+    await saveProfile(paths, { ...m, mods: [mod] })
+    const src = paths.profileDir('repo', 'default')
+    await fs.mkdir(path.join(src, 'BepInEx', 'config'), { recursive: true })
+    await fs.mkdir(path.join(src, 'BepInEx', 'plugins'), { recursive: true })
+    await fs.writeFile(path.join(src, 'BepInEx', 'config', 'b.cfg'), 'x = 1')
+    await fs.writeFile(path.join(src, 'BepInEx', 'plugins', 'b.dll'), 'dll')
+
+    const copy = await duplicateProfile(paths, 'repo', 'default', 'Default copy')
+    expect(copy.id).toBe('default-copy')
+    expect(copy.name).toBe('Default copy')
+    expect(copy.mods).toEqual([mod])
+    const dst = paths.profileDir('repo', copy.id)
+    expect(await fs.readFile(path.join(dst, 'BepInEx', 'config', 'b.cfg'), 'utf8')).toBe('x = 1')
+    expect(await fs.readFile(path.join(dst, 'BepInEx', 'plugins', 'b.dll'), 'utf8')).toBe('dll')
+    expect(await getProfile(paths, 'repo', copy.id)).toEqual(copy)
+
+    // The source is untouched, and editing the copy leaves it alone.
+    await fs.writeFile(path.join(dst, 'BepInEx', 'config', 'b.cfg'), 'x = 2')
+    expect(await fs.readFile(path.join(src, 'BepInEx', 'config', 'b.cfg'), 'utf8')).toBe('x = 1')
+    expect((await getProfile(paths, 'repo', 'default')).name).toBe('Default')
+  })
+
+  test('duplicate refuses a missing profile and leaves no folder behind', async () => {
+    await expect(duplicateProfile(paths, 'repo', 'nope', 'Copy')).rejects.toThrow(/not found/i)
+    expect(await exists(paths.profileDir('repo', 'copy'))).toBe(false)
+    await expect(duplicateProfile(paths, 'repo', '../x', 'Copy')).rejects.toThrow()
   })
 
   test('delete removes dir', async () => {

@@ -1,11 +1,13 @@
 import type {
   AddCustomGameInput,
+  ConfigFile,
   CustomGameUpdate,
   GameDef,
   GameDetection,
   GhInstallRequest,
   GhInstallResult,
   GhPrereleaseResult,
+  GhReleaseChoice,
   GhUpdate,
   GhUpdateMode,
   DeploymentStatus,
@@ -14,6 +16,7 @@ import type {
   LaunchMode,
   LaunchWarning,
   LaunchWatchResult,
+  ModLogRead,
   ModUpdate,
   NxInstallResult,
   NxModDetail,
@@ -30,8 +33,10 @@ import type {
   TsDocKind,
   TsPackage,
   TsQuery,
-  TsSearchResult
+  TsSearchResult,
+  UpdateSummary
 } from './types'
+import type { ModDeps } from './modDeps'
 
 export interface GameSummary extends GameDef {
   installDir: string | null
@@ -55,6 +60,8 @@ export interface HmlApi {
   listProfiles(game: string): Promise<ProfileManifest[]>
   createProfile(game: string, name: string): Promise<ProfileManifest>
   renameProfile(game: string, id: string, name: string): Promise<void>
+  /** A new profile named `name` with a copy of `id`'s mods and configs. */
+  duplicateProfile(game: string, id: string, name: string): Promise<ProfileManifest>
   deleteProfile(game: string, id: string): Promise<void>
   /** Multi-select .zip dialog; installs with source kind 'local'. Cancel returns []. */
   installFromFile(game: string, profileId: string): Promise<InstalledMod[]>
@@ -62,6 +69,22 @@ export interface HmlApi {
   installFromPaths(game: string, profileId: string, paths: string[]): Promise<InstalledMod[]>
   setModEnabled(game: string, profileId: string, modId: string, enabled: boolean): Promise<void>
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
+  /** Mod update counts from the last background check. */
+  getUpdateSummary(): Promise<UpdateSummary>
+  /** Records the renderer's own update count for a profile in the summary. */
+  reportUpdateCount(game: string, profileId: string, count: number): Promise<void>
+  /** The mod loader's log for a profile, from byte `from` on (0 reads its end). */
+  readModLog(game: string, profileId: string, from: number): Promise<ModLogRead>
+  /** Opens the log file in the system's text editor. */
+  openModLog(game: string, profileId: string): Promise<void>
+  /** The profile's mod config files. */
+  listConfigs(game: string, profileId: string): Promise<ConfigFile[]>
+  readConfig(game: string, profileId: string, path: string): Promise<string>
+  writeConfig(game: string, profileId: string, path: string, text: string): Promise<void>
+  /** Holds a Thunderstore or Nexus mod at its version (update checks skip it), or frees it. */
+  setModHeld(game: string, profileId: string, modId: string, held: boolean): Promise<void>
+  /** How the profile's mods depend on each other (Thunderstore metadata). */
+  getModDeps(game: string, profileId: string): Promise<ModDeps>
   getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]>
   launch(game: string, profileId: string | null, mode: LaunchMode): Promise<void>
   /**
@@ -107,6 +130,15 @@ export interface HmlApi {
     modId: string,
     on: boolean
   ): Promise<GhPrereleaseResult>
+  /** A GitHub mod's published releases, newest first. */
+  ghListReleases(game: string, profileId: string, modId: string): Promise<GhReleaseChoice[]>
+  /** Installs one release of a GitHub mod; any but the newest holds it there (pinned). */
+  ghInstallRelease(
+    game: string,
+    profileId: string,
+    modId: string,
+    tag: string
+  ): Promise<InstalledMod>
   /** Saves (after verifying) or, with null/empty, removes the GitHub token. Never returns it. */
   ghSetToken(token: string | null): Promise<{ login: string | null }>
   ghTokenStatus(): Promise<{ set: boolean; encryptionAvailable: boolean }>
@@ -197,11 +229,21 @@ const METHOD_TABLE = {
   listProfiles: true,
   createProfile: true,
   renameProfile: true,
+  duplicateProfile: true,
   deleteProfile: true,
   installFromFile: true,
   installFromPaths: true,
   setModEnabled: true,
   uninstallMod: true,
+  getModDeps: true,
+  setModHeld: true,
+  listConfigs: true,
+  readModLog: true,
+  getUpdateSummary: true,
+  reportUpdateCount: true,
+  openModLog: true,
+  readConfig: true,
+  writeConfig: true,
   getLaunchWarnings: true,
   launch: true,
   waitForGame: true,
@@ -222,6 +264,8 @@ const METHOD_TABLE = {
   ghUpdate: true,
   ghSetUpdateMode: true,
   ghSetPrereleases: true,
+  ghListReleases: true,
+  ghInstallRelease: true,
   ghSetToken: true,
   ghTokenStatus: true,
   addNexusGame: true,

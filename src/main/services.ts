@@ -30,12 +30,17 @@ import { isDirectory, loadSettings, resolveGameDir, updateSettings } from './sto
 import {
   createProfile,
   deleteProfile,
+  duplicateProfile,
   getProfile,
   listProfiles,
   renameProfile,
   saveProfile
 } from './profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
+import { buildModDeps } from './thunderstore/modDeps'
+import { listConfigFiles, readConfigFile, writeConfigFile } from './config/configFiles'
+import { readLogFrom } from './logs/logTail'
+import { createBackgroundChecks } from './updates/backgroundChecks'
 import { buildDirectLaunchPlan, buildLaunchPlan, buildSteamPlainPlan } from './launch/launchPlan'
 import {
   isGameProcessRunning,
@@ -54,6 +59,7 @@ import {
 import { loadPackageIndex, type TsIndex } from './thunderstore/packageIndex'
 import { allCategories, searchPackages } from './thunderstore/search'
 import {
+  compareVersions,
   findUpdates,
   githubByName,
   installedVersions,
@@ -167,6 +173,10 @@ export interface ServiceDeps {
   procFs?: ProcFsPort
   /** Clock and timer for waitForGame; default to the real ones. */
   launchWatch?: { now(): number; sleep(ms: number): Promise<void> }
+  /** Shows a system notification; clicking it emits `open-profile`. Unset shows none. */
+  notify?: (n: { title: string; body: string; game: string; profileId: string }) => void
+  /** True while HML's window has focus; unset counts as unfocused. */
+  isFocused?: () => boolean
 }
 
 interface LoadedIndex extends TsIndex {
@@ -211,6 +221,10 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
 export function createServices(deps: ServiceDeps): HmlApi & {
   ghAutoUpdateAll(): Promise<void>
+  /** Checks every profile for mod updates, publishes the counts and notifies of new ones. */
+  runBackgroundChecks(): Promise<void>
+  /** Tells the renderer to show a profile (an update notification was clicked). */
+  emitOpenProfile(game: string, profileId: string): void
   handleNxm(raw: string): Promise<void>
   /** Answers an `hml-art://` request (the protocol handler in index.ts). */
   serveArt(url: string): Promise<Response>
@@ -631,12 +645,13 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   /**
    * Installs a resolved plan in order (dependencies first), inside the profile's queue. A local
    * mod whose id is a planned package's manifest name, or a mod that `provides` the package, is
-   * replaced by the Thunderstore copy.
+   * replaced by the Thunderstore copy. A package in `held` is held (or freed) as it installs.
    */
   async function installPlan(
     def: GameDef,
     profileId: string,
-    plan: PlannedPackage[]
+    plan: PlannedPackage[],
+    held: ReadonlyMap<string, boolean> = new Map()
   ): Promise<{ installed: InstalledMod[]; replaced: string[] }> {
     const catalog = await getCatalog()
     const loaders = await loaderIds(def)
@@ -678,7 +693,8 @@ export function createServices(deps: ServiceDeps): HmlApi & {
               packageId: pkg.fullName,
               name: pkg.name,
               version: pkg.version,
-              replaces: supersedes
+              replaces: supersedes,
+              held: held.get(pkg.fullName)
             }
           )
         )
@@ -784,14 +800,29 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       await recordStandIns(def, profileId, standIns)
       const satisfied = skipped.filter((s) => s !== fullName)
       const enabled = await enableSatisfied(def, profileId, satisfied, loaders)
-      const { installed, replaced } = await installPlan(def, profileId, plan)
+      // Picking an older version holds the mod there, so updates don't undo the rollback;
+      // picking the newest frees it.
+      const held = new Map<string, boolean>()
+      const versions = idx.byName.get(fullName)?.versions ?? []
+      if (version !== undefined && versions.length > 0)
+        held.set(
+          fullName,
+          versions.some((v) => compareVersions(v.version, version) > 0)
+        )
+      const { installed, replaced } = await installPlan(def, profileId, plan, held)
       return { installed, skipped, missing, replaced, enabled }
     })
   }
 
   const tsServices: Pick<
     HmlApi,
-    'tsSearch' | 'tsRefresh' | 'tsGetPackage' | 'tsInstall' | 'tsCheckUpdates' | 'tsUpdate'
+    | 'tsSearch'
+    | 'tsRefresh'
+    | 'tsGetPackage'
+    | 'tsInstall'
+    | 'tsCheckUpdates'
+    | 'tsUpdate'
+    | 'getModDeps'
   > = {
     async tsSearch(game, q) {
       const idx = await loadIndex(await requireGame(game), false)
@@ -822,6 +853,21 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       const idx = await loadIndex(def, false)
       const profile = await getProfile(paths, game, profileId)
       return findUpdates(profile.mods, idx.byName)
+    },
+
+    async getModDeps(game, profileId) {
+      const def = await requireGame(game)
+      const { mods } = await getProfile(paths, game, profileId)
+      let index = new Map<string, TsPackage>()
+      if (def.packageIndex !== null) {
+        try {
+          index = (await loadIndex(def, false)).byName
+        } catch (e) {
+          // Without the index only the loader is known; the caller acts without a warning.
+          console.warn(`Dependency lookup for ${game} failed: ${errMsg(e)}`)
+        }
+      }
+      return buildModDeps(mods, index, await loaderIds(def))
     },
 
     async tsUpdate(game, profileId, modIds) {
@@ -882,6 +928,24 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     requireGame,
     serialize
   })
+
+  /**
+   * Where the profile's mod loader logs: BepInEx runs from the profile, so its log is there;
+   * UE4SS writes next to the game's exe. Null for other loaders.
+   */
+  async function modLogFile(game: string, profileId: string): Promise<string | null> {
+    const def = await requireGame(game)
+    await getProfile(paths, game, profileId)
+    if (def.loader === 'bepinex') {
+      return path.join(paths.profileDir(game, profileId), 'BepInEx', 'LogOutput.log')
+    }
+    if (def.loader === 'shimloader' && def.dataFolderName) {
+      const steamRoot = await getSteamRoot()
+      const gameDir = await resolveGameDir(def, await loadSettings(paths), steamRoot)
+      return gameDir ? path.join(shimBinDir(gameDir, def.dataFolderName), 'UE4SS.log') : null
+    }
+    return null
+  }
 
   async function setModEnabledService(
     game: string,
@@ -1216,9 +1280,42 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     }
   }
 
+  const background = createBackgroundChecks({
+    async games() {
+      const dirs = await fs.readdir(paths.gamesDir, { withFileTypes: true }).catch(() => [])
+      const out: { label: string; displayName: string }[] = []
+      for (const d of dirs) {
+        if (!d.isDirectory()) continue
+        const def = await requireGame(d.name).catch(() => null)
+        if (def?.supported) out.push({ label: def.label, displayName: def.displayName })
+      }
+      return out
+    },
+    profiles: (game) => listProfiles(paths, game),
+    checks: {
+      thunderstore: async (game, profileId) => await tsServices.tsCheckUpdates(game, profileId),
+      github: async (game, profileId) => await ghServices.ghCheckUpdates(game, profileId),
+      nexus: async (game, profileId) => await nexusApi.nxCheckUpdates(game, profileId)
+    },
+    publish: (summary) => deps.emit({ type: 'update-summary', summary }),
+    notify: (n) => deps.notify?.(n),
+    async shouldNotify() {
+      if (!deps.notify || deps.isFocused?.()) return false
+      return (await loadSettings(paths)).updateNotifications
+    }
+  })
+
   return {
     ...tsServices,
     ...ghServices,
+    runBackgroundChecks: async () => void (await background.run()),
+    emitOpenProfile: (game, profileId) => deps.emit({ type: 'open-profile', game, profileId }),
+    getUpdateSummary: async () => background.summary(),
+    async reportUpdateCount(game, profileId, count) {
+      if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return
+      await getProfile(paths, game, profileId)
+      background.setCount(game, profileId, count)
+    },
     ...nexusApi,
     ...shareApi,
     ...customApi,
@@ -1238,6 +1335,10 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     async ghUpdate(game, profileId, modIds) {
       await assertGameClosed(await requireGame(game))
       return ghServices.ghUpdate(game, profileId, modIds)
+    },
+    async ghInstallRelease(game, profileId, modId, tag) {
+      await assertGameClosed(await requireGame(game))
+      return ghServices.ghInstallRelease(game, profileId, modId, tag)
     },
     async nxUpdate(game, profileId, modIds) {
       await assertGameClosed(await requireGame(game))
@@ -1356,6 +1457,9 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     },
     renameProfile: (game, id, name) =>
       serialize(game, id, () => renameProfile(paths, game, id, name)),
+    // Serialized on the source, so an install in progress doesn't land half copied.
+    duplicateProfile: (game, id, name) =>
+      serialize(game, id, () => duplicateProfile(paths, game, id, name)),
     deleteProfile: (game, id) => serialize(game, id, () => deleteProfile(paths, game, id)),
 
     async installFromFile(game: string, profileId: string): Promise<InstalledMod[]> {
@@ -1383,6 +1487,52 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     },
 
     setModEnabled: setModEnabledService,
+
+    async readModLog(game, profileId, from) {
+      const file = await modLogFile(game, profileId)
+      if (!file) return { file: null, size: 0, next: 0, text: '', reset: true }
+      return { file, ...(await readLogFrom(file, from)) }
+    },
+    async openModLog(game, profileId) {
+      const file = await modLogFile(game, profileId)
+      if (!file) throw new Error("HML doesn't know where this game's mod loader writes its log.")
+      const error = await deps.shell.openPath(file)
+      if (error) throw new Error(`Could not open the log: ${error}`)
+    },
+
+    async listConfigs(game, profileId) {
+      await getProfile(paths, game, profileId)
+      return listConfigFiles(paths.profileDir(game, profileId))
+    },
+    async readConfig(game, profileId, file) {
+      await getProfile(paths, game, profileId)
+      return readConfigFile(paths.profileDir(game, profileId), file)
+    },
+    async writeConfig(game, profileId, file, text) {
+      await getProfile(paths, game, profileId)
+      return serialize(game, profileId, () =>
+        writeConfigFile(paths.profileDir(game, profileId), file, text)
+      )
+    },
+
+    async setModHeld(game, profileId, modId, held) {
+      await requireGame(game)
+      return serialize(game, profileId, async () => {
+        const profile = await getProfile(paths, game, profileId)
+        const mod = profile.mods.find((m) => m.id === modId)
+        if (!mod) throw new Error(`${modId} isn't installed in this profile.`)
+        if (mod.source.kind === 'github')
+          throw new Error('GitHub mods are held with their update setting.')
+        const rest = { ...mod }
+        delete rest.held
+        await saveProfile(paths, {
+          ...profile,
+          mods: profile.mods.map((m) =>
+            m.id === modId ? (held ? { ...rest, held: true } : rest) : m
+          )
+        })
+      })
+    },
 
     async uninstallMod(game, profileId, modId): Promise<void> {
       const def = await requireGame(game)

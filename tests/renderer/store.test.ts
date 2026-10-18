@@ -22,7 +22,12 @@ const api = vi.hoisted(() => ({
   addCustomGame: vi.fn(),
   launch: vi.fn(),
   waitForGame: vi.fn(),
-  cancelWaitForGame: vi.fn()
+  cancelWaitForGame: vi.fn(),
+  setModEnabled: vi.fn(),
+  uninstallMod: vi.fn(),
+  getModDeps: vi.fn(),
+  reportUpdateCount: vi.fn(async () => undefined),
+  getUpdateSummary: vi.fn(async () => ({}))
 }))
 vi.mock('../../src/renderer/src/api', () => ({
   api,
@@ -263,6 +268,65 @@ describe('store update lists after a failed check', () => {
     await useStore.getState().checkUpdates()
     expect(useStore.getState().ghUpdates.map((u) => u.modId)).toEqual(['kept'])
     expect(useStore.getState().toasts.filter((t) => t.kind === 'info')).toHaveLength(1)
+  })
+})
+
+describe('store dependency-aware toggles', () => {
+  const repo = { label: 'repo', displayName: 'R.E.P.O.', loader: 'bepinex', packageIndex: null }
+  const mod = (id: string, enabled: boolean): unknown => ({
+    id,
+    name: `${id}_mod`,
+    enabled,
+    source: { kind: 'thunderstore', fullName: id }
+  })
+  const mods = [mod('app', false), mod('lib', false), mod('other', true)]
+
+  beforeEach(() => {
+    api.setModEnabled.mockReset().mockResolvedValue(undefined)
+    api.uninstallMod.mockReset().mockResolvedValue(undefined)
+    api.getModDeps.mockReset().mockResolvedValue({ deps: { app: ['lib'] }, loaders: [] })
+    api.listProfiles.mockReset().mockResolvedValue([{ id: 'p', name: 'P', mods }])
+    api.getLaunchWarnings.mockReset().mockResolvedValue([])
+    api.ghCheckUpdates.mockReset().mockResolvedValue([])
+    useStore.setState({
+      currentGame: repo as unknown as GameSummary,
+      currentProfile: 'p',
+      profiles: [{ id: 'p', name: 'P', mods }] as unknown as ProfileManifest[],
+      toasts: []
+    })
+  })
+
+  test('turning a mod on turns on the disabled mods it needs', async () => {
+    await useStore.getState().setModEnabled('app', true)
+    expect(api.setModEnabled.mock.calls.map((c) => c[2])).toEqual(['app', 'lib'])
+    expect(useStore.getState().toasts.map((t) => t.message)).toEqual([
+      'Also turned on lib mod, which it needs.'
+    ])
+  })
+
+  test('turning a mod off touches only it and the mods passed along', async () => {
+    await useStore.getState().setModEnabled('other', false, ['app'])
+    expect(api.getModDeps).not.toHaveBeenCalled()
+    expect(api.setModEnabled.mock.calls.map((c) => [c[2], c[3]])).toEqual([
+      ['other', false],
+      ['app', false]
+    ])
+  })
+
+  test('an unreadable graph still turns the mod on', async () => {
+    api.getModDeps.mockRejectedValue(new Error('offline'))
+    await useStore.getState().setModEnabled('app', true)
+    expect(api.setModEnabled.mock.calls.map((c) => c[2])).toEqual(['app'])
+    expect(useStore.getState().toasts).toEqual([])
+  })
+
+  test('uninstall removes the chosen dependencies after the mod', async () => {
+    const [app, lib] = mods as ProfileManifest['mods']
+    await useStore.getState().uninstallMod(app, [lib])
+    expect(api.uninstallMod.mock.calls.map((c) => c[2])).toEqual(['app', 'lib'])
+    expect(useStore.getState().toasts.map((t) => t.message)).toEqual([
+      'Uninstalled app_mod and 1 dependency'
+    ])
   })
 })
 

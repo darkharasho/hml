@@ -949,7 +949,8 @@ describe('services', () => {
       lastProfile: {},
       nexusDomainOverrides: {},
       manualLoaderKept: [],
-      gameColors: true
+      gameColors: true,
+      updateNotifications: true
     })
   })
 
@@ -1141,6 +1142,35 @@ describe('services', () => {
       expect(progress.map((e) => e.done)).toEqual([0, 1, 2])
       expect(progress.every((e) => e.total === 2)).toBe(true)
       expect(progress[0].message).toBe('Installing Lib 1.0.0')
+    })
+
+    test('installing an older version holds the mod; the newest frees it', async () => {
+      packages = [rawPkg('Own', 'Mod', ['2.0.0', '1.0.0'])]
+      blobs.set(dl('Own-Mod', '2.0.0'), zipOf('Mod', '2.0.0'))
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      await api.tsInstall('repo', profile.id, 'Own-Mod', '1.0.0')
+      const held = (await api.listProfiles('repo'))[0].mods[0]
+      expect([held.version, held.held]).toEqual(['1.0.0', true])
+      expect(await api.tsCheckUpdates('repo', profile.id)).toEqual([])
+
+      await api.setModHeld('repo', profile.id, 'Own-Mod', false)
+      expect((await api.tsCheckUpdates('repo', profile.id)).map((u) => u.latest)).toEqual(['2.0.0'])
+      await api.setModHeld('repo', profile.id, 'Own-Mod', true)
+      await api.tsInstall('repo', profile.id, 'Own-Mod', '2.0.0')
+      const freed = (await api.listProfiles('repo'))[0].mods[0]
+      expect([freed.version, freed.held]).toEqual(['2.0.0', undefined])
+    })
+
+    test('getModDeps reads the graph from the index', async () => {
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      expect(await api.getModDeps('repo', profile.id)).toEqual({
+        deps: { 'Own-Mod': ['Dep-Lib'] },
+        loaders: []
+      })
     })
 
     test("mod icons: the installed icon.png first, then the package index's icon", async () => {
@@ -1671,7 +1701,14 @@ describe('services', () => {
 
   test('HML_METHODS covers every HmlApi key', () => {
     // These are for the main process, not IPC methods.
-    const mainOnly = ['ghAutoUpdateAll', 'handleNxm', 'serveArt', 'cancelLaunchWatches']
+    const mainOnly = [
+      'ghAutoUpdateAll',
+      'runBackgroundChecks',
+      'emitOpenProfile',
+      'handleNxm',
+      'serveArt',
+      'cancelLaunchWatches'
+    ]
     const keys = Object.keys(createServices(deps)).filter((k) => !mainOnly.includes(k))
     expect([...HML_METHODS].sort()).toEqual(keys.sort())
   })
@@ -1952,6 +1989,31 @@ describe('services', () => {
       clock += 9 * 60_000
       await api.ghCheckUpdates('repo', pid)
       expect(calls.length).toBe(n)
+    })
+
+    test('ghInstallRelease rolls back and pins; the newest release unpins', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      publish('owner', 'repo', 'v1.1.0', { 'a.zip': zipOf('Thing', '1.1.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      await api.ghSetUpdateMode('repo', pid, 'owner-repo', 'notify')
+      publish('owner', 'repo', 'v1.2.0', { 'b.txt': strToU8('notes') })
+
+      const list = await api.ghListReleases('repo', pid, 'owner-repo')
+      expect(list.map((r) => [r.tag, r.installed, r.hasAsset])).toEqual([
+        ['v1.2.0', false, false],
+        ['v1.1.0', true, true],
+        ['v1.0.0', false, true]
+      ])
+
+      const old = await api.ghInstallRelease('repo', pid, 'owner-repo', 'v1.0.0')
+      expect(old.version).toBe('1.0.0')
+      expect(old.github?.updateMode).toBe('pinned')
+      expect(await api.ghCheckUpdates('repo', pid)).toEqual([])
+
+      publish('owner', 'repo', 'v1.3.0', { 'a.zip': zipOf('Thing', '1.3.0') })
+      const newest = await api.ghInstallRelease('repo', pid, 'owner-repo', 'v1.3.0')
+      expect([newest.version, newest.github?.updateMode]).toEqual(['1.3.0', 'auto'])
     })
 
     test('ghUpdate installs the new tag keeping config; a checksum mismatch keeps the old version', async () => {

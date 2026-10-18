@@ -221,7 +221,7 @@ export function mergePlans(
 export function findUpdates(mods: InstalledMod[], index: Map<string, TsPackage>): ModUpdate[] {
   const updates: ModUpdate[] = []
   for (const mod of mods) {
-    if (mod.source.kind !== 'thunderstore') continue
+    if (mod.source.kind !== 'thunderstore' || mod.held) continue
     const pkg = index.get(mod.source.fullName)
     const latest = pkg && newest(pkg)
     if (latest && compareVersions(latest.version, mod.version) > 0) {
