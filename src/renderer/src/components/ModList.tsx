@@ -26,7 +26,9 @@ import { Browse } from './Browse'
 import { GithubDialog } from './GithubDialog'
 import { NexusDetail } from './NexusDetail'
 import { PackageDetail, ProgressLine } from './PackageDetail'
-import { Button, ConfirmDialog, Icon, Menu, Toggle, type MenuItem } from './ui'
+import { Button, Icon, Menu, Toggle, type MenuItem } from './ui'
+import { DisableDialog, UninstallDialog } from './ModDepsDialogs'
+import { dependentsOf, orphanedBy } from '../../../shared/modDeps'
 
 /** Thunderstore is where most mods come from, so only the other sources get a badge. */
 const SOURCE_BADGE: Record<
@@ -490,7 +492,31 @@ function ModRow({
         ? s.nxInstalling.includes(mod.source.modId)
         : s.ghUpdating.includes(mod.id)
   )
-  const [confirming, setConfirming] = useState(false)
+  const loadModDeps = useStore((s) => s.loadModDeps)
+  const profileMods = useCurrentProfile()?.mods ?? []
+  const [dialog, setDialog] = useState<
+    | { kind: 'disable'; dependents: InstalledMod[] }
+    | { kind: 'uninstall'; dependents: InstalledMod[]; orphans: InstalledMod[] }
+    | null
+  >(null)
+  const byIds = (ids: string[]): InstalledMod[] => profileMods.filter((m) => ids.includes(m.id))
+
+  async function toggle(enabled: boolean): Promise<void> {
+    if (enabled) return setModEnabled(mod.id, true)
+    const graph = await loadModDeps()
+    const dependents = graph ? byIds(dependentsOf(graph, profileMods, mod.id)) : []
+    if (dependents.length === 0) return setModEnabled(mod.id, false)
+    setDialog({ kind: 'disable', dependents })
+  }
+
+  async function askUninstall(): Promise<void> {
+    const graph = await loadModDeps()
+    setDialog({
+      kind: 'uninstall',
+      dependents: graph ? byIds(dependentsOf(graph, profileMods, mod.id)) : [],
+      orphans: graph ? byIds(orphanedBy(graph, profileMods, mod.id)) : []
+    })
+  }
   const badge = mod.source.kind === 'thunderstore' ? null : SOURCE_BADGE[mod.source.kind]
   const canToggle = mod.disableable.length > 0
   const source = mod.source
@@ -505,7 +531,7 @@ function ModRow({
   const uninstall: MenuItem = {
     label: 'Uninstall…',
     danger: true,
-    onSelect: () => setConfirming(true)
+    onSelect: () => void askUninstall()
   }
   let menu: MenuItem[] = [uninstall]
   if (source.kind === 'thunderstore') {
@@ -608,7 +634,7 @@ function ModRow({
         <Toggle
           checked={mod.enabled}
           label={`${mod.enabled ? 'Disable' : 'Enable'} ${mod.name}`}
-          onChange={(v) => void setModEnabled(mod.id, v)}
+          onChange={(v) => void toggle(v)}
         />
       ) : (
         <span
@@ -648,13 +674,27 @@ function ModRow({
         </span>
       )}
       <Menu label={`Actions for ${mod.name}`} items={menu} />
-      {confirming && (
-        <ConfirmDialog
-          title={`Uninstall ${mod.name}?`}
-          body="Its files are removed from this profile. Other profiles are not affected."
-          confirmLabel="Uninstall"
-          onConfirm={() => void uninstallMod(mod)}
-          onClose={() => setConfirming(false)}
+      {dialog?.kind === 'disable' && (
+        <DisableDialog
+          mod={mod}
+          dependents={dialog.dependents}
+          onDisable={(also) =>
+            void setModEnabled(
+              mod.id,
+              false,
+              also.map((m) => m.id)
+            )
+          }
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'uninstall' && (
+        <UninstallDialog
+          mod={mod}
+          dependents={dialog.dependents}
+          orphans={dialog.orphans}
+          onUninstall={(also) => void uninstallMod(mod, also)}
+          onClose={() => setDialog(null)}
         />
       )}
     </li>

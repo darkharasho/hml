@@ -37,6 +37,7 @@ import {
   saveProfile
 } from './profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
+import { buildModDeps } from './thunderstore/modDeps'
 import { buildDirectLaunchPlan, buildLaunchPlan, buildSteamPlainPlan } from './launch/launchPlan'
 import {
   isGameProcessRunning,
@@ -792,7 +793,13 @@ export function createServices(deps: ServiceDeps): HmlApi & {
 
   const tsServices: Pick<
     HmlApi,
-    'tsSearch' | 'tsRefresh' | 'tsGetPackage' | 'tsInstall' | 'tsCheckUpdates' | 'tsUpdate'
+    | 'tsSearch'
+    | 'tsRefresh'
+    | 'tsGetPackage'
+    | 'tsInstall'
+    | 'tsCheckUpdates'
+    | 'tsUpdate'
+    | 'getModDeps'
   > = {
     async tsSearch(game, q) {
       const idx = await loadIndex(await requireGame(game), false)
@@ -823,6 +830,21 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       const idx = await loadIndex(def, false)
       const profile = await getProfile(paths, game, profileId)
       return findUpdates(profile.mods, idx.byName)
+    },
+
+    async getModDeps(game, profileId) {
+      const def = await requireGame(game)
+      const { mods } = await getProfile(paths, game, profileId)
+      let index = new Map<string, TsPackage>()
+      if (def.packageIndex !== null) {
+        try {
+          index = (await loadIndex(def, false)).byName
+        } catch (e) {
+          // Without the index only the loader is known; the caller acts without a warning.
+          console.warn(`Dependency lookup for ${game} failed: ${errMsg(e)}`)
+        }
+      }
+      return buildModDeps(mods, index, await loaderIds(def))
     },
 
     async tsUpdate(game, profileId, modIds) {

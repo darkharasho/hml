@@ -1143,6 +1143,16 @@ describe('services', () => {
       expect(progress[0].message).toBe('Installing Lib 1.0.0')
     })
 
+    test('getModDeps reads the graph from the index', async () => {
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      expect(await api.getModDeps('repo', profile.id)).toEqual({
+        deps: { 'Own-Mod': ['Dep-Lib'] },
+        loaders: []
+      })
+    })
+
     test("mod icons: the installed icon.png first, then the package index's icon", async () => {
       blobs.set(
         dl('Own-Mod', '1.0.0'),

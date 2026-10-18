@@ -20,6 +20,7 @@ import type {
 } from '../../shared/types'
 import { api, errorMessage } from './api'
 import { isGhAccessError } from '../../shared/messages'
+import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
 import { displayName, installToast, progressLabel } from './tsView'
@@ -103,8 +104,15 @@ interface State {
   openProfileFolder(): Promise<void>
   installFromFile(): Promise<void>
   installFromPaths(paths: string[]): Promise<void>
-  setModEnabled(modId: string, enabled: boolean): Promise<void>
-  uninstallMod(mod: InstalledMod): Promise<void>
+  /** The current profile's dependency graph; null when it can't be read. */
+  loadModDeps(): Promise<ModDeps | null>
+  /**
+   * Turns a mod on or off, with `also` alongside it. Turning one on also turns on the disabled
+   * mods it needs.
+   */
+  setModEnabled(modId: string, enabled: boolean, also?: string[]): Promise<void>
+  /** Uninstalls a mod, then each of `also` (dependencies only it needed). */
+  uninstallMod(mod: InstalledMod, also?: InstalledMod[]): Promise<void>
   tsInstall(pkg: { fullName: string; name: string }, version?: string): Promise<void>
   tsUpdate(updates: ModUpdate[]): Promise<void>
   /** Throws on failure so the GitHub dialog can show the error inline. */
@@ -630,34 +638,74 @@ export const useStore = create<State>()((set, get) => {
       await install(() => api.installFromPaths(currentGame.label, currentProfile, paths))
     },
 
-    async setModEnabled(modId, enabled) {
+    async loadModDeps() {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) return null
+      try {
+        return await api.getModDeps(currentGame.label, currentProfile)
+      } catch {
+        return null
+      }
+    },
+
+    async setModEnabled(modId, enabled, also = []) {
       const { currentGame, currentProfile } = get()
       if (!currentGame || !currentProfile) return
+      const mods = get().profiles.find((p) => p.id === currentProfile)?.mods ?? []
+      const flip = (ids: string[]): void =>
+        set({
+          profiles: get().profiles.map((p) =>
+            p.id !== currentProfile
+              ? p
+              : { ...p, mods: p.mods.map((m) => (ids.includes(m.id) ? { ...m, enabled } : m)) }
+          )
+        })
       // Optimistic flip so the toggle responds immediately; reload reconciles either way.
-      set({
-        profiles: get().profiles.map((p) =>
-          p.id !== currentProfile
-            ? p
-            : { ...p, mods: p.mods.map((m) => (m.id === modId ? { ...m, enabled } : m)) }
-        )
-      })
+      flip([modId, ...also])
+      let needed: string[] = []
+      if (enabled) {
+        const graph = await get().loadModDeps()
+        needed = graph
+          ? disabledDependencies(graph, mods, modId).filter((id) => !also.includes(id))
+          : []
+        flip(needed)
+      }
+      const done: string[] = []
       try {
-        await api.setModEnabled(currentGame.label, currentProfile, modId, enabled)
+        for (const id of [modId, ...also, ...needed]) {
+          await api.setModEnabled(currentGame.label, currentProfile, id, enabled)
+          done.push(id)
+        }
       } catch (e) {
         fail(e)
+      }
+      const turnedOn = needed.filter((id) => done.includes(id))
+      if (turnedOn.length > 0) {
+        const names = turnedOn.map((id) => displayName(mods.find((m) => m.id === id)?.name ?? id))
+        get().toast('info', `Also turned on ${names.join(', ')}, which it needs.`)
       }
       await reloadProfiles().catch(fail)
       await refreshWarnings()
     },
 
-    async uninstallMod(mod) {
+    async uninstallMod(mod, also = []) {
       const { currentGame, currentProfile } = get()
       if (!currentGame || !currentProfile) return
       const ok = await busy(async () => {
-        await api.uninstallMod(currentGame.label, currentProfile, mod.id)
-        await reloadProfiles()
+        try {
+          for (const m of [mod, ...also])
+            await api.uninstallMod(currentGame.label, currentProfile, m.id)
+        } finally {
+          await reloadProfiles()
+        }
       })
-      if (ok !== failed) get().toast('success', `Uninstalled ${mod.name}`)
+      if (ok !== failed)
+        get().toast(
+          'success',
+          also.length > 0
+            ? `Uninstalled ${mod.name} and ${also.length} ${also.length === 1 ? 'dependency' : 'dependencies'}`
+            : `Uninstalled ${mod.name}`
+        )
       await refreshWarnings()
       await get().checkUpdates()
     },

@@ -32,6 +32,7 @@ import type {
   TsQuery,
   TsSearchResult
 } from './types'
+import type { ModDeps } from './modDeps'
 
 export interface GameSummary extends GameDef {
   installDir: string | null
@@ -64,6 +65,8 @@ export interface HmlApi {
   installFromPaths(game: string, profileId: string, paths: string[]): Promise<InstalledMod[]>
   setModEnabled(game: string, profileId: string, modId: string, enabled: boolean): Promise<void>
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
+  /** How the profile's mods depend on each other (Thunderstore metadata). */
+  getModDeps(game: string, profileId: string): Promise<ModDeps>
   getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]>
   launch(game: string, profileId: string | null, mode: LaunchMode): Promise<void>
   /**
@@ -205,6 +208,7 @@ const METHOD_TABLE = {
   installFromPaths: true,
   setModEnabled: true,
   uninstallMod: true,
+  getModDeps: true,
   getLaunchWarnings: true,
   launch: true,
   waitForGame: true,
