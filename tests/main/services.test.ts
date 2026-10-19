@@ -4828,6 +4828,44 @@ describe('services launch, folders and domains', () => {
     expect(existsSync(path.join(gameDir, 'd3d12.dll'))).toBe(false)
   })
 
+  test('BepInEx: doorstop goes next to the exe when the Steam folder nests it deeper', async () => {
+    // Outward is `Outward/Outward_Defed` in the catalog, with the exe in that subfolder.
+    const base = fixture.games.repo
+    const eco = {
+      ...fixture,
+      games: {
+        ...fixture.games,
+        nested: {
+          ...base,
+          uuid: 'nested',
+          label: 'nested',
+          meta: { ...base.meta, displayName: 'NESTED' },
+          r2modman: [{ ...base.r2modman[0], steamFolderName: 'REPO/Defed' }]
+        }
+      }
+    }
+    const snapshotPath = path.join(tmp, 'eco-nested.json')
+    writeFileSync(snapshotPath, JSON.stringify(eco))
+    const d: ServiceDeps = {
+      ...deps,
+      snapshotPath,
+      fetch: (async () => ({ ok: true, json: async () => eco })) as unknown as typeof fetch
+    }
+    const exeDir = path.join(gameDir, 'Defed')
+    mkdirSync(exeDir)
+    writeFileSync(path.join(exeDir, 'REPO.exe'), '')
+    const api = createServices(d)
+    const profile = await api.createProfile('nested', 'Test')
+    expect(await api.getLaunchWarnings('nested', profile.id)).not.toContain(
+      'native-linux-unsupported'
+    )
+    writeFileSync(path.join(d.paths.profileDir('nested', profile.id), 'winhttp.dll'), 'doorstop')
+    await api.launch('nested', profile.id, 'modded')
+    expect(spawned[0].args.slice(2, 4)).toEqual(['--doorstop-enable', 'true'])
+    expect(readFileSync(path.join(exeDir, 'winhttp.dll'), 'utf8')).toBe('doorstop')
+    expect(existsSync(path.join(gameDir, 'winhttp.dll'))).toBe(false)
+  })
+
   test('launching a game without a Steam app id is refused', async () => {
     const api = createServices(withExtraGames())
     await expect(api.launch('noapp', null, 'vanilla')).rejects.toThrow(

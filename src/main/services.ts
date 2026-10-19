@@ -1780,8 +1780,9 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       if (def.loader !== 'bepinex' && def.loader !== 'shimloader' && !proxy) {
         throw new Error(`${def.displayName} uses a mod loader HML does not support yet.`)
       }
-      // A proxy loader's DLL goes next to the exe, which can be deeper than the install folder.
-      const gameDir = proxy ? await findExeDir(installDir, def) : installDir
+      // Doorstop and proxy loader DLLs go next to the exe, which can be deeper than the install
+      // folder.
+      const gameDir = await findExeDir(installDir, def)
       const proton = await isProtonGame(platform, gameDir, def.exeNames)
       if (mode === 'modded' && platform === 'linux' && !proton) {
         throw new Error(NATIVE_LINUX_UNSUPPORTED)

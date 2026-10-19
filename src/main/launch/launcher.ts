@@ -57,8 +57,8 @@ export async function isProtonGame(
 
 /**
  * The folder a game's exe is in: the install folder, or for a game whose catalog Steam folder
- * goes deeper (Hades II's `Hades II/Ship`), that subfolder when it has the exe. Proxy loaders
- * must sit next to the exe.
+ * goes deeper (Hades II's `Hades II/Ship`, Outward's `Outward/Outward_Defed`), that subfolder
+ * when it has the exe. Doorstop and proxy loaders must sit next to the exe.
  */
 export async function findExeDir(gameDir: string, game: GameDef): Promise<string> {
   const sub = game.steamFolderName.split(/[\\/]/).filter(Boolean).slice(1)
@@ -108,7 +108,7 @@ export async function launchWarnings(input: {
     if (input.loaderMismatch) warnings.push('loader-mismatch')
   }
   if (input.gameDir !== null) {
-    const exeDir = proxy ? await findExeDir(input.gameDir, input.game) : input.gameDir
+    const exeDir = await findExeDir(input.gameDir, input.game)
     const proton = await isProtonGame(input.platform, exeDir, input.game.exeNames)
     if (input.platform === 'linux' && !proton) warnings.push('native-linux-unsupported')
     if (proton && input.game.steamAppId) {
