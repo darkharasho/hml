@@ -10,13 +10,12 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { hasMelonLoader, melonLoaderArgs, melonLogFile } from '../../../src/main/launch/melonloader'
 import {
-  hasMelonLoader,
-  linkMelonLoader,
-  melonLoaderArgs,
-  melonLogFile,
-  unlinkMelonLoader
-} from '../../../src/main/launch/melonloader'
+  linkProxyLoader,
+  proxyLoaderFor,
+  unlinkProxyLoader
+} from '../../../src/main/launch/proxyLoaders'
 
 let tmp: string
 let profile: string
@@ -80,30 +79,32 @@ describe('melonLoaderArgs', () => {
   })
 })
 
-describe('linkMelonLoader / unlinkMelonLoader', () => {
+describe('linking MelonLoader', () => {
+  const melon = proxyLoaderFor('recursive-melonloader')!
+
   test('copies the proxy in and takes it back out', async () => {
-    await linkMelonLoader(profile, game)
+    await linkProxyLoader(melon, profile, game)
     expect(read('version.dll')).toBe('profile version.dll')
     expect(existsSync(path.join(game, 'winhttp.dll'))).toBe(false)
-    await unlinkMelonLoader(game)
+    await unlinkProxyLoader(melon, game)
     expect(readdirSync(game)).toEqual(['Schedule I.exe'])
   })
 
   test('moves a hand-installed proxy aside and restores it', async () => {
     writeFileSync(path.join(game, 'version.dll'), 'hand version.dll')
-    await linkMelonLoader(profile, game)
+    await linkProxyLoader(melon, profile, game)
     expect(read('version.dll')).toBe('profile version.dll')
     // A second modded launch replaces HML's own copy and keeps the backup.
-    await linkMelonLoader(profile, game)
+    await linkProxyLoader(melon, profile, game)
     expect(read('version.dll.hml-backup')).toBe('hand version.dll')
-    await unlinkMelonLoader(game)
+    await unlinkProxyLoader(melon, game)
     expect(read('version.dll')).toBe('hand version.dll')
     expect(readdirSync(game).sort()).toEqual(['Schedule I.exe', 'version.dll'])
   })
 
   test('unlink without a link leaves the game alone', async () => {
     writeFileSync(path.join(game, 'version.dll'), 'hand version.dll')
-    await unlinkMelonLoader(game)
+    await unlinkProxyLoader(melon, game)
     expect(read('version.dll')).toBe('hand version.dll')
   })
 })

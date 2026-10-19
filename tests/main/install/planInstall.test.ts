@@ -408,6 +408,80 @@ describe('planInstall', () => {
       ])
     })
   })
+
+  describe('lovely', () => {
+    test('the loader puts its DLL at the root and its lovely folder under mods', () => {
+      const out = planInstall(
+        ['manifest.json', 'icon.png', 'README.md', 'winmm.dll', 'lovely/', 'lovely/config.toml'],
+        {
+          packageId: 'Thunderstore-lovely',
+          rules: [],
+          loaderPackage: { packageId: 'Thunderstore-lovely', rootFolder: '', loader: 'lovely' },
+          loader: 'lovely'
+        }
+      ).files
+      expect(out).toEqual([
+        { from: 'winmm.dll', to: 'winmm.dll', disableable: false },
+        { from: 'lovely/config.toml', to: 'mods/lovely/config.toml', disableable: false }
+      ])
+    })
+
+    test('mods go under mods/<package>, keeping their paths', () => {
+      const out = planInstall(['manifest.json', 'lovely.toml', 'lib/nativefs.lua'], {
+        packageId,
+        rules: [],
+        loader: 'lovely'
+      }).files
+      expect(out).toEqual([
+        { from: 'manifest.json', to: 'mods/Author-Mod/manifest.json', disableable: true },
+        { from: 'lovely.toml', to: 'mods/Author-Mod/lovely.toml', disableable: true },
+        { from: 'lib/nativefs.lua', to: 'mods/Author-Mod/lib/nativefs.lua', disableable: true }
+      ])
+    })
+  })
+
+  describe('Return of Modding', () => {
+    const rom = (entries: string[]): string[] =>
+      planInstall(entries, { packageId, rules: [], loader: 'return-of-modding' }).files.map(
+        (f) => f.to
+      )
+
+    test('the loader package puts its DLL at the profile root', () => {
+      const out = planInstall(['manifest.json', 'ReturnOfModdingPack/d3d12.dll'], {
+        packageId: 'Hell2Modding-Hell2Modding',
+        rules: [],
+        loaderPackage: {
+          packageId: 'Hell2Modding-Hell2Modding',
+          rootFolder: 'ReturnOfModdingPack',
+          loader: 'return-of-modding'
+        },
+        loader: 'return-of-modding'
+      }).files
+      expect(out).toEqual([
+        { from: 'ReturnOfModdingPack/d3d12.dll', to: 'd3d12.dll', disableable: false }
+      ])
+    })
+
+    test('mods go under plugins/<package>, keeping their manifest', () => {
+      expect(rom(['manifest.json', 'main.lua', 'src/util.lua'])).toEqual([
+        'ReturnOfModding/plugins/Author-Mod/manifest.json',
+        'ReturnOfModding/plugins/Author-Mod/main.lua',
+        'ReturnOfModding/plugins/Author-Mod/src/util.lua'
+      ])
+    })
+
+    test('plugins_data and config folders go to their own folders', () => {
+      expect(rom(['main.lua', 'plugins_data/a.png', 'config/x.cfg'])).toEqual([
+        'ReturnOfModding/plugins/Author-Mod/main.lua',
+        'ReturnOfModding/plugins_data/Author-Mod/a.png',
+        'ReturnOfModding/config/Author-Mod/x.cfg'
+      ])
+      expect(rom(['ReturnOfModding/plugins/main.lua', 'ReturnOfModding/config/x.cfg'])).toEqual([
+        'ReturnOfModding/plugins/Author-Mod/main.lua',
+        'ReturnOfModding/config/Author-Mod/x.cfg'
+      ])
+    })
+  })
 })
 
 describe('planDeploy', () => {

@@ -2,13 +2,13 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { LaunchMode } from '../../shared/types'
 import { toProtonPath } from './launchPlan'
-import { linkFiles, unlinkFiles, type LinkedFiles } from './linkedFiles'
+import type { LinkedFiles } from './linkedFiles'
 
 /**
  * MelonLoader's proxy DLLs at the profile root; a modded launch copies them next to the game's
  * exe, where the game loads them. v0.6+ ships `version.dll`; r2modman also takes `winhttp.dll`.
  */
-const MELON: LinkedFiles = {
+export const MELON: LinkedFiles = {
   what: 'MelonLoader',
   files: ['version.dll', 'winhttp.dll'],
   marker: '.hml-melonloader.json'
@@ -51,16 +51,3 @@ export async function melonLoaderArgs(i: {
 /** The log MelonLoader writes, under its base folder (the profile). */
 export const melonLogFile = (profileDir: string): string =>
   path.join(profileDir, 'MelonLoader', 'Latest.log')
-
-/**
- * Puts the profile's MelonLoader proxy next to the game's exe. A hand-installed proxy there is
- * moved aside first, and unlinkMelonLoader puts it back.
- */
-export async function linkMelonLoader(profileDir: string, gameDir: string): Promise<void> {
-  await linkFiles(MELON, profileDir, gameDir)
-}
-
-/** Takes HML's proxy back out of the game folder and restores any it moved aside. */
-export async function unlinkMelonLoader(gameDir: string): Promise<void> {
-  await unlinkFiles(MELON, gameDir)
-}

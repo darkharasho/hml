@@ -57,12 +57,15 @@ function resolveIcon(iconUrl: string | null | undefined): string | null {
 }
 
 /** The loaders HML installs and launches for catalog games. */
-export const SUPPORTED_LOADERS = ['bepinex', 'shimloader', 'melonloader', 'recursive-melonloader']
+export const SUPPORTED_LOADERS = [
+  'bepinex',
+  'shimloader',
+  'melonloader',
+  'recursive-melonloader',
+  'lovely',
+  'return-of-modding'
+]
 export const isSupportedLoader = (loader: string): boolean => SUPPORTED_LOADERS.includes(loader)
-
-/** MelonLoader games: `recursive-melonloader` is MelonLoader v0.7+, which reads mods recursively. */
-export const isMelonLoader = (loader: string): boolean =>
-  loader === 'melonloader' || loader === 'recursive-melonloader'
 
 export function parseEcosystem(json: unknown): Catalog {
   const eco = ecosystemSchema.parse(json)

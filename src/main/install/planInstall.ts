@@ -112,17 +112,57 @@ function planRecursiveMelon(items: Item[], packageId: string): InstallPlan {
   }
 }
 
+/** The DLLs lovely loads through (0.9 shipped `version.dll`, 0.10+ ships `winmm.dll`). */
+const LOVELY_DLLS = ['version.dll', 'winmm.dll']
+
+/**
+ * The lovely loader laid out as r2modman does: its proxy DLL at the profile root (launch copies
+ * it next to the game's exe) and its `lovely` folder under `mods/`, the mod folder lovely is
+ * pointed at.
+ */
+function planLovelyLoader(items: Item[]): InstallPlan {
+  const files: PlannedFile[] = []
+  for (const i of items) {
+    const s = i.segs
+    if (s.length === 1 && LOVELY_DLLS.includes(s[0].toLowerCase())) {
+      files.push({ from: i.from, to: s[0], disableable: false })
+    } else if (s.length >= 2 && eq(s[0], 'lovely')) {
+      files.push({ from: i.from, to: ['mods', ...s].join('/'), disableable: false })
+    }
+  }
+  return { files }
+}
+
+/**
+ * Return of Modding's folders, as r2modman installs its mods: files go under a folder named
+ * for the package in `plugins` (the default), `plugins_data` or `config`, keeping their paths.
+ */
+const RETURN_OF_MODDING_RULES: InstallRule[] = ['plugins', 'plugins_data', 'config'].map((dir) => ({
+  route: `ReturnOfModding/${dir}`,
+  defaultFileExtensions: [],
+  trackingMethod: 'subdir-no-flatten',
+  subRoutes: [],
+  isDefaultLocation: dir === 'plugins'
+}))
+
 export function planInstall(
   entries: string[],
   opts: {
     packageId: string
     rules: InstallRule[]
     loaderPackage?: ModloaderPackage
-    /** The game's loader; only `recursive-melonloader` changes how mods are laid out. */
+    /**
+     * The game's loader. `recursive-melonloader` and `lovely` lay mods out their own way;
+     * `return-of-modding` games have no install rules in the ecosystem, so its own are used.
+     */
     loader?: string
   }
 ): InstallPlan {
-  const { packageId, rules, loaderPackage } = opts
+  const { packageId, loaderPackage } = opts
+  const rules =
+    opts.loader === 'return-of-modding' && opts.rules.length === 0
+      ? RETURN_OF_MODDING_RULES
+      : opts.rules
   const items = entries.map((from) => ({ from, segs: normalize(from) }))
   const melon = opts.loader === 'recursive-melonloader'
   const stopNames = loaderPackage?.rootFolder ? [loaderPackage.rootFolder] : []
@@ -132,6 +172,8 @@ export function planInstall(
     const shim = planShimloader(stripped)
     if (shim) return shim
   }
+
+  if (loaderPackage?.loader === 'lovely') return planLovelyLoader(stripped)
 
   if (loaderPackage) {
     // An empty root folder means the zip already has the game-folder layout: keep paths as they are.
@@ -149,6 +191,17 @@ export function planInstall(
   }
 
   if (melon) return planRecursiveMelon(stripped, packageId)
+
+  // A lovely mod goes under `mods/<package>/`, keeping its paths, as r2modman does.
+  if (opts.loader === 'lovely') {
+    return {
+      files: stripped.map((i) => ({
+        from: i.from,
+        to: ['mods', packageId, ...i.segs].join('/'),
+        disableable: true
+      }))
+    }
+  }
 
   const defaultRule = rules.find((r) => r.isDefaultLocation)
   if (!defaultRule) throw new Error('No default install rule (isDefaultLocation) defined')

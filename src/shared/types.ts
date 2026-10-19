@@ -244,6 +244,8 @@ export type LaunchWarning =
   | 'no-bepinex'
   | 'no-shimloader'
   | 'no-melonloader'
+  | 'no-lovely'
+  | 'no-returnofmodding'
   | 'proton-first-run'
   | 'steam-not-found'
   | 'flatpak-filesystem'

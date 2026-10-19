@@ -11,8 +11,11 @@ const NOT_HML = "This isn't an HML profile file."
 const DAMAGED = 'This HML profile file is damaged or from a newer HML.'
 const TOO_BIG = "This profile's config files are too large to share (over 10 MB)."
 export const IMPORT_TOO_BIG = 'This HML profile file is too large to import (over 10 MB).'
-/** Profile folders whose settings travel with a profile: BepInEx's, and MelonLoader's UserData. */
-export const CONFIG_PREFIXES = ['BepInEx/config/', 'UserData/']
+/**
+ * Profile folders whose settings travel with a profile: BepInEx's, MelonLoader's UserData, and
+ * Return of Modding's config.
+ */
+export const CONFIG_PREFIXES = ['BepInEx/config/', 'UserData/', 'ReturnOfModding/config/']
 /**
  * UserData also holds mod data that isn't settings, so only these files are taken from it: the
  * extensions r2modman exports, plus `.toml` (MelonLoader preferences).
@@ -112,6 +115,12 @@ export async function buildHmlFile(
   await collectConfigs(join(profileDir, 'BepInEx', 'config'), CONFIG_PREFIXES[0], files, budget)
   await collectConfigs(join(profileDir, 'UserData'), CONFIG_PREFIXES[1], files, budget, (name) =>
     USERDATA_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext))
+  )
+  await collectConfigs(
+    join(profileDir, 'ReturnOfModding', 'config'),
+    CONFIG_PREFIXES[2],
+    files,
+    budget
   )
   return zipSync(files)
 }

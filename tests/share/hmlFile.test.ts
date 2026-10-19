@@ -119,6 +119,14 @@ describe('hml files', () => {
     expect(new TextDecoder().decode(out.configs.get('UserData/MelonPreferences.cfg'))).toBe('M')
   })
 
+  it("carries Return of Modding's config", async () => {
+    const f = join(dir, 'ReturnOfModding', 'config', 'Some-Mod', 'x.cfg')
+    await mkdir(join(f, '..'), { recursive: true })
+    await writeFile(f, 'R')
+    const out = await readHmlFile(await buildHmlFile(profile, dir))
+    expect([...out.configs.keys()]).toEqual(['ReturnOfModding/config/Some-Mod/x.cfg'])
+  })
+
   it('puts export.json first and holds only it when there is no config folder', async () => {
     // The first local file header's name: length at offset 26 (uint16 LE), bytes from 30.
     const firstName = (zip: Uint8Array): string =>

@@ -69,7 +69,11 @@ export function LogViewer({
           if (!live) return
           setFailure(null)
           const fresh = r.text === '' ? [] : r.text.replace(/\r?\n$/, '').split(/\r?\n/)
-          if (r.reset || !state) {
+          // A loader that starts a new log each run (lovely) moves to another file. This read
+          // went from the old file's offset, so drop it; the next one reads the new file's tail.
+          if (state && r.file !== state.file && !r.reset) {
+            state = { ...state, file: r.file, next: 0 }
+          } else if (r.reset || !state) {
             state = { key, file: r.file, lines: fresh, base: 0, next: r.next }
           } else if (fresh.length > 0 || r.next !== state.next) {
             const lines = [...state.lines, ...fresh]

@@ -6,6 +6,7 @@ import path from 'node:path'
 import {
   detectDoorstopVersion,
   disableDoorstopIni,
+  findExeDir,
   findPreloader,
   isProtonGame,
   launchWarnings,
@@ -31,6 +32,7 @@ afterEach(() => fs.rm(tmp, { recursive: true, force: true }))
 const game = {
   label: 'repo',
   steamAppId: '3241660',
+  steamFolderName: 'REPO',
   exeNames: ['REPO.exe'],
   loader: 'bepinex'
 } as GameDef
@@ -141,6 +143,31 @@ describe('launchWarnings', () => {
     await fs.writeFile(path.join(profile, 'version.dll'), '')
     await writeLaunchOptions('WINEDLLOVERRIDES=version=n,b %command%')
     expect(await launchWarnings({ ...input(), game: melon })).toEqual([])
+  })
+
+  test('lovely and Return of Modding want their proxy and its override', async () => {
+    const lovely = { ...game, loader: 'lovely' } as GameDef
+    const rom = { ...game, loader: 'return-of-modding' } as GameDef
+    await fs.writeFile(path.join(gameDir, 'REPO.exe'), '')
+    await writeLaunchOptions('WINEDLLOVERRIDES=winhttp=n,b %command%')
+    expect(await launchWarnings({ ...input(), game: lovely })).toEqual([
+      'no-lovely',
+      'proton-first-run'
+    ])
+    expect(await launchWarnings({ ...input(), game: rom })).toEqual([
+      'no-returnofmodding',
+      'proton-first-run'
+    ])
+    await fs.writeFile(path.join(profile, 'winmm.dll'), '')
+    await fs.writeFile(path.join(profile, 'd3d12.dll'), '')
+    // The override must be for the DLL the profile has.
+    await writeLaunchOptions('WINEDLLOVERRIDES=version=n,b %command%')
+    expect(await launchWarnings({ ...input(), game: lovely })).toEqual(['proton-first-run'])
+    await writeLaunchOptions('WINEDLLOVERRIDES=winmm=n,b %command%')
+    expect(await launchWarnings({ ...input(), game: rom })).toEqual(['proton-first-run'])
+    await writeLaunchOptions('WINEDLLOVERRIDES=winmm=n,b;d3d12=n,b %command%')
+    expect(await launchWarnings({ ...input(), game: lovely })).toEqual([])
+    expect(await launchWarnings({ ...input(), game: rom })).toEqual([])
   })
 
   test('native-linux-unsupported when a linux game has no Proton exe', async () => {
@@ -369,5 +396,31 @@ describe('disableDoorstopIni', () => {
         '[General]\nenabled = true\ntarget_assembly = x\n[UnityMono]\ndebug_enabled = true\n'
       )
     ).toBe('[General]\nenabled = false\ntarget_assembly = x\n[UnityMono]\ndebug_enabled = true\n')
+  })
+})
+
+describe('findExeDir', () => {
+  let dir: string
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hml-exedir-'))
+  })
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+  const hades = {
+    steamFolderName: 'Hades II/Ship',
+    exeNames: ['Hades2.exe']
+  } as GameDef
+
+  test('follows a deeper catalog Steam folder to the exe', async () => {
+    await fs.mkdir(path.join(dir, 'Ship'))
+    expect(await findExeDir(dir, hades)).toBe(dir)
+    await fs.writeFile(path.join(dir, 'Ship', 'Hades2.exe'), '')
+    expect(await findExeDir(dir, hades)).toBe(path.join(dir, 'Ship'))
+  })
+
+  test('is the install folder for a plain Steam folder or an unsafe one', async () => {
+    expect(await findExeDir(dir, { ...hades, steamFolderName: 'Hades II' })).toBe(dir)
+    expect(await findExeDir(dir, { ...hades, steamFolderName: 'Hades II/../x' })).toBe(dir)
   })
 })

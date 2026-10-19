@@ -4681,6 +4681,8 @@ describe('services launch, folders and domains', () => {
         ...fixture.games,
         othergame: extra('othergame', 'godotml', base.distributions),
         melongame: extra('melongame', 'recursive-melonloader', base.distributions),
+        lovelygame: extra('lovelygame', 'lovely', base.distributions),
+        romgame: extra('romgame', 'return-of-modding', base.distributions),
         noapp: extra('noapp', 'bepinex', [])
       }
     }
@@ -4729,6 +4731,52 @@ describe('services launch, folders and domains', () => {
     await api.launch('melongame', null, 'vanilla')
     expect(spawned[1].args).toEqual(['-applaunch', '3241660', '--no-mods'])
     expect(existsSync(path.join(gameDir, 'version.dll'))).toBe(false)
+  })
+
+  test('lovely: modded points lovely at the profile mods folder; vanilla passes --vanilla', async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    const d = withExtraGames()
+    const api = createServices(d)
+    const profile = await api.createProfile('lovelygame', 'Test')
+    await expect(api.launch('lovelygame', profile.id, 'modded')).rejects.toThrow(
+      'Install lovely into this profile so mods can load.'
+    )
+    const profileDir = d.paths.profileDir('lovelygame', profile.id)
+    writeFileSync(path.join(profileDir, 'winmm.dll'), 'lovely')
+    await api.launch('lovelygame', profile.id, 'modded')
+    expect(spawned[0].args).toEqual([
+      '-applaunch',
+      '3241660',
+      '--mod-dir',
+      'Z:' + path.join(profileDir, 'mods').replace(/\//g, '\\')
+    ])
+    expect(readFileSync(path.join(gameDir, 'winmm.dll'), 'utf8')).toBe('lovely')
+    await api.launch('lovelygame', null, 'vanilla')
+    expect(spawned[1].args).toEqual(['-applaunch', '3241660', '--vanilla'])
+    expect(existsSync(path.join(gameDir, 'winmm.dll'))).toBe(false)
+  })
+
+  test('Return of Modding: modded points it at the profile; vanilla turns it off', async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    const d = withExtraGames()
+    const api = createServices(d)
+    const profile = await api.createProfile('romgame', 'Test')
+    const profileDir = d.paths.profileDir('romgame', profile.id)
+    writeFileSync(path.join(profileDir, 'd3d12.dll'), 'h2m')
+    await api.launch('romgame', profile.id, 'modded')
+    expect(spawned[0].args).toEqual([
+      '-applaunch',
+      '3241660',
+      '--rom_modding_root_folder',
+      'Z:' + profileDir.replace(/\//g, '\\')
+    ])
+    expect(readFileSync(path.join(gameDir, 'd3d12.dll'), 'utf8')).toBe('h2m')
+    expect((await api.readModLog('romgame', profile.id, 0)).file).toBe(
+      path.join(profileDir, 'ReturnOfModding', 'LogOutput.log')
+    )
+    await api.launch('romgame', null, 'vanilla')
+    expect(spawned[1].args).toEqual(['-applaunch', '3241660', '--rom_enabled', 'false'])
+    expect(existsSync(path.join(gameDir, 'd3d12.dll'))).toBe(false)
   })
 
   test('launching a game without a Steam app id is refused', async () => {
