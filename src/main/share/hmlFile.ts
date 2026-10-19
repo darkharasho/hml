@@ -11,7 +11,13 @@ const NOT_HML = "This isn't an HML profile file."
 const DAMAGED = 'This HML profile file is damaged or from a newer HML.'
 const TOO_BIG = "This profile's config files are too large to share (over 10 MB)."
 export const IMPORT_TOO_BIG = 'This HML profile file is too large to import (over 10 MB).'
-const CONFIG_PREFIX = 'BepInEx/config/'
+/** Profile folders whose settings travel with a profile: BepInEx's, and MelonLoader's UserData. */
+export const CONFIG_PREFIXES = ['BepInEx/config/', 'UserData/']
+/**
+ * UserData also holds mod data that isn't settings, so only these files are taken from it: the
+ * extensions r2modman exports, plus `.toml` (MelonLoader preferences).
+ */
+const USERDATA_EXTENSIONS = ['.cfg', '.txt', '.json', '.yml', '.yaml', '.ini', '.toml']
 
 const sourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('thunderstore'), fullName: z.string() }),
@@ -56,7 +62,8 @@ async function collectConfigs(
   dir: string,
   prefix: string,
   out: Record<string, Uint8Array>,
-  budget: { left: number }
+  budget: { left: number },
+  keep: (name: string) => boolean = () => true
 ): Promise<void> {
   let entries
   try {
@@ -68,8 +75,8 @@ async function collectConfigs(
   entries.sort((a, b) => (a.name < b.name ? -1 : 1))
   for (const ent of entries) {
     const full = join(dir, ent.name)
-    if (ent.isDirectory()) await collectConfigs(full, `${prefix}${ent.name}/`, out, budget)
-    else if (ent.isFile()) {
+    if (ent.isDirectory()) await collectConfigs(full, `${prefix}${ent.name}/`, out, budget, keep)
+    else if (ent.isFile() && keep(ent.name)) {
       const st = await fs.stat(full)
       budget.left -= st.size
       if (budget.left < 0) throw new Error(TOO_BIG)
@@ -78,7 +85,7 @@ async function collectConfigs(
   }
 }
 
-/** Builds a .hml zip: export.json first, then the profile's BepInEx/config files. */
+/** Builds a .hml zip: export.json first, then the profile's BepInEx/config and UserData settings. */
 export async function buildHmlFile(
   profile: ProfileManifest,
   profileDir: string,
@@ -101,14 +108,16 @@ export async function buildHmlFile(
   }
   const json = strToU8(JSON.stringify(exp, null, 2))
   const files: Record<string, Uint8Array> = { 'export.json': json }
-  await collectConfigs(join(profileDir, 'BepInEx', 'config'), CONFIG_PREFIX, files, {
-    left: maxBytes - json.length
-  })
+  const budget = { left: maxBytes - json.length }
+  await collectConfigs(join(profileDir, 'BepInEx', 'config'), CONFIG_PREFIXES[0], files, budget)
+  await collectConfigs(join(profileDir, 'UserData'), CONFIG_PREFIXES[1], files, budget, (name) =>
+    USERDATA_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext))
+  )
   return zipSync(files)
 }
 
-function isSafeConfigPath(name: string): boolean {
-  if (!name.startsWith(CONFIG_PREFIX) || name.length === CONFIG_PREFIX.length) return false
+export function isSafeConfigPath(name: string): boolean {
+  if (!CONFIG_PREFIXES.some((p) => name.startsWith(p) && name.length > p.length)) return false
   if (name.includes('\\') || name.startsWith('/') || /^[a-zA-Z]:/.test(name)) return false
   return !name.split('/').some((seg) => seg === '..' || seg === '.' || seg === '')
 }

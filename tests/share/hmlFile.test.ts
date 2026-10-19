@@ -97,6 +97,28 @@ describe('hml files', () => {
     expect(new TextDecoder().decode(out.configs.get('BepInEx/config/sub/b.cfg'))).toBe('BBB')
   })
 
+  it("carries MelonLoader's UserData settings, but not its other data", async () => {
+    const put = async (rel: string, text: string): Promise<void> => {
+      const f = join(dir, 'UserData', rel)
+      await mkdir(join(f, '..'), { recursive: true })
+      await writeFile(f, text)
+    }
+    await writeCfg('a.cfg', 'AAA')
+    await put('MelonPreferences.cfg', 'M')
+    await put('Some-Mod/settings.json', 'J')
+    await put('Some-Mod/prefs.TOML', 'T')
+    await put('Some-Mod/cache.bin', 'x')
+    await put('Some-Mod/bundle.assets', 'x')
+    const out = await readHmlFile(await buildHmlFile(profile, dir))
+    expect([...out.configs.keys()].sort()).toEqual([
+      'BepInEx/config/a.cfg',
+      'UserData/MelonPreferences.cfg',
+      'UserData/Some-Mod/prefs.TOML',
+      'UserData/Some-Mod/settings.json'
+    ])
+    expect(new TextDecoder().decode(out.configs.get('UserData/MelonPreferences.cfg'))).toBe('M')
+  })
+
   it('puts export.json first and holds only it when there is no config folder', async () => {
     // The first local file header's name: length at offset 26 (uint16 LE), bytes from 30.
     const firstName = (zip: Uint8Array): string =>
@@ -146,10 +168,13 @@ describe('hml files', () => {
         'BepInEx\\config\\win.cfg': 'x',
         'BepInEx/plugins/p.dll': 'x',
         'notes.txt': 'x',
-        'BepInEx/config/ok.cfg': 'ok'
+        'UserData/../x': 'x',
+        'UserData/': 'x',
+        'BepInEx/config/ok.cfg': 'ok',
+        'UserData/ok.cfg': 'ok'
       })
     )
-    expect([...out.configs.keys()]).toEqual(['BepInEx/config/ok.cfg'])
+    expect([...out.configs.keys()]).toEqual(['BepInEx/config/ok.cfg', 'UserData/ok.cfg'])
   })
 
   it('accepts mods without a name and ignores unknown fields', async () => {
