@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { zipSync } from 'fflate'
 import type {
   Catalog,
   GameDef,
@@ -307,12 +308,15 @@ export async function installZipReporting(
   if (deploy) for (const f of plan.files) f.to = `${packageId}/${f.to}`
 
   // Duplicate destinations: last write wins, recorded once.
-  const byTo = new Map<string, { from: string; disableable: boolean }>()
+  const byTo = new Map<
+    string,
+    { from: string; disableable: boolean; pack?: { from: string; path: string }[] }
+  >()
   for (const f of plan.files) {
     const abs = path.resolve(root, f.to)
     if (!abs.startsWith(root + path.sep)) throw new UnsafeEntryError(f.from)
     byTo.delete(f.to)
-    byTo.set(f.to, { from: f.from, disableable: f.disableable })
+    byTo.set(f.to, { from: f.from, disableable: f.disableable, pack: f.pack })
   }
 
   // Everything validated; only now touch the profile.
@@ -368,7 +372,12 @@ export async function installZipReporting(
       const target = f.disableable && !enabled ? abs + '.old' : abs
       await fs.mkdir(path.dirname(target), { recursive: true })
       written.push(target)
-      await fs.writeFile(target, zip.read(f.from))
+      await fs.writeFile(
+        target,
+        f.pack
+          ? zipSync(Object.fromEntries(f.pack.map((e) => [e.path, zip.read(e.from)])))
+          : zip.read(f.from)
+      )
       files.push(to)
       if (f.disableable) disableable.push(to)
     }

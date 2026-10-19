@@ -4728,7 +4728,8 @@ describe('services launch, folders and domains', () => {
       ...fixture,
       games: {
         ...fixture.games,
-        othergame: extra('othergame', 'godotml', base.distributions),
+        othergame: extra('othergame', 'northstar', base.distributions),
+        godotgame: extra('godotgame', 'godotml', base.distributions),
         melongame: extra('melongame', 'recursive-melonloader', base.distributions),
         lovelygame: extra('lovelygame', 'lovely', base.distributions),
         romgame: extra('romgame', 'return-of-modding', base.distributions),
@@ -4826,6 +4827,30 @@ describe('services launch, folders and domains', () => {
     await api.launch('romgame', null, 'vanilla')
     expect(spawned[1].args).toEqual(['-applaunch', '3241660', '--rom_enabled', 'false'])
     expect(existsSync(path.join(gameDir, 'd3d12.dll'))).toBe(false)
+  })
+
+  test('godotml: modded points the built-in loader at the profile mods, even on native Linux', async () => {
+    // A native Linux build: no .exe, so no Proton and a Linux path.
+    const d = withExtraGames()
+    const api = createServices(d)
+    const profile = await api.createProfile('godotgame', 'Test')
+    const profileDir = d.paths.profileDir('godotgame', profile.id)
+    await api.launch('godotgame', profile.id, 'modded')
+    expect(spawned[0].args).toEqual([
+      '-applaunch',
+      '3241660',
+      '--script',
+      'res://addons/mod_loader/mod_loader_setup.gd',
+      '--enable-mods',
+      '--mods-path',
+      path.join(profileDir, 'mods')
+    ])
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    await api.launch('godotgame', profile.id, 'modded')
+    expect(spawned[1].args.at(-1)).toBe('Z:' + path.join(profileDir, 'mods').replace(/\//g, '\\'))
+    await api.launch('godotgame', null, 'vanilla')
+    expect(spawned[2].args).toEqual(['-applaunch', '3241660'])
+    expect(readdirSync(gameDir).sort()).toEqual(['REPO.exe'])
   })
 
   test('BepInEx: doorstop goes next to the exe when the Steam folder nests it deeper', async () => {

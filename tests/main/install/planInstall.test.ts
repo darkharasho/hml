@@ -482,6 +482,47 @@ describe('planInstall', () => {
       ])
     })
   })
+  describe('godotml', () => {
+    const rules = [
+      {
+        route: 'mods',
+        defaultFileExtensions: [],
+        trackingMethod: 'package-zip',
+        subRoutes: [],
+        isDefaultLocation: true
+      }
+    ]
+
+    test('a mod is packed whole into mods/<package>.ts.zip', () => {
+      const entries = ['manifest.json', 'icon.png', 'mods-unpacked/Author-Mod/mod_main.gd']
+      expect(planInstall(entries, { packageId, rules, loader: 'godotml' }).files).toEqual([
+        {
+          from: packageId,
+          to: 'mods/Author-Mod.ts.zip',
+          disableable: true,
+          pack: entries.map((e) => ({ from: e, path: e }))
+        }
+      ])
+    })
+
+    test('a wrapping folder is dropped but mods-unpacked is kept', () => {
+      const pack = (entries: string[]): string[] =>
+        planInstall(entries, { packageId, rules, loader: 'godotml' }).files[0].pack!.map(
+          (e) => e.path
+        )
+      expect(pack(['Mod-1.0/mods-unpacked/Author-Mod/mod_main.gd'])).toEqual([
+        'mods-unpacked/Author-Mod/mod_main.gd'
+      ])
+      expect(pack(['mods-unpacked/Author-Mod/mod_main.gd'])).toEqual([
+        'mods-unpacked/Author-Mod/mod_main.gd'
+      ])
+    })
+
+    test('a game without install rules (Pair A Dice) gets the same rule', () => {
+      const out = planInstall(['manifest.json'], { packageId, rules: [], loader: 'godotml' })
+      expect(out.files.map((f) => f.to)).toEqual(['mods/Author-Mod.ts.zip'])
+    })
+  })
 })
 
 describe('planDeploy', () => {
