@@ -20,7 +20,7 @@ describe('isR2modmanCode', () => {
 })
 
 describe('readR2modman', () => {
-  it("reads r2modman's YAML export and keeps only BepInEx/config files", () => {
+  it("reads r2modman's YAML export and keeps only BepInEx/config and UserData files", () => {
     const data = r2z(
       [
         'profileName: "Crew: night"',
@@ -40,7 +40,10 @@ describe('readR2modman', () => {
         'config/sub/b.cfg': 'b',
         'BepInEx/config/c.cfg': 'c',
         'BepInEx/plugins/x/manifest.json': '{}',
-        'config/../evil.cfg': 'x'
+        'config/../evil.cfg': 'x',
+        'UserData/MelonPreferences.cfg': 'm',
+        'UserData/../evil.cfg': 'x',
+        'Mods/x/settings.json': '{}'
       }
     )
     const r = readR2modman(data, 'lethal-company')
@@ -64,9 +67,11 @@ describe('readR2modman', () => {
     expect([...r.configs.keys()].sort()).toEqual([
       'BepInEx/config/BepInEx.cfg',
       'BepInEx/config/c.cfg',
-      'BepInEx/config/sub/b.cfg'
+      'BepInEx/config/sub/b.cfg',
+      'UserData/MelonPreferences.cfg'
     ])
     expect(text.decode(r.configs.get('BepInEx/config/sub/b.cfg'))).toBe('b')
+    expect(text.decode(r.configs.get('UserData/MelonPreferences.cfg'))).toBe('m')
   })
 
   it('names an unnamed profile and treats a missing enabled flag as on', () => {

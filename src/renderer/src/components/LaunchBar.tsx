@@ -46,6 +46,24 @@ const WARNINGS: Record<LaunchWarning, { label: string; detail: string; action: W
       'Install unreal_shimloader into this profile so mods can load. Installing a mod that needs it adds it too.',
     action: null
   },
+  'no-melonloader': {
+    label: 'MelonLoader not installed',
+    detail:
+      'Install MelonLoader into this profile so mods can load. Installing a mod that needs it adds it too.',
+    action: null
+  },
+  'no-lovely': {
+    label: 'lovely not installed',
+    detail:
+      'Install lovely into this profile so mods can load. Installing a mod that needs it adds it too.',
+    action: null
+  },
+  'no-returnofmodding': {
+    label: 'Return of Modding not installed',
+    detail:
+      'Install Return of Modding (Hell2Modding for Hades II) into this profile so mods can load. Installing a mod that needs it adds it too.',
+    action: null
+  },
   'proton-first-run': {
     label: 'Start the game once first',
     detail:

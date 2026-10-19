@@ -57,7 +57,14 @@ function resolveIcon(iconUrl: string | null | undefined): string | null {
 }
 
 /** The loaders HML installs and launches for catalog games. */
-export const SUPPORTED_LOADERS = ['bepinex', 'shimloader']
+export const SUPPORTED_LOADERS = [
+  'bepinex',
+  'shimloader',
+  'melonloader',
+  'recursive-melonloader',
+  'lovely',
+  'return-of-modding'
+]
 export const isSupportedLoader = (loader: string): boolean => SUPPORTED_LOADERS.includes(loader)
 
 export function parseEcosystem(json: unknown): Catalog {

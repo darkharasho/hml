@@ -1,14 +1,11 @@
 import { constants as fsConstants, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { listLibraries } from './steam'
+import type { ProxyDll } from '../../shared/protonOptions'
 
 /** The key, in a Wine prefix's user.reg, that holds the prefix-wide DLL overrides. */
 const SECTION = '[Software\\\\Wine\\\\DllOverrides]'
-/**
- * The DLL a loader needs Wine to take from the game folder before its own: BepInEx's doorstop
- * `winhttp`, or unreal_shimloader's `dwmapi`.
- */
-export type ProxyDll = 'winhttp' | 'dwmapi'
+export type { ProxyDll }
 const overrideLine = (dll: ProxyDll): string => `"${dll}"="native,builtin"`
 const valueRe = (dll: ProxyDll): RegExp => new RegExp(`^"${dll}"="([^"]*)"\\s*$`, 'i')
 

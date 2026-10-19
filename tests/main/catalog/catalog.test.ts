@@ -53,7 +53,7 @@ describe('loadCatalog', () => {
       () => 2_000
     )
     expect(got.games[0].supported).toBe(true)
-    expect(got.games.find((g) => g.loader === 'melonloader')?.supported).toBe(false)
+    expect(got.games.find((g) => g.loader === 'godotml')?.supported).toBe(false)
   })
 
   it('fetches and writes cache when stale or missing', async () => {

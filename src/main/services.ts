@@ -51,6 +51,7 @@ import {
 import {
   detectDoorstopVersion,
   findPreloader,
+  findExeDir,
   isProtonGame,
   launch,
   launchWarnings,
@@ -113,6 +114,13 @@ import {
   shimloaderArgs,
   unlinkShimloader
 } from './launch/shimloader'
+import {
+  linkProxyLoader,
+  proxyDlls,
+  proxyLoaderFor,
+  unlinkProxyLoader,
+  type ProxyLoader
+} from './launch/proxyLoaders'
 import { createTsDocs } from './thunderstore/docs'
 import { pickAccent } from './art/accent'
 import { ART_SCHEME, resolveArt, serveArt, steamArtUrl, type ArtSources } from './art/protocol'
@@ -932,8 +940,9 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   })
 
   /**
-   * Where the profile's mod loader logs: BepInEx runs from the profile, so its log is there;
-   * UE4SS writes next to the game's exe. Null for other loaders.
+   * Where the profile's mod loader logs: BepInEx and the proxy loaders (MelonLoader, lovely,
+   * Return of Modding) run from the profile, so their logs are there; UE4SS writes next to the
+   * game's exe. Null for other loaders.
    */
   async function modLogFile(game: string, profileId: string): Promise<string | null> {
     const def = await requireGame(game)
@@ -941,6 +950,8 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     if (def.loader === 'bepinex') {
       return path.join(paths.profileDir(game, profileId), 'BepInEx', 'LogOutput.log')
     }
+    const proxy = proxyLoaderFor(def.loader)
+    if (proxy) return proxy.logFile(paths.profileDir(game, profileId))
     if (def.loader === 'shimloader' && def.dataFolderName) {
       const steamRoot = await getSteamRoot()
       const gameDir = await resolveGameDir(def, await loadSettings(paths), steamRoot)
@@ -1106,6 +1117,40 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       await linkShimloader(at.profileDir, binDir)
     } else {
       await unlinkShimloader(binDir)
+    }
+    await launch(plan, at.profileDir, at.gameDir, deps.spawn)
+  }
+
+  /**
+   * Starts a proxy-loader game (MelonLoader, lovely, Return of Modding) through Steam. Modded
+   * puts the profile's proxy DLL next to the game's exe and points the loader at the profile;
+   * vanilla takes the proxy back out.
+   */
+  async function launchProxyLoader(
+    loader: ProxyLoader,
+    def: GameDef & { steamAppId: string },
+    mode: LaunchMode,
+    at: { steamRoot: string; gameDir: string; profileDir: string; proton: boolean }
+  ): Promise<void> {
+    const plan = buildSteamPlainPlan({
+      platform,
+      steamRoot: at.steamRoot,
+      steamAppId: def.steamAppId,
+      flatpak: isFlatpakSteam(at.steamRoot)
+    })
+    if (mode === 'modded' && !(await loader.has(at.profileDir))) {
+      throw new Error(`Install ${loader.name} into this profile so mods can load.`)
+    }
+    plan.args.push(...(await loader.args({ mode, profileDir: at.profileDir, proton: at.proton })))
+    if (mode === 'modded') {
+      if (at.proton) {
+        for (const dll of await proxyDlls(loader, at.profileDir)) {
+          await prepareProtonPrefix(def, at.steamRoot, def.steamAppId, dll)
+        }
+      }
+      await linkProxyLoader(loader, at.profileDir, at.gameDir)
+    } else {
+      await unlinkProxyLoader(loader, at.gameDir)
     }
     await launch(plan, at.profileDir, at.gameDir, deps.spawn)
   }
@@ -1676,13 +1721,16 @@ export function createServices(deps: ServiceDeps): HmlApi & {
         throw new Error(`${def.displayName} has no Steam app id, so HML cannot launch it.`)
       const steamRoot = await getSteamRoot()
       if (!steamRoot) throw new Error('Steam was not found. Set the Steam folder in settings.')
-      const gameDir = await resolveGameDir(def, await loadSettings(paths), steamRoot)
-      if (!gameDir) {
+      const installDir = await resolveGameDir(def, await loadSettings(paths), steamRoot)
+      if (!installDir) {
         throw new Error(`${def.displayName} was not found. Choose its install folder first.`)
       }
-      if (def.loader !== 'bepinex' && def.loader !== 'shimloader') {
+      const proxy = proxyLoaderFor(def.loader)
+      if (def.loader !== 'bepinex' && def.loader !== 'shimloader' && !proxy) {
         throw new Error(`${def.displayName} uses a mod loader HML does not support yet.`)
       }
+      // A proxy loader's DLL goes next to the exe, which can be deeper than the install folder.
+      const gameDir = proxy ? await findExeDir(installDir, def) : installDir
       const proton = await isProtonGame(platform, gameDir, def.exeNames)
       if (mode === 'modded' && platform === 'linux' && !proton) {
         throw new Error(NATIVE_LINUX_UNSUPPORTED)
@@ -1694,6 +1742,14 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       const modded = mode === 'modded'
       if (def.loader === 'shimloader') {
         return launchShimloader({ ...def, steamAppId: def.steamAppId }, mode, {
+          steamRoot,
+          gameDir,
+          profileDir,
+          proton
+        })
+      }
+      if (proxy) {
+        return launchProxyLoader(proxy, { ...def, steamAppId: def.steamAppId }, mode, {
           steamRoot,
           gameDir,
           profileDir,

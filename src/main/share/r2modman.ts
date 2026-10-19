@@ -1,7 +1,7 @@
 import { load as parseYaml } from 'js-yaml'
 import type { HmlExport } from '../../shared/types'
 import { readZipEntries, TOO_LARGE } from '../install/zipEntries'
-import { IMPORT_TOO_BIG, MAX_HML_BYTES } from './hmlFile'
+import { IMPORT_TOO_BIG, isSafeConfigPath, MAX_HML_BYTES } from './hmlFile'
 
 /** r2modman profile codes are Thunderstore legacy profile keys, which are UUIDs. */
 const R2_CODE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -14,7 +14,8 @@ const NOT_FOUND = 'No r2modman profile has that code. It may have expired.'
 const DAMAGED = 'This r2modman profile is damaged or in a format HML doesn’t know.'
 const NOT_PROFILE = "This isn't an r2modman or HML profile file."
 
-// r2modman puts BepInEx/config in the zip as `config/`; HML keeps the BepInEx/ path.
+// r2modman puts BepInEx/config in the zip as `config/`; HML keeps the BepInEx/ path. Other
+// settings, such as MelonLoader's UserData, keep their profile path in both.
 const R2_CONFIG = 'config/'
 const HML_CONFIG = 'BepInEx/config/'
 const FULL_NAME_RE = /^[A-Za-z0-9_]+-[A-Za-z0-9_]+$/
@@ -71,7 +72,8 @@ function isSafeRelative(rel: string): boolean {
 
 /**
  * Reads an r2modman export (.r2z) as an HML export for `game`. r2modman profiles don't name their
- * game, so the caller says which one. Only BepInEx/config files are kept, as in HML's own files.
+ * game, so the caller says which one. Only BepInEx/config and UserData files are kept, as in HML's
+ * own files.
  */
 export function readR2modman(
   data: Uint8Array,
@@ -114,7 +116,9 @@ export function readR2modman(
       : entry.startsWith(HML_CONFIG)
         ? entry.slice(HML_CONFIG.length)
         : null
-    if (rel !== null && isSafeRelative(rel)) configs.set(`${HML_CONFIG}${rel}`, zip.read(entry))
+    if (rel !== null) {
+      if (isSafeRelative(rel)) configs.set(`${HML_CONFIG}${rel}`, zip.read(entry))
+    } else if (isSafeConfigPath(entry)) configs.set(entry, zip.read(entry))
   }
   return {
     export: {

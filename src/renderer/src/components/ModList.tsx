@@ -150,7 +150,14 @@ export function ModList(): React.JSX.Element | null {
   const hasOnline = online.length > 0
   // The domain can change while the Online tab is open; fall back to Installed if it vanishes.
   // Only loaders HML knows the log of get a Log tab.
-  const hasLog = game.loader === 'bepinex' || game.loader === 'shimloader'
+  const hasLog = [
+    'bepinex',
+    'shimloader',
+    'melonloader',
+    'recursive-melonloader',
+    'lovely',
+    'return-of-modding'
+  ].includes(game.loader)
   const activeTab =
     (tab === 'online' && !hasOnline) || (tab === 'log' && !hasLog) ? 'installed' : tab
   const openConfig = (path: string | null): void => {

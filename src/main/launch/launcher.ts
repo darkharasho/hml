@@ -7,6 +7,7 @@ import { isFlatpakSteam, readLaunchOptions } from '../steam/steam'
 import { findProtonUserReg } from '../steam/protonPrefix'
 import type { LaunchPlan } from './launchPlan'
 import { hasShimloader } from './shimloader'
+import { proxyDlls, proxyLoaderFor } from './proxyLoaders'
 
 export const NATIVE_LINUX_UNSUPPORTED =
   "Native Linux games aren't supported for modded launch yet. Force Proton for this game in Steam (Properties → Compatibility)."
@@ -54,6 +55,19 @@ export async function isProtonGame(
   return false
 }
 
+/**
+ * The folder a game's exe is in: the install folder, or for a game whose catalog Steam folder
+ * goes deeper (Hades II's `Hades II/Ship`), that subfolder when it has the exe. Proxy loaders
+ * must sit next to the exe.
+ */
+export async function findExeDir(gameDir: string, game: GameDef): Promise<string> {
+  const sub = game.steamFolderName.split(/[\\/]/).filter(Boolean).slice(1)
+  if (sub.length === 0 || sub.some((s) => s === '..' || s === '.')) return gameDir
+  const dir = path.join(gameDir, ...sub)
+  for (const exe of game.exeNames) if (await exists(path.join(dir, exe))) return dir
+  return gameDir
+}
+
 export async function launchWarnings(input: {
   platform: 'win32' | 'linux'
   game: GameDef
@@ -82,23 +96,32 @@ export async function launchWarnings(input: {
   if (input.game.loader === 'deploy') return input.gameDir === null ? ['game-not-found'] : []
   const warnings: LaunchWarning[] = []
   const shim = input.game.loader === 'shimloader'
+  const proxy = proxyLoaderFor(input.game.loader)
   if (input.gameDir === null) warnings.push('game-not-found')
   if (shim) {
     if (!(await hasShimloader(input.profileDir))) warnings.push('no-shimloader')
+  } else if (proxy) {
+    if (!(await proxy.has(input.profileDir))) warnings.push(proxy.missing)
   } else {
     if (input.game.loader !== 'bepinex') warnings.push('loader-unsupported')
     if ((await findPreloader(input.profileDir)) === null) warnings.push('no-bepinex')
     if (input.loaderMismatch) warnings.push('loader-mismatch')
   }
   if (input.gameDir !== null) {
-    const proton = await isProtonGame(input.platform, input.gameDir, input.game.exeNames)
+    const exeDir = proxy ? await findExeDir(input.gameDir, input.game) : input.gameDir
+    const proton = await isProtonGame(input.platform, exeDir, input.game.exeNames)
     if (input.platform === 'linux' && !proton) warnings.push('native-linux-unsupported')
     if (proton && input.game.steamAppId) {
       // Start modded sets the loader's DLL up in the game's Proton prefix, which exists after
       // the first launch; launch options that already set it work from the start.
       const opts = await readLaunchOptions(input.steamRoot, input.game.steamAppId)
+      const dlls = shim
+        ? (['dwmapi'] as const)
+        : proxy
+          ? await proxyDlls(proxy, input.profileDir)
+          : (['winhttp'] as const)
       if (
-        !hasProtonOverride(opts, shim ? 'dwmapi' : 'winhttp') &&
+        !dlls.some((dll) => hasProtonOverride(opts, dll)) &&
         !(await findProtonUserReg(input.steamRoot, input.game.steamAppId))
       ) {
         warnings.push('proton-first-run')

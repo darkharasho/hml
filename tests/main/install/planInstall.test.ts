@@ -318,6 +318,170 @@ describe('planInstall', () => {
       expect(out.map((f) => f.to)).toEqual(['dwmapi.dll', 'other/x.dll'])
     })
   })
+
+  describe('MelonLoader', () => {
+    const melon = { packageId: 'LavaGang-MelonLoader', rootFolder: '', loader: 'melonloader' }
+    const recursive = (entries: string[]): ReturnType<typeof planInstall>['files'] =>
+      planInstall(entries, { packageId, rules: [], loader: 'recursive-melonloader' }).files
+
+    test('the loader package keeps its paths, without the package metadata', () => {
+      const out = planInstall(
+        [
+          'manifest.json',
+          'icon.png',
+          'README.md',
+          'version.dll',
+          'MelonLoader/net6/MelonLoader.dll'
+        ],
+        {
+          packageId: 'LavaGang-MelonLoader',
+          rules: [],
+          loaderPackage: melon,
+          loader: 'recursive-melonloader'
+        }
+      ).files
+      expect(out).toEqual([
+        { from: 'version.dll', to: 'version.dll', disableable: false },
+        {
+          from: 'MelonLoader/net6/MelonLoader.dll',
+          to: 'MelonLoader/net6/MelonLoader.dll',
+          disableable: false
+        }
+      ])
+    })
+
+    test('v0.7+ mods go under Mods/<package>, their UserData under UserData/<package>', () => {
+      expect(recursive(['manifest.json', 'Mods/A.dll', 'UserData/a.cfg', 'Plugins/P.dll'])).toEqual(
+        [
+          { from: 'manifest.json', to: 'Mods/Author-Mod/manifest.json', disableable: true },
+          { from: 'Mods/A.dll', to: 'Mods/Author-Mod/Mods/A.dll', disableable: true },
+          { from: 'UserData/a.cfg', to: 'UserData/Author-Mod/a.cfg', disableable: false },
+          { from: 'Plugins/P.dll', to: 'Mods/Author-Mod/Plugins/P.dll', disableable: true }
+        ]
+      )
+    })
+
+    test('strips a wrapper folder but not a MelonLoader folder', () => {
+      expect(recursive(['Release/A.dll', 'Release/B.dll']).map((f) => f.to)).toEqual([
+        'Mods/Author-Mod/A.dll',
+        'Mods/Author-Mod/B.dll'
+      ])
+      expect(recursive(['UserData/a.cfg', 'UserData/b.cfg']).map((f) => f.to)).toEqual([
+        'UserData/Author-Mod/a.cfg',
+        'UserData/Author-Mod/b.cfg'
+      ])
+    })
+
+    test('older MelonLoader games follow their install rules', () => {
+      const melonRules: InstallRule[] = [
+        {
+          route: 'Mods',
+          defaultFileExtensions: ['.dll'],
+          trackingMethod: 'state',
+          subRoutes: [],
+          isDefaultLocation: false
+        },
+        {
+          route: 'UserData/ModManager',
+          defaultFileExtensions: [],
+          trackingMethod: 'subdir-no-flatten',
+          subRoutes: [],
+          isDefaultLocation: true
+        },
+        {
+          route: 'UserLibs',
+          defaultFileExtensions: ['.lib.dll'],
+          trackingMethod: 'state',
+          subRoutes: [],
+          isDefaultLocation: false
+        }
+      ]
+      const out = planInstall(['A.dll', 'X.lib.dll', 'notes.txt'], {
+        packageId,
+        rules: melonRules,
+        loader: 'melonloader'
+      }).files
+      expect(out.map((f) => f.to)).toEqual([
+        'Mods/A.dll',
+        'UserLibs/X.lib.dll',
+        'UserData/ModManager/Author-Mod/notes.txt'
+      ])
+    })
+  })
+
+  describe('lovely', () => {
+    test('the loader puts its DLL at the root and its lovely folder under mods', () => {
+      const out = planInstall(
+        ['manifest.json', 'icon.png', 'README.md', 'winmm.dll', 'lovely/', 'lovely/config.toml'],
+        {
+          packageId: 'Thunderstore-lovely',
+          rules: [],
+          loaderPackage: { packageId: 'Thunderstore-lovely', rootFolder: '', loader: 'lovely' },
+          loader: 'lovely'
+        }
+      ).files
+      expect(out).toEqual([
+        { from: 'winmm.dll', to: 'winmm.dll', disableable: false },
+        { from: 'lovely/config.toml', to: 'mods/lovely/config.toml', disableable: false }
+      ])
+    })
+
+    test('mods go under mods/<package>, keeping their paths', () => {
+      const out = planInstall(['manifest.json', 'lovely.toml', 'lib/nativefs.lua'], {
+        packageId,
+        rules: [],
+        loader: 'lovely'
+      }).files
+      expect(out).toEqual([
+        { from: 'manifest.json', to: 'mods/Author-Mod/manifest.json', disableable: true },
+        { from: 'lovely.toml', to: 'mods/Author-Mod/lovely.toml', disableable: true },
+        { from: 'lib/nativefs.lua', to: 'mods/Author-Mod/lib/nativefs.lua', disableable: true }
+      ])
+    })
+  })
+
+  describe('Return of Modding', () => {
+    const rom = (entries: string[]): string[] =>
+      planInstall(entries, { packageId, rules: [], loader: 'return-of-modding' }).files.map(
+        (f) => f.to
+      )
+
+    test('the loader package puts its DLL at the profile root', () => {
+      const out = planInstall(['manifest.json', 'ReturnOfModdingPack/d3d12.dll'], {
+        packageId: 'Hell2Modding-Hell2Modding',
+        rules: [],
+        loaderPackage: {
+          packageId: 'Hell2Modding-Hell2Modding',
+          rootFolder: 'ReturnOfModdingPack',
+          loader: 'return-of-modding'
+        },
+        loader: 'return-of-modding'
+      }).files
+      expect(out).toEqual([
+        { from: 'ReturnOfModdingPack/d3d12.dll', to: 'd3d12.dll', disableable: false }
+      ])
+    })
+
+    test('mods go under plugins/<package>, keeping their manifest', () => {
+      expect(rom(['manifest.json', 'main.lua', 'src/util.lua'])).toEqual([
+        'ReturnOfModding/plugins/Author-Mod/manifest.json',
+        'ReturnOfModding/plugins/Author-Mod/main.lua',
+        'ReturnOfModding/plugins/Author-Mod/src/util.lua'
+      ])
+    })
+
+    test('plugins_data and config folders go to their own folders', () => {
+      expect(rom(['main.lua', 'plugins_data/a.png', 'config/x.cfg'])).toEqual([
+        'ReturnOfModding/plugins/Author-Mod/main.lua',
+        'ReturnOfModding/plugins_data/Author-Mod/a.png',
+        'ReturnOfModding/config/Author-Mod/x.cfg'
+      ])
+      expect(rom(['ReturnOfModding/plugins/main.lua', 'ReturnOfModding/config/x.cfg'])).toEqual([
+        'ReturnOfModding/plugins/Author-Mod/main.lua',
+        'ReturnOfModding/config/Author-Mod/x.cfg'
+      ])
+    })
+  })
 })
 
 describe('planDeploy', () => {
