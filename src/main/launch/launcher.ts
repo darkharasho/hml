@@ -98,16 +98,18 @@ export async function launchWarnings(input: {
   const shim = input.game.loader === 'shimloader'
   const proxy = proxyLoaderFor(input.game.loader)
   if (input.gameDir === null) warnings.push('game-not-found')
+  // Godot Mod Loader games ship the loader, need no DLL and run natively on Linux too.
+  const godot = input.game.loader === 'godotml'
   if (shim) {
     if (!(await hasShimloader(input.profileDir))) warnings.push('no-shimloader')
   } else if (proxy) {
     if (!(await proxy.has(input.profileDir))) warnings.push(proxy.missing)
-  } else {
+  } else if (!godot) {
     if (input.game.loader !== 'bepinex') warnings.push('loader-unsupported')
     if ((await findPreloader(input.profileDir)) === null) warnings.push('no-bepinex')
     if (input.loaderMismatch) warnings.push('loader-mismatch')
   }
-  if (input.gameDir !== null) {
+  if (input.gameDir !== null && !godot) {
     const exeDir = await findExeDir(input.gameDir, input.game)
     const proton = await isProtonGame(input.platform, exeDir, input.game.exeNames)
     if (input.platform === 'linux' && !proton) warnings.push('native-linux-unsupported')

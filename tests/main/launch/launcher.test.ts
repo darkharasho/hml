@@ -170,6 +170,13 @@ describe('launchWarnings', () => {
     expect(await launchWarnings({ ...input(), game: rom })).toEqual([])
   })
 
+  test('godotml games need nothing in the profile and run natively too', async () => {
+    const godot = { ...game, loader: 'godotml' } as GameDef
+    expect(await launchWarnings({ ...input(), game: godot })).toEqual([])
+    await fs.writeFile(path.join(gameDir, 'REPO.exe'), '')
+    expect(await launchWarnings({ ...input(), game: godot })).toEqual([])
+  })
+
   test('native-linux-unsupported when a linux game has no Proton exe', async () => {
     await addPreloader()
     expect(await launchWarnings(input())).toEqual(['native-linux-unsupported'])

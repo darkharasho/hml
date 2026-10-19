@@ -6,6 +6,8 @@ export interface PlannedFile {
   /** Profile-relative destination. */
   to: string
   disableable: boolean
+  /** Zip entries packed, at their planned paths, into one zip written at `to` (then `from` is unused). */
+  pack?: { from: string; path: string }[]
 }
 
 export interface InstallPlan {
@@ -145,6 +147,20 @@ const RETURN_OF_MODDING_RULES: InstallRule[] = ['plugins', 'plugins_data', 'conf
   isDefaultLocation: dir === 'plugins'
 }))
 
+/** godotml games without install rules (Pair A Dice) get the rule the others have. */
+const GODOTML_RULES: InstallRule[] = [
+  {
+    route: 'mods',
+    defaultFileExtensions: [],
+    trackingMethod: 'package-zip',
+    subRoutes: [],
+    isDefaultLocation: true
+  }
+]
+
+/** Godot Mod Loader's folder for a mod's files, inside the mod's zip. */
+const GODOT_MODS_DIR = 'mods-unpacked'
+
 export function planInstall(
   entries: string[],
   opts: {
@@ -160,12 +176,17 @@ export function planInstall(
 ): InstallPlan {
   const { packageId, loaderPackage } = opts
   const rules =
-    opts.loader === 'return-of-modding' && opts.rules.length === 0
-      ? RETURN_OF_MODDING_RULES
-      : opts.rules
+    opts.rules.length > 0
+      ? opts.rules
+      : opts.loader === 'return-of-modding'
+        ? RETURN_OF_MODDING_RULES
+        : opts.loader === 'godotml'
+          ? GODOTML_RULES
+          : opts.rules
   const items = entries.map((from) => ({ from, segs: normalize(from) }))
   const melon = opts.loader === 'recursive-melonloader'
   const stopNames = loaderPackage?.rootFolder ? [loaderPackage.rootFolder] : []
+  if (opts.loader === 'godotml') stopNames.push(GODOT_MODS_DIR)
   const stripped = stripWrappers(items, rules, melon ? [...stopNames, ...MELON_DIRS] : stopNames)
 
   if (loaderPackage?.loader === 'shimloader') {
@@ -205,6 +226,21 @@ export function planInstall(
 
   const defaultRule = rules.find((r) => r.isDefaultLocation)
   if (!defaultRule) throw new Error('No default install rule (isDefaultLocation) defined')
+
+  // The whole package as one zip, `<route>/<package>.ts.zip`, as r2modman does: Godot Mod Loader
+  // loads mods from zips.
+  if (defaultRule.trackingMethod === 'package-zip') {
+    return {
+      files: [
+        {
+          from: packageId,
+          to: `${defaultRule.route}/${packageId}.ts.zip`,
+          disableable: true,
+          pack: stripped.map((i) => ({ from: i.from, path: i.segs.join('/') }))
+        }
+      ]
+    }
+  }
 
   const files: PlannedFile[] = []
   for (const i of stripped) {

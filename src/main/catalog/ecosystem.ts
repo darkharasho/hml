@@ -63,7 +63,8 @@ export const SUPPORTED_LOADERS = [
   'melonloader',
   'recursive-melonloader',
   'lovely',
-  'return-of-modding'
+  'return-of-modding',
+  'godotml'
 ]
 export const isSupportedLoader = (loader: string): boolean => SUPPORTED_LOADERS.includes(loader)
 

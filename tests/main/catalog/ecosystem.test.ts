@@ -21,15 +21,16 @@ describe('parseEcosystem', () => {
 
   it('a game on a loader HML lacks is unsupported', () => {
     const g = get('bonelab')
-    expect(g.loader).toBe('godotml')
+    expect(g.loader).toBe('northstar')
     expect(g.supported).toBe(false)
     expect(g.steamAppId).toBe('1592190')
   })
 
-  it('supports MelonLoader v0.7+ (recursive-melonloader)', () => {
+  it('supports MelonLoader v0.7+ (recursive-melonloader) and godotml', () => {
     expect(isSupportedLoader('melonloader')).toBe(true)
     expect(isSupportedLoader('recursive-melonloader')).toBe(true)
-    expect(isSupportedLoader('godotml')).toBe(false)
+    expect(isSupportedLoader('godotml')).toBe(true)
+    expect(isSupportedLoader('northstar')).toBe(false)
   })
 
   it('reads modloaderPackages and keeps absolute icon urls', () => {

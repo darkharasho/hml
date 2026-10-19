@@ -122,6 +122,7 @@ import {
   unlinkProxyLoader,
   type ProxyLoader
 } from './launch/proxyLoaders'
+import { godotModArgs } from './launch/godotml'
 import { createTsDocs } from './thunderstore/docs'
 import { pickAccent } from './art/accent'
 import { ART_SCHEME, resolveArt, serveArt, steamArtUrl, type ArtSources } from './art/protocol'
@@ -1206,6 +1207,25 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     await launch(plan, at.profileDir, at.gameDir, deps.spawn)
   }
 
+  /**
+   * Starts a Godot Mod Loader game through Steam. The loader is part of the game, so modded only
+   * adds arguments pointing it at the profile. Native Linux builds take them too.
+   */
+  async function launchGodotModLoader(
+    def: GameDef & { steamAppId: string },
+    mode: LaunchMode,
+    at: { steamRoot: string; gameDir: string; profileDir: string; proton: boolean }
+  ): Promise<void> {
+    const plan = buildSteamPlainPlan({
+      platform,
+      steamRoot: at.steamRoot,
+      steamAppId: def.steamAppId,
+      flatpak: isFlatpakSteam(at.steamRoot)
+    })
+    plan.args.push(...godotModArgs({ mode, profileDir: at.profileDir, proton: at.proton }))
+    await launch(plan, at.profileDir, at.gameDir, deps.spawn)
+  }
+
   /** Starts a custom Steam game without a loader: a plain Steam launch, whatever the mode. */
   async function launchSteamPlain(def: GameDef & { steamAppId: string }): Promise<void> {
     const steamRoot = await getSteamRoot()
@@ -1777,14 +1797,15 @@ export function createServices(deps: ServiceDeps): HmlApi & {
         throw new Error(`${def.displayName} was not found. Choose its install folder first.`)
       }
       const proxy = proxyLoaderFor(def.loader)
-      if (def.loader !== 'bepinex' && def.loader !== 'shimloader' && !proxy) {
+      const godot = def.loader === 'godotml'
+      if (def.loader !== 'bepinex' && def.loader !== 'shimloader' && !proxy && !godot) {
         throw new Error(`${def.displayName} uses a mod loader HML does not support yet.`)
       }
       // Doorstop and proxy loader DLLs go next to the exe, which can be deeper than the install
       // folder.
       const gameDir = await findExeDir(installDir, def)
       const proton = await isProtonGame(platform, gameDir, def.exeNames)
-      if (mode === 'modded' && platform === 'linux' && !proton) {
+      if (mode === 'modded' && platform === 'linux' && !proton && !godot) {
         throw new Error(NATIVE_LINUX_UNSUPPORTED)
       }
       // Vanilla launches only toggle doorstop off, so no profile directory is involved; the
@@ -1794,6 +1815,14 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       const modded = mode === 'modded'
       if (def.loader === 'shimloader') {
         return launchShimloader({ ...def, steamAppId: def.steamAppId }, mode, {
+          steamRoot,
+          gameDir,
+          profileDir,
+          proton
+        })
+      }
+      if (godot) {
+        return launchGodotModLoader({ ...def, steamAppId: def.steamAppId }, mode, {
           steamRoot,
           gameDir,
           profileDir,

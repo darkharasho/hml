@@ -198,7 +198,7 @@
           "gameInstanceType": "game",
           "gameSelectionDisplayMode": "visible",
           "additionalSearchStrings": ["BL", "骨骼实验室"],
-          "packageLoader": "godotml",
+          "packageLoader": "northstar",
           "installRules": [
             {
               "route": "Mods",

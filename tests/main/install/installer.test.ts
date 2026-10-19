@@ -338,6 +338,38 @@ describe('installer', () => {
     expect(readFileSync(path.join(profDir, 'BepInEx/plugins/A-Mod/A.dll'), 'utf8')).toBe('2')
   })
 
+  test('installs a godotml mod as one zip that disabling switches off', async () => {
+    const godot: GameDef = {
+      ...game,
+      loader: 'godotml',
+      installRules: [
+        {
+          route: 'mods',
+          defaultFileExtensions: [],
+          trackingMethod: 'package-zip',
+          subRoutes: [],
+          isDefaultLocation: true
+        }
+      ]
+    }
+    const data = zipSync({
+      'manifest.json': manifest('Mod', '1.0.0'),
+      'mods-unpacked/A-Mod/mod_main.gd': strToU8('extends Node')
+    })
+    const mod = await installZip(paths, godot, catalog, pid, data, src, { packageId: 'A-Mod' })
+    expect(mod.files).toEqual(['mods/A-Mod.ts.zip'])
+    expect(mod.disableable).toEqual(['mods/A-Mod.ts.zip'])
+    const packed = readZipEntries(readFileSync(path.join(profDir, 'mods/A-Mod.ts.zip')))
+    expect(packed.names.sort()).toEqual(['manifest.json', 'mods-unpacked/A-Mod/mod_main.gd'])
+    expect(new TextDecoder().decode(packed.read('mods-unpacked/A-Mod/mod_main.gd'))).toBe(
+      'extends Node'
+    )
+    await setModEnabled(paths, godot, pid, 'A-Mod', false)
+    expect(readdirSync(path.join(profDir, 'mods'))).toEqual(['A-Mod.ts.zip.old'])
+    await uninstallMod(paths, godot, pid, 'A-Mod')
+    expect(existsSync(path.join(profDir, 'mods'))).toBe(false)
+  })
+
   test('installs a deploy game zip as-is with every file disableable', async () => {
     const deployGame: GameDef = { ...game, label: 'nexus-x', loader: 'deploy', installRules: [] }
     const p = (await createProfile(paths, 'nexus-x', 'p')).id
