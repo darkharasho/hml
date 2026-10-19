@@ -3,12 +3,12 @@ export const PROTON_DLL_OVERRIDE = 'winhttp=n,b'
 
 /**
  * True when Steam launch options already set `<dll>=n,b` (winhttp for BepInEx, dwmapi for
- * unreal_shimloader): before `%command%` when there is one (after it is a game argument), else
- * anywhere.
+ * unreal_shimloader, version for MelonLoader): before `%command%` when there is one (after it is
+ * a game argument), else anywhere.
  */
 export function hasProtonOverride(
   options: string | null | undefined,
-  dll: 'winhttp' | 'dwmapi' = 'winhttp'
+  dll: 'winhttp' | 'dwmapi' | 'version' = 'winhttp'
 ): boolean {
   if (!options) return false
   const at = options.indexOf('%command%')

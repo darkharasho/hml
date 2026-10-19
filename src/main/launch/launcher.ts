@@ -7,6 +7,8 @@ import { isFlatpakSteam, readLaunchOptions } from '../steam/steam'
 import { findProtonUserReg } from '../steam/protonPrefix'
 import type { LaunchPlan } from './launchPlan'
 import { hasShimloader } from './shimloader'
+import { hasMelonLoader } from './melonloader'
+import { isMelonLoader } from '../catalog/ecosystem'
 
 export const NATIVE_LINUX_UNSUPPORTED =
   "Native Linux games aren't supported for modded launch yet. Force Proton for this game in Steam (Properties → Compatibility)."
@@ -82,9 +84,12 @@ export async function launchWarnings(input: {
   if (input.game.loader === 'deploy') return input.gameDir === null ? ['game-not-found'] : []
   const warnings: LaunchWarning[] = []
   const shim = input.game.loader === 'shimloader'
+  const melon = isMelonLoader(input.game.loader)
   if (input.gameDir === null) warnings.push('game-not-found')
   if (shim) {
     if (!(await hasShimloader(input.profileDir))) warnings.push('no-shimloader')
+  } else if (melon) {
+    if (!(await hasMelonLoader(input.profileDir))) warnings.push('no-melonloader')
   } else {
     if (input.game.loader !== 'bepinex') warnings.push('loader-unsupported')
     if ((await findPreloader(input.profileDir)) === null) warnings.push('no-bepinex')
@@ -98,7 +103,7 @@ export async function launchWarnings(input: {
       // the first launch; launch options that already set it work from the start.
       const opts = await readLaunchOptions(input.steamRoot, input.game.steamAppId)
       if (
-        !hasProtonOverride(opts, shim ? 'dwmapi' : 'winhttp') &&
+        !hasProtonOverride(opts, shim ? 'dwmapi' : melon ? 'version' : 'winhttp') &&
         !(await findProtonUserReg(input.steamRoot, input.game.steamAppId))
       ) {
         warnings.push('proton-first-run')

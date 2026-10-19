@@ -6,9 +6,9 @@ import { listLibraries } from './steam'
 const SECTION = '[Software\\\\Wine\\\\DllOverrides]'
 /**
  * The DLL a loader needs Wine to take from the game folder before its own: BepInEx's doorstop
- * `winhttp`, or unreal_shimloader's `dwmapi`.
+ * `winhttp`, unreal_shimloader's `dwmapi`, or MelonLoader's `version`.
  */
-export type ProxyDll = 'winhttp' | 'dwmapi'
+export type ProxyDll = 'winhttp' | 'dwmapi' | 'version'
 const overrideLine = (dll: ProxyDll): string => `"${dll}"="native,builtin"`
 const valueRe = (dll: ProxyDll): RegExp => new RegExp(`^"${dll}"="([^"]*)"\\s*$`, 'i')
 

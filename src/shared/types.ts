@@ -243,6 +243,7 @@ export type LaunchWarning =
   | 'loader-unsupported'
   | 'no-bepinex'
   | 'no-shimloader'
+  | 'no-melonloader'
   | 'proton-first-run'
   | 'steam-not-found'
   | 'flatpak-filesystem'

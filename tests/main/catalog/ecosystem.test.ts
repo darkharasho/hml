@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import fixture from '../../fixtures/ecosystem-min.json'
-import { parseEcosystem, searchGames } from '../../../src/main/catalog/ecosystem'
+import { isSupportedLoader, parseEcosystem, searchGames } from '../../../src/main/catalog/ecosystem'
 import type { GameDef } from '../../../src/shared/types'
 
 const cat = parseEcosystem(fixture)
@@ -19,11 +19,17 @@ describe('parseEcosystem', () => {
     expect(g.iconUrl).toBe('https://ccdn.thunderstore.io/assets/repo/repo-cover-360x480.webp')
   })
 
-  it('melonloader game unsupported', () => {
+  it('a game on a loader HML lacks is unsupported', () => {
     const g = get('bonelab')
-    expect(g.loader).toBe('melonloader')
+    expect(g.loader).toBe('godotml')
     expect(g.supported).toBe(false)
     expect(g.steamAppId).toBe('1592190')
+  })
+
+  it('supports MelonLoader v0.7+ (recursive-melonloader)', () => {
+    expect(isSupportedLoader('melonloader')).toBe(true)
+    expect(isSupportedLoader('recursive-melonloader')).toBe(true)
+    expect(isSupportedLoader('godotml')).toBe(false)
   })
 
   it('reads modloaderPackages and keeps absolute icon urls', () => {

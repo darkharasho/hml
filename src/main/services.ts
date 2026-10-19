@@ -16,7 +16,7 @@ import type {
 import type { GameSummary, HmlApi } from '../shared/ipc'
 import type { AppPaths } from './store/paths'
 import { loadCatalog } from './catalog/catalog'
-import { rankGame, searchGames } from './catalog/ecosystem'
+import { isMelonLoader, rankGame, searchGames } from './catalog/ecosystem'
 import {
   findAppInstall,
   findSteamRoot,
@@ -113,6 +113,13 @@ import {
   shimloaderArgs,
   unlinkShimloader
 } from './launch/shimloader'
+import {
+  hasMelonLoader,
+  linkMelonLoader,
+  melonLoaderArgs,
+  melonLogFile,
+  unlinkMelonLoader
+} from './launch/melonloader'
 import { createTsDocs } from './thunderstore/docs'
 import { pickAccent } from './art/accent'
 import { ART_SCHEME, resolveArt, serveArt, steamArtUrl, type ArtSources } from './art/protocol'
@@ -932,8 +939,8 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   })
 
   /**
-   * Where the profile's mod loader logs: BepInEx runs from the profile, so its log is there;
-   * UE4SS writes next to the game's exe. Null for other loaders.
+   * Where the profile's mod loader logs: BepInEx and MelonLoader run from the profile, so their
+   * logs are there; UE4SS writes next to the game's exe. Null for other loaders.
    */
   async function modLogFile(game: string, profileId: string): Promise<string | null> {
     const def = await requireGame(game)
@@ -941,6 +948,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     if (def.loader === 'bepinex') {
       return path.join(paths.profileDir(game, profileId), 'BepInEx', 'LogOutput.log')
     }
+    if (isMelonLoader(def.loader)) return melonLogFile(paths.profileDir(game, profileId))
     if (def.loader === 'shimloader' && def.dataFolderName) {
       const steamRoot = await getSteamRoot()
       const gameDir = await resolveGameDir(def, await loadSettings(paths), steamRoot)
@@ -1106,6 +1114,36 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       await linkShimloader(at.profileDir, binDir)
     } else {
       await unlinkShimloader(binDir)
+    }
+    await launch(plan, at.profileDir, at.gameDir, deps.spawn)
+  }
+
+  /**
+   * Starts a MelonLoader game through Steam. Modded puts the profile's proxy DLL next to the
+   * game's exe and points MelonLoader at the profile; vanilla takes the proxy back out.
+   */
+  async function launchMelonLoader(
+    def: GameDef & { steamAppId: string },
+    mode: LaunchMode,
+    at: { steamRoot: string; gameDir: string; profileDir: string; proton: boolean }
+  ): Promise<void> {
+    const plan = buildSteamPlainPlan({
+      platform,
+      steamRoot: at.steamRoot,
+      steamAppId: def.steamAppId,
+      flatpak: isFlatpakSteam(at.steamRoot)
+    })
+    if (mode === 'modded' && !(await hasMelonLoader(at.profileDir))) {
+      throw new Error('Install MelonLoader into this profile so mods can load.')
+    }
+    plan.args.push(
+      ...(await melonLoaderArgs({ mode, profileDir: at.profileDir, proton: at.proton }))
+    )
+    if (mode === 'modded') {
+      if (at.proton) await prepareProtonPrefix(def, at.steamRoot, def.steamAppId, 'version')
+      await linkMelonLoader(at.profileDir, at.gameDir)
+    } else {
+      await unlinkMelonLoader(at.gameDir)
     }
     await launch(plan, at.profileDir, at.gameDir, deps.spawn)
   }
@@ -1680,7 +1718,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       if (!gameDir) {
         throw new Error(`${def.displayName} was not found. Choose its install folder first.`)
       }
-      if (def.loader !== 'bepinex' && def.loader !== 'shimloader') {
+      if (def.loader !== 'bepinex' && def.loader !== 'shimloader' && !isMelonLoader(def.loader)) {
         throw new Error(`${def.displayName} uses a mod loader HML does not support yet.`)
       }
       const proton = await isProtonGame(platform, gameDir, def.exeNames)
@@ -1694,6 +1732,14 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       const modded = mode === 'modded'
       if (def.loader === 'shimloader') {
         return launchShimloader({ ...def, steamAppId: def.steamAppId }, mode, {
+          steamRoot,
+          gameDir,
+          profileDir,
+          proton
+        })
+      }
+      if (isMelonLoader(def.loader)) {
+        return launchMelonLoader({ ...def, steamAppId: def.steamAppId }, mode, {
           steamRoot,
           gameDir,
           profileDir,

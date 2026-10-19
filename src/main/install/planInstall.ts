@@ -50,13 +50,12 @@ const PACKAGE_METADATA = new Set([
   'changelog'
 ])
 
-function stripWrappers(items: Item[], rules: InstallRule[], stopName?: string): Item[] {
-  const routeNames = rules.map((r) => lastSegment(r.route))
+function stripWrappers(items: Item[], rules: InstallRule[], stopNames: string[] = []): Item[] {
+  const routeNames = [...rules.map((r) => lastSegment(r.route)), ...stopNames]
   let cur = items
   while (cur.length > 0 && cur.every((i) => i.segs.length >= 2)) {
     const w = cur[0].segs[0]
     if (!cur.every((i) => eq(i.segs[0], w))) break
-    if (stopName && eq(w, stopName)) break
     if (eq(w, 'bepinex') || routeNames.some((n) => eq(n, w))) break
     cur = cur.map((i) => ({ ...i, segs: i.segs.slice(1) }))
   }
@@ -64,7 +63,8 @@ function stripWrappers(items: Item[], rules: InstallRule[], stopName?: string): 
 }
 
 function destination(rule: InstallRule, packageId: string, rest: string[]): string {
-  const base = rule.trackingMethod === 'subdir' ? [rule.route, packageId] : [rule.route]
+  const subdir = rule.trackingMethod === 'subdir' || rule.trackingMethod === 'subdir-no-flatten'
+  const base = subdir ? [rule.route, packageId] : [rule.route]
   return [...base, ...rest].join('/')
 }
 
@@ -90,13 +90,43 @@ function planShimloader(items: Item[]): InstallPlan | null {
   return { files }
 }
 
+/** The folders MelonLoader reads from the game folder (for HML, the profile). */
+const MELON_DIRS = ['Mods', 'Plugins', 'UserData', 'UserLibs', 'MelonLoader']
+
+/**
+ * A mod for a MelonLoader v0.7+ game (`recursive-melonloader`), laid out as r2modman does: its
+ * `UserData` folder under `UserData/<package>/`, everything else under `Mods/<package>/`, which
+ * MelonLoader searches recursively. Only the `Mods` files are switched off when it is disabled.
+ */
+function planRecursiveMelon(items: Item[], packageId: string): InstallPlan {
+  return {
+    files: items.map((i) =>
+      i.segs.length >= 2 && eq(i.segs[0], 'userdata')
+        ? {
+            from: i.from,
+            to: ['UserData', packageId, ...i.segs.slice(1)].join('/'),
+            disableable: false
+          }
+        : { from: i.from, to: ['Mods', packageId, ...i.segs].join('/'), disableable: true }
+    )
+  }
+}
+
 export function planInstall(
   entries: string[],
-  opts: { packageId: string; rules: InstallRule[]; loaderPackage?: ModloaderPackage }
+  opts: {
+    packageId: string
+    rules: InstallRule[]
+    loaderPackage?: ModloaderPackage
+    /** The game's loader; only `recursive-melonloader` changes how mods are laid out. */
+    loader?: string
+  }
 ): InstallPlan {
   const { packageId, rules, loaderPackage } = opts
   const items = entries.map((from) => ({ from, segs: normalize(from) }))
-  const stripped = stripWrappers(items, rules, loaderPackage?.rootFolder)
+  const melon = opts.loader === 'recursive-melonloader'
+  const stopNames = loaderPackage?.rootFolder ? [loaderPackage.rootFolder] : []
+  const stripped = stripWrappers(items, rules, melon ? [...stopNames, ...MELON_DIRS] : stopNames)
 
   if (loaderPackage?.loader === 'shimloader') {
     const shim = planShimloader(stripped)
@@ -117,6 +147,8 @@ export function planInstall(
     }
     return { files }
   }
+
+  if (melon) return planRecursiveMelon(stripped, packageId)
 
   const defaultRule = rules.find((r) => r.isDefaultLocation)
   if (!defaultRule) throw new Error('No default install rule (isDefaultLocation) defined')

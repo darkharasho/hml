@@ -318,6 +318,96 @@ describe('planInstall', () => {
       expect(out.map((f) => f.to)).toEqual(['dwmapi.dll', 'other/x.dll'])
     })
   })
+
+  describe('MelonLoader', () => {
+    const melon = { packageId: 'LavaGang-MelonLoader', rootFolder: '', loader: 'melonloader' }
+    const recursive = (entries: string[]): ReturnType<typeof planInstall>['files'] =>
+      planInstall(entries, { packageId, rules: [], loader: 'recursive-melonloader' }).files
+
+    test('the loader package keeps its paths, without the package metadata', () => {
+      const out = planInstall(
+        [
+          'manifest.json',
+          'icon.png',
+          'README.md',
+          'version.dll',
+          'MelonLoader/net6/MelonLoader.dll'
+        ],
+        {
+          packageId: 'LavaGang-MelonLoader',
+          rules: [],
+          loaderPackage: melon,
+          loader: 'recursive-melonloader'
+        }
+      ).files
+      expect(out).toEqual([
+        { from: 'version.dll', to: 'version.dll', disableable: false },
+        {
+          from: 'MelonLoader/net6/MelonLoader.dll',
+          to: 'MelonLoader/net6/MelonLoader.dll',
+          disableable: false
+        }
+      ])
+    })
+
+    test('v0.7+ mods go under Mods/<package>, their UserData under UserData/<package>', () => {
+      expect(recursive(['manifest.json', 'Mods/A.dll', 'UserData/a.cfg', 'Plugins/P.dll'])).toEqual(
+        [
+          { from: 'manifest.json', to: 'Mods/Author-Mod/manifest.json', disableable: true },
+          { from: 'Mods/A.dll', to: 'Mods/Author-Mod/Mods/A.dll', disableable: true },
+          { from: 'UserData/a.cfg', to: 'UserData/Author-Mod/a.cfg', disableable: false },
+          { from: 'Plugins/P.dll', to: 'Mods/Author-Mod/Plugins/P.dll', disableable: true }
+        ]
+      )
+    })
+
+    test('strips a wrapper folder but not a MelonLoader folder', () => {
+      expect(recursive(['Release/A.dll', 'Release/B.dll']).map((f) => f.to)).toEqual([
+        'Mods/Author-Mod/A.dll',
+        'Mods/Author-Mod/B.dll'
+      ])
+      expect(recursive(['UserData/a.cfg', 'UserData/b.cfg']).map((f) => f.to)).toEqual([
+        'UserData/Author-Mod/a.cfg',
+        'UserData/Author-Mod/b.cfg'
+      ])
+    })
+
+    test('older MelonLoader games follow their install rules', () => {
+      const melonRules: InstallRule[] = [
+        {
+          route: 'Mods',
+          defaultFileExtensions: ['.dll'],
+          trackingMethod: 'state',
+          subRoutes: [],
+          isDefaultLocation: false
+        },
+        {
+          route: 'UserData/ModManager',
+          defaultFileExtensions: [],
+          trackingMethod: 'subdir-no-flatten',
+          subRoutes: [],
+          isDefaultLocation: true
+        },
+        {
+          route: 'UserLibs',
+          defaultFileExtensions: ['.lib.dll'],
+          trackingMethod: 'state',
+          subRoutes: [],
+          isDefaultLocation: false
+        }
+      ]
+      const out = planInstall(['A.dll', 'X.lib.dll', 'notes.txt'], {
+        packageId,
+        rules: melonRules,
+        loader: 'melonloader'
+      }).files
+      expect(out.map((f) => f.to)).toEqual([
+        'Mods/A.dll',
+        'UserLibs/X.lib.dll',
+        'UserData/ModManager/Author-Mod/notes.txt'
+      ])
+    })
+  })
 })
 
 describe('planDeploy', () => {

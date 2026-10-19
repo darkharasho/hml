@@ -368,13 +368,13 @@ describe('custom game services', () => {
       (await api.searchGames('rv there')).map((g) => g.label)
 
     test('its Steam install is matched by folder name, not offered as another game', async () => {
-      serveRv('melonloader')
+      serveRv('godotml')
       manifest('3949040', 'RV There Yet?', 'Ride', false)
       expect(await rvLabels(createServices(deps))).toEqual(['rv-there-yet'])
     })
 
     test('an added copy wins over the catalog entry when the catalog loader is unsupported', async () => {
-      serveRv('melonloader')
+      serveRv('godotml')
       addRv()
       const api = createServices(deps)
       expect(await rvLabels(api)).toEqual(['steam-3949040'])

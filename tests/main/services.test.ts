@@ -4663,8 +4663,8 @@ describe('share import', () => {
 })
 
 describe('services launch, folders and domains', () => {
-  // A catalog with two extra games that share REPO's install folder: one on another mod loader
-  // and one without a Steam app id.
+  // A catalog with extra games that share REPO's install folder: one on an unsupported mod
+  // loader, one on MelonLoader and one without a Steam app id.
   function withExtraGames(): ServiceDeps {
     const base = fixture.games.repo
     const extra = (label: string, loader: string, distributions: unknown[]): unknown => ({
@@ -4679,7 +4679,8 @@ describe('services launch, folders and domains', () => {
       ...fixture,
       games: {
         ...fixture.games,
-        othergame: extra('othergame', 'melonloader', base.distributions),
+        othergame: extra('othergame', 'godotml', base.distributions),
+        melongame: extra('melongame', 'recursive-melonloader', base.distributions),
         noapp: extra('noapp', 'bepinex', [])
       }
     }
@@ -4698,6 +4699,36 @@ describe('services launch, folders and domains', () => {
       'OTHERGAME uses a mod loader HML does not support yet.'
     )
     expect(spawned).toEqual([])
+  })
+
+  test('MelonLoader: modded copies the proxy and points at the profile; vanilla takes it out', async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    const d = withExtraGames()
+    const api = createServices(d)
+    const profile = await api.createProfile('melongame', 'Test')
+    await expect(api.launch('melongame', profile.id, 'modded')).rejects.toThrow(
+      'Install MelonLoader into this profile so mods can load.'
+    )
+    const profileDir = d.paths.profileDir('melongame', profile.id)
+    mkdirSync(path.join(profileDir, 'MelonLoader'), { recursive: true })
+    writeFileSync(path.join(profileDir, 'version.dll'), 'proxy')
+    await api.launch('melongame', profile.id, 'modded')
+    expect(spawned).toEqual([
+      {
+        cmd: 'steam',
+        args: [
+          '-applaunch',
+          '3241660',
+          '--melonloader.basedir',
+          'Z:' + profileDir.replace(/\//g, '\\'),
+          '--melonloader.agfregenerate'
+        ]
+      }
+    ])
+    expect(readFileSync(path.join(gameDir, 'version.dll'), 'utf8')).toBe('proxy')
+    await api.launch('melongame', null, 'vanilla')
+    expect(spawned[1].args).toEqual(['-applaunch', '3241660', '--no-mods'])
+    expect(existsSync(path.join(gameDir, 'version.dll'))).toBe(false)
   })
 
   test('launching a game without a Steam app id is refused', async () => {

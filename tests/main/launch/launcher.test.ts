@@ -129,6 +129,20 @@ describe('launchWarnings', () => {
     ).toEqual(['loader-unsupported', 'no-bepinex'])
   })
 
+  test('MelonLoader games want MelonLoader in the profile and the version override', async () => {
+    const melon = { ...game, loader: 'recursive-melonloader' } as GameDef
+    await fs.writeFile(path.join(gameDir, 'REPO.exe'), '')
+    await writeLaunchOptions('WINEDLLOVERRIDES=winhttp=n,b %command%')
+    expect(await launchWarnings({ ...input(), game: melon })).toEqual([
+      'no-melonloader',
+      'proton-first-run'
+    ])
+    await fs.mkdir(path.join(profile, 'MelonLoader'))
+    await fs.writeFile(path.join(profile, 'version.dll'), '')
+    await writeLaunchOptions('WINEDLLOVERRIDES=version=n,b %command%')
+    expect(await launchWarnings({ ...input(), game: melon })).toEqual([])
+  })
+
   test('native-linux-unsupported when a linux game has no Proton exe', async () => {
     await addPreloader()
     expect(await launchWarnings(input())).toEqual(['native-linux-unsupported'])

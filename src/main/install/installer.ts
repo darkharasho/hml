@@ -296,7 +296,12 @@ export async function installZipReporting(
   ]
   const plan = deploy
     ? planDeploy(zip.names, { root: game.deployRoot })
-    : planInstall(zip.names, { packageId, rules: game.installRules, loaderPackage })
+    : planInstall(zip.names, {
+        packageId,
+        rules: game.installRules,
+        loaderPackage,
+        loader: game.loader
+      })
   // Deploy games store each mod in `<profile>/<packageId>/`, so mods that ship the same path
   // never share a file; deploy chooses between them.
   if (deploy) for (const f of plan.files) f.to = `${packageId}/${f.to}`
