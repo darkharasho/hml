@@ -1617,6 +1617,55 @@ describe('services', () => {
       expect((await api.tsCheckUpdates('repo', profile.id)).map((u) => u.latest)).toEqual(['1.1.0'])
     })
 
+    test("the live site's newer versions show before the index has them", async () => {
+      let clock = Date.parse('2026-10-15T00:00:00Z')
+      const LIVE = 'https://thunderstore.io/api/cyberstorm/listing/repo/'
+      const OWN_MOD = 'https://thunderstore.io/api/experimental/package/Own/Mod/'
+      let liveRows: unknown[] = []
+      const liveFetch = vi.fn(async (url: string) => {
+        if (url.startsWith(LIVE))
+          return { ok: true, json: async () => ({ next: null, results: liveRows }) }
+        if (url === OWN_MOD)
+          return {
+            ok: true,
+            json: async () => ({
+              rating_score: 1,
+              total_downloads: 3,
+              latest: {
+                version_number: '1.2.0',
+                dependencies: ['Dep-Lib-1.0.0'],
+                download_url: dl('Own-Mod', '1.2.0'),
+                downloads: 1,
+                date_created: '2026-10-15T00:00:00Z',
+                is_active: true
+              }
+            })
+          }
+        return tsFetch(url)
+      }) as never as typeof fetch & ReturnType<typeof vi.fn>
+      const api = createServices({ ...deps, fetch: liveFetch, now: () => clock })
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      liveRows = [
+        {
+          namespace: 'Own',
+          name: 'Mod',
+          last_updated: '2026-10-15T00:00:00Z',
+          categories: [],
+          is_pinned: false
+        }
+      ]
+      const liveCalls = (): number =>
+        liveFetch.mock.calls.filter((c) => String(c[0]).startsWith(LIVE)).length
+      const before = liveCalls()
+      clock += 60_000
+      expect(await api.tsCheckUpdates('repo', profile.id)).toEqual([])
+      expect(liveCalls()).toBe(before)
+      clock += 61_000
+      expect((await api.tsCheckUpdates('repo', profile.id)).map((u) => u.latest)).toEqual(['1.2.0'])
+      expect(liveCalls()).toBe(before + 1)
+    })
+
     test('an expired index refresh that fails keeps serving the old index', async () => {
       let clock = Date.parse('2026-10-15T00:00:00Z')
       const api = createServices({ ...deps, fetch: tsFetch, now: () => clock })

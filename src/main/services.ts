@@ -58,6 +58,7 @@ import {
   NATIVE_LINUX_UNSUPPORTED
 } from './launch/launcher'
 import { loadPackageIndex, type TsIndex } from './thunderstore/packageIndex'
+import { communityOf, overlayRecent } from './thunderstore/recent'
 import { allCategories, searchPackages } from './thunderstore/search'
 import {
   compareVersions,
@@ -195,6 +196,10 @@ interface LoadedIndex extends TsIndex {
   categories: string[]
   /** When this process loaded it (ms), for retrying a stale index. */
   loadedAt: number
+  /** The index's packages before the live overlay (`packages` has it applied). */
+  base: TsPackage[]
+  /** When the live site was last checked for changes the index doesn't have yet (ms). */
+  recentAt: number
 }
 interface IndexSlot {
   /** Whether this load was forced (a user refresh), so a second forced call can share it. */
@@ -207,6 +212,8 @@ interface IndexSlot {
 }
 const INDEX_LRU = 2
 const INDEX_MAX_AGE_MS = 3_600_000
+/** How often the live site is checked for mods newer than the index. */
+const RECENT_MAX_AGE_MS = 120_000
 /** A stale (offline) index is retried at most this often. */
 const STALE_RETRY_MS = 30_000
 
@@ -570,6 +577,34 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       throw new Error(`${def.displayName} has no Thunderstore listing.`)
     return def.packageIndex
   }
+  // Latest versions fetched by the live overlay, shared by every game.
+  const recentMemo = new Map<string, TsPackage | null>()
+  const withIndexes = (v: Omit<LoadedIndex, 'byName' | 'categories'>): LoadedIndex => ({
+    ...v,
+    byName: new Map(v.packages.map((pkg) => [pkg.fullName, pkg])),
+    categories: allCategories(v.packages)
+  })
+  /** Lays the live site's recent changes over `base`; on failure keeps what `prev` had. */
+  async function withRecent(
+    v: Omit<LoadedIndex, 'byName' | 'categories' | 'packages'>,
+    indexUrl: string,
+    prev: TsPackage[]
+  ): Promise<LoadedIndex> {
+    const community = communityOf(indexUrl)
+    let packages = prev
+    if (community && !v.stale) {
+      try {
+        packages = (
+          await overlayRecent({ packages: v.base, community, fetch: deps.fetch, memo: recentMemo })
+        ).packages
+      } catch (e) {
+        console.warn(`Thunderstore live check failed: ${errMsg(e)}`)
+      }
+    }
+    return withIndexes({ ...v, packages, recentAt: now() })
+  }
+  const recentDue = (v: LoadedIndex): boolean =>
+    !v.stale && !(now() - v.recentAt < RECENT_MAX_AGE_MS)
   const expired = (v: LoadedIndex): boolean =>
     v.stale
       ? now() - v.loadedAt >= STALE_RETRY_MS
@@ -585,16 +620,18 @@ export function createServices(deps: ServiceDeps): HmlApi & {
         now,
         maxAgeMs: INDEX_MAX_AGE_MS,
         force
-      }).then((idx) => {
-        const value: LoadedIndex = {
-          ...idx,
-          byName: new Map(idx.packages.map((pkg) => [pkg.fullName, pkg])),
-          categories: allCategories(idx.packages),
-          loadedAt: now()
-        }
-        slot.value = value
-        return value
       })
+        .then((idx) =>
+          withRecent(
+            { ...idx, base: idx.packages, loadedAt: now(), recentAt: 0 },
+            indexUrl,
+            idx.packages
+          )
+        )
+        .then((value) => {
+          slot.value = value
+          return value
+        })
     }
     return slot
   }
@@ -604,6 +641,20 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     if (hit && !force) {
       touchIndex(def.label, hit)
       if (hit.refreshing) return hit.refreshing
+      if (hit.value && !expired(hit.value) && recentDue(hit.value)) {
+        // The index is current enough; only check the live site for newer mods.
+        const old = hit.value
+        const refreshing = withRecent(old, indexUrl, old.packages).then((v) => {
+          hit.value = v
+          hit.promise = Promise.resolve(v)
+          return v
+        })
+        hit.refreshing = refreshing
+        void refreshing.then(() => {
+          if (hit.refreshing === refreshing) hit.refreshing = undefined
+        })
+        return refreshing
+      }
       if (!hit.value || !expired(hit.value)) return hit.promise
       // Expired or stale: refresh, keeping the old index in the slot until the refresh settles,
       // and fall back to it if the refresh fails.
