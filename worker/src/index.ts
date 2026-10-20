@@ -16,6 +16,10 @@ export interface KvLike {
     key: string,
     type: 'arrayBuffer'
   ): Promise<{ value: ArrayBuffer | null; metadata: M | null }>
+  getWithMetadata<M>(
+    key: string,
+    type: 'stream'
+  ): Promise<{ value: ReadableStream | null; metadata: M | null }>
 }
 
 export interface Env {

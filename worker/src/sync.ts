@@ -123,23 +123,42 @@ async function check(req: Request, env: Env, cache: CacheLike, code: string): Pr
   if (await limited(env.SYNC_CHECK_LIMITER, req)) return fail(429, 'rate-limited')
   const since = Number(new URL(req.url).searchParams.get('since') ?? 0)
 
-  const hit = await cache.match(metaReq(code))
-  if (hit) {
-    const cached = (await hit.json()) as Meta
-    if (cached.ended) return fail(410, 'ended')
-    if (cached.revision <= since) return notModified(cached.revision)
+  try {
+    const hit = await cache.match(metaReq(code))
+    if (hit) {
+      const cached = (await hit.json()) as Meta
+      if (cached.ended) return fail(410, 'ended')
+      if (cached.revision <= since) return notModified(cached.revision)
+    }
+  } catch {
+    // a cache failure falls back to KV
   }
 
-  const { value, metadata } = await env.PROFILES.getWithMetadata<Meta>(`s:${code}`, 'arrayBuffer')
-  if (!metadata || !value) return fail(404, 'not-found')
-  await cache.put(
-    metaReq(code),
-    new Response(JSON.stringify({ revision: metadata.revision, ended: metadata.ended }), {
-      headers: { 'cache-control': `public, max-age=${META_MAX_AGE}` }
-    })
-  )
-  if (metadata.ended) return fail(410, 'ended')
-  if (metadata.revision <= since) return notModified(metadata.revision)
+  // Stream so a 304/410 answer never pulls the zip body out of KV.
+  const { value, metadata } = await env.PROFILES.getWithMetadata<Meta>(`s:${code}`, 'stream')
+  if (!metadata) {
+    await value?.cancel()
+    return fail(404, 'not-found')
+  }
+  try {
+    await cache.put(
+      metaReq(code),
+      new Response(JSON.stringify({ revision: metadata.revision, ended: metadata.ended }), {
+        headers: { 'cache-control': `public, max-age=${META_MAX_AGE}` }
+      })
+    )
+  } catch {
+    // skip caching
+  }
+  if (metadata.ended) {
+    await value?.cancel()
+    return fail(410, 'ended')
+  }
+  if (metadata.revision <= since) {
+    await value?.cancel()
+    return notModified(metadata.revision)
+  }
+  if (!value) return fail(404, 'not-found')
   return new Response(value, {
     headers: {
       'content-type': 'application/zip',

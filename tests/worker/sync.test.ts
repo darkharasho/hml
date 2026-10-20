@@ -15,9 +15,11 @@ function makeEnv(limiterOk = true): {
   store: Map<string, Entry>
   cache: CacheLike
   kvReads: { count: number }
+  streamRead: { value: boolean }
 } {
   const store = new Map<string, Entry>()
   const kvReads = { count: 0 }
+  const streamRead = { value: false }
   const limiter = {
     async limit() {
       return { success: limiterOk }
@@ -29,11 +31,25 @@ function makeEnv(limiterOk = true): {
         const v = store.get(key)
         return v ? (v.value.slice().buffer as ArrayBuffer) : null
       },
-      async getWithMetadata(key) {
+      async getWithMetadata(key: string, type: 'arrayBuffer' | 'stream') {
         kvReads.count++
         const v = store.get(key)
         if (!v) return { value: null, metadata: null }
-        return { value: v.value.slice().buffer as ArrayBuffer, metadata: v.metadata as never }
+        const bytes = v.value.slice()
+        const value =
+          type === 'stream'
+            ? new ReadableStream(
+                {
+                  pull(c) {
+                    streamRead.value = true
+                    c.enqueue(bytes)
+                    c.close()
+                  }
+                },
+                { highWaterMark: 0 }
+              )
+            : (bytes.buffer as ArrayBuffer)
+        return { value, metadata: v.metadata } as never
       },
       async put(key, value, opts) {
         store.set(key, {
@@ -60,7 +76,7 @@ function makeEnv(limiterOk = true): {
       return map.delete(req.url)
     }
   }
-  return { env, store, cache, kvReads }
+  return { env, store, cache, kvReads, streamRead }
 }
 
 const ZIP = zipSync({ 'export.json': strToU8('{}'), 'a.cfg': strToU8('x') })
@@ -163,6 +179,47 @@ describe('/v1/sync', () => {
     const after = kvReads.count
     expect((await h.fetch(get(code, 1), env)).status).toBe(304)
     expect(kvReads.count).toBe(after)
+  })
+
+  it('a cache-miss 304 never reads the body from KV', async () => {
+    const { env, cache, streamRead } = makeEnv()
+    const h = createHandler(undefined, cache)
+    const { code } = await publish(h, env)
+    expect((await h.fetch(get(code, 1), env)).status).toBe(304)
+    expect(streamRead.value).toBe(false)
+  })
+
+  it('a warm-cache GET for an ended code is 410 without reading KV', async () => {
+    const { env, cache, kvReads } = makeEnv()
+    const h = createHandler(undefined, cache)
+    const { code, ownerKey } = await publish(h, env)
+    await h.fetch(
+      new Request(`${BASE}/${code}`, {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${ownerKey}` }
+      }),
+      env
+    )
+    expect((await h.fetch(get(code, 0), env)).status).toBe(410)
+    const after = kvReads.count
+    const res = await h.fetch(get(code, 0), env)
+    expect(res.status).toBe(410)
+    expect(await res.json()).toEqual({ error: 'ended' })
+    expect(kvReads.count).toBe(after)
+  })
+
+  it('a failing cache falls back to KV instead of 500', async () => {
+    const { env } = makeEnv()
+    const boom = async (): Promise<never> => {
+      throw new Error('cache down')
+    }
+    const broken: CacheLike = { match: boom, put: boom, delete: async () => false }
+    const h = createHandler(undefined, broken)
+    const { code } = await publish(h, env)
+    expect((await h.fetch(get(code, 1), env)).status).toBe(304)
+    const res = await h.fetch(get(code, 0), env)
+    expect(res.status).toBe(200)
+    expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual(Array.from(ZIP))
   })
 
   it('PUT invalidates the cached meta', async () => {
