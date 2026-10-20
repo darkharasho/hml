@@ -1,0 +1,59 @@
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { isSafeConfigPath } from '../share/hmlFile'
+
+/** The owner's config files as last applied: the common ancestor of the 3-way merge. */
+const baseDir = (profileDir: string): string => path.join(profileDir, '.hml-sync', 'base')
+
+/** The file for `rel` under `root`, or null when it isn't a safe config path inside it. */
+function safeTarget(root: string, rel: string): string | null {
+  if (!isSafeConfigPath(rel)) return null
+  const target = path.resolve(root, ...rel.split('/'))
+  const inside = path.relative(root, target)
+  return !inside || inside.startsWith('..') || path.isAbsolute(inside) ? null : target
+}
+
+async function listFiles(dir: string, prefix = ''): Promise<string[]> {
+  let entries
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const out: string[] = []
+  for (const e of entries) {
+    const rel = prefix ? `${prefix}/${e.name}` : e.name
+    if (e.isDirectory()) out.push(...(await listFiles(path.join(dir, e.name), rel)))
+    else if (e.isFile()) out.push(rel)
+  }
+  return out
+}
+
+export async function readBases(profileDir: string): Promise<Map<string, Uint8Array>> {
+  const root = path.resolve(baseDir(profileDir))
+  const out = new Map<string, Uint8Array>()
+  for (const rel of await listFiles(root)) {
+    const target = safeTarget(root, rel)
+    if (target) out.set(rel, new Uint8Array(await fs.readFile(target)))
+  }
+  return out
+}
+
+/** Replaces the whole stored set with `configs`. */
+export async function writeBases(
+  profileDir: string,
+  configs: Map<string, Uint8Array>
+): Promise<void> {
+  const root = path.resolve(baseDir(profileDir))
+  await fs.rm(root, { recursive: true, force: true })
+  for (const [rel, data] of configs) {
+    const target = safeTarget(root, rel)
+    if (!target) continue
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.writeFile(target, data)
+  }
+}
+
+export async function clearBases(profileDir: string): Promise<void> {
+  await fs.rm(baseDir(profileDir), { recursive: true, force: true })
+}
