@@ -1,18 +1,14 @@
 # Release Notes
 
-Version v1.3.0 — October 18, 2026
+Version v1.4.0 — October 19, 2026
 
-## More games, more mod loaders
-HML now handles four more mod loaders, the same way r2modman does, so a lot more Thunderstore games work:
-- **MelonLoader** games such as Schedule I. MelonLoader settings in `UserData` travel with share codes too.
-- **lovely** for Balatro.
-- **Return of Modding** for Hades II and Risk of Rain Returns. Its config is included in share codes.
-- **Godot Mod Loader** for Brotato, Dome Keeper, Pair A Dice and RAM: Random Access Mayhem. These games ship the loader themselves, so HML doesn't copy anything into the game folder, and Brotato's native Linux build can launch modded.
+## Synced profiles
+Keep a group of friends on the same mods without passing new share codes around. In the Share dialog, pick **Create sync code** and send that code to your friends once. After that, every change you make to the profile reaches them automatically: added, removed, enabled or disabled mods, version changes, and config edits.
 
-The Log tab follows MelonLoader, lovely and Return of Modding logs while the game runs.
+- **For the owner:** the profile works as normal. Changes publish about 10 seconds after you stop editing, and only when something actually changed, so launching the game doesn't send out updates. The profile shows a "Syncing" badge, and **Stop syncing** ends the code for everyone.
+- **For friends:** importing a sync code creates a synced copy of the profile. HML checks for updates on startup, every 5 minutes while it's open, and right before a modded launch. Updates apply automatically with a toast like "Squad updated: +1 mod, 1 disabled". If the game is running, the update waits until it closes.
+- **Your own config tweaks stay.** Friends can still change settings like keybinds or FOV. An update only changes the settings the owner changed, and the owner's value wins when you both changed the same one.
+- **Synced profiles are read-only for friends.** Mods can't be added, removed, toggled or updated there, and HML's own update checks skip them, so nobody drifts onto a different version. Launching, configs and the profile folder all still work. **Detach from sync** turns it back into a normal profile.
+- Nexus mods that need a manual download stay listed on the profile with a button to open their Nexus page. Mods installed from a local file don't sync.
 
-## New mods and updates show up in minutes
-No more waiting an hour or more for a mod that's already live on Thunderstore. HML now checks Thunderstore's live listing every couple of minutes, so new mods and updates appear almost as soon as they're published.
-
-## Fixes
-- Fixed BepInEx mods never loading in games that keep their exe in a subfolder of the Steam install, such as Chrono Ark and Outward. Those games also no longer get a false "native Linux build" warning on Proton.
+Sync codes only work in HML 1.4.0 and later, so everyone in the group needs to update.
