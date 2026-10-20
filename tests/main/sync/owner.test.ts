@@ -385,6 +385,15 @@ describe('stopSync', () => {
     expect(await exists(paths.syncKey(CODE))).toBe(true)
   })
 
+  it('a failed stop keeps the pending debounced publish', async () => {
+    const s = await makeOwner()
+    s.touched(GAME, ID)
+    expect(timers.pending.size).toBe(1)
+    vi.mocked(fakeFetch).mockRejectedValueOnce(new TypeError('offline'))
+    await expect(s.stopSync(GAME, ID)).rejects.toThrow()
+    expect([...timers.pending.values()].map((t) => t.ms)).toEqual([SYNC_DEBOUNCE_MS])
+  })
+
   it('refuses on a follower profile', async () => {
     await writeManifest({ sync: { role: 'follower', code: CODE, revision: 3 } })
     const s = createSyncServices(makeCtx())
@@ -415,5 +424,56 @@ describe('forgetOwnerKey', () => {
     const s = await makeOwner()
     await s.forgetOwnerKey(CODE)
     expect(await exists(paths.syncKey(CODE))).toBe(false)
+  })
+})
+
+describe('tick', () => {
+  it('registers every owner before any follower check runs', async () => {
+    // A follower in the same game whose check hangs.
+    const fdir = paths.profileDir(GAME, 'f1')
+    await mkdir(fdir, { recursive: true })
+    await writeFile(
+      join(fdir, 'hml-profile.json'),
+      JSON.stringify({
+        formatVersion: 1,
+        id: 'f1',
+        name: 'F',
+        game: GAME,
+        // Listed before the owner, so the tick reaches it first.
+        createdAt: '2000',
+        mods: [],
+        sync: { role: 'follower', code: 'ZZZZZZZZZZZZ', revision: 1 }
+      })
+    )
+    await writeManifest({
+      createdAt: '2001',
+      sync: { role: 'owner', code: CODE, revision: 1, digest: 'x' }
+    })
+    const original = vi.mocked(fakeFetch).getMockImplementation()
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    let gets = 0
+    vi.mocked(fakeFetch).mockImplementation(async (input, init) => {
+      const method = init?.method ?? 'GET'
+      requests.push({ method, url: String(input) })
+      if (method === 'GET') {
+        gets++
+        await gate
+        return new Response(null, { status: 304, headers: { 'x-hml-revision': '1' } })
+      }
+      return new Response(null, { status: 500 })
+    })
+    try {
+      const s = createSyncServices(makeCtx())
+      const ticking = s.tick()
+      await vi.waitFor(() => expect(gets).toBe(1))
+      // The follower's check is still under way; the owner is already known.
+      s.touched(GAME, ID)
+      expect(timers.pending.size).toBe(1)
+      release()
+      await ticking
+    } finally {
+      vi.mocked(fakeFetch).mockImplementation(original!)
+    }
   })
 })

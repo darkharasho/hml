@@ -1479,6 +1479,10 @@ export function createServices(deps: ServiceDeps): Services {
         throw new Error('This download link is for a different Nexus Mods account.')
       }
       const { game, profileId, mod } = await installFromNxm(link)
+      // A follower's manual download is done: its entry goes.
+      await syncApi.pruneManual(game, profileId).catch((e: unknown) => {
+        console.warn(`Sync couldn't update ${game}/${profileId}'s manual downloads:`, e)
+      })
       deps.emit({
         type: 'nexus-installed',
         game,

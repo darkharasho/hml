@@ -3664,6 +3664,45 @@ describe('services', () => {
           })
         })
 
+        const followWith = async (manual: { name: string; url: string }[]): Promise<void> => {
+          await saveProfile(deps.paths, {
+            ...(await getProfile(deps.paths, 'repo', pid)),
+            sync: { role: 'follower', code: 'ABCDEFGHJKMN', revision: 1, manual }
+          })
+        }
+        const page = (modId: number, fileId: number): string =>
+          `https://www.nexusmods.com/repo/mods/${modId}?tab=files&file_id=${fileId}`
+
+        test('an unrelated link on a follower is refused', async () => {
+          lastProfile()
+          await withKey()
+          await followWith([{ name: 'Other', url: page(5, 12) }])
+          await api.handleNxm(raw())
+          expect(last()).toEqual({
+            type: 'nexus-failed',
+            message: 'This profile is synced from a friend. Detach it to change its mods.'
+          })
+          expect(calls.some((c) => c.url.includes('download_link.json'))).toBe(false)
+          expect(await modsOf()).toEqual([])
+        })
+
+        test('a link matching a manual entry installs on a follower and clears the entry', async () => {
+          lastProfile()
+          await withKey()
+          premium = false
+          await followWith([
+            { name: 'Cool Mod', url: page(5, 11) },
+            { name: 'Other', url: page(6, 1) }
+          ])
+          await api.handleNxm(raw())
+          expect(last()).toMatchObject({ type: 'nexus-installed', profileId: pid })
+          const sync = (await getProfile(deps.paths, 'repo', pid)).sync
+          expect(sync).toMatchObject({ role: 'follower' })
+          expect(sync?.role === 'follower' && sync.manual).toEqual([
+            { name: 'Other', url: page(6, 1) }
+          ])
+        })
+
         test('no profile picked', async () => {
           const s = JSON.parse(readFileSync(deps.paths.settings, 'utf8'))
           writeFileSync(

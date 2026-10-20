@@ -140,6 +140,8 @@ export function createSyncServices(ctx: SyncContext): {
   findByCode(code: string): Promise<{ game: string; profileId: string } | null>
   /** Import: the newest revision of a code. */
   fetchLatest(code: string): Promise<{ revision: number; data: Uint8Array }>
+  /** Follower: drops manual entries whose Nexus mod is now installed. */
+  pruneManual(game: string, profileId: string): Promise<void>
   /** True while applyRevision runs for this profile (lets the follower lock pass). */
   isApplying(game: string, profileId: string): boolean
   isFollower(game: string, profileId: string): Promise<boolean>
@@ -282,6 +284,19 @@ export function createSyncServices(ctx: SyncContext): {
     })()
     st.publishing = run
     return run
+  }
+
+  /** (Re)starts the debounce before an owner's publish. */
+  function schedulePublish(game: string, profileId: string): void {
+    const st = stateOf(game, profileId)
+    if (st.timer !== undefined) timers.clearTimeout(st.timer)
+    st.timer = timers.setTimeout(() => {
+      st.timer = undefined
+      // Network failures are recorded as pending; anything else (disk, collect) is logged.
+      publishNow(game, profileId).catch((e: unknown) => {
+        console.warn(`Sync publish failed for ${game}/${profileId}:`, e)
+      })
+    }, SYNC_DEBOUNCE_MS)
   }
 
   function cancelTimer(game: string, profileId: string): void {
@@ -550,7 +565,16 @@ export function createSyncServices(ctx: SyncContext): {
 
   let ticking: Promise<void> | null = null
   async function tickOnce(): Promise<void> {
-    for await (const { game, profile } of allProfiles()) {
+    const all: { game: string; profile: ProfileManifest }[] = []
+    for await (const entry of allProfiles()) all.push(entry)
+    // Every owner is known before any follower check (which can be slow), so edits to owners
+    // made meanwhile are published after the debounce instead of waiting for the tick.
+    for (const { game, profile } of all) {
+      if (profile.sync?.role !== 'owner') continue
+      const label = await labelOf(game)
+      if (label) owners.set(`${label}\0${profile.id}`, profile.sync.code)
+    }
+    for (const { game, profile } of all) {
       try {
         const role = profile.sync?.role
         if (role === 'follower') {
@@ -585,12 +609,19 @@ export function createSyncServices(ctx: SyncContext): {
       if (sync?.role !== 'owner') owners.delete(`${label}\0${profileId}`)
       if (!sync) return
       if (sync.role !== 'owner') throw new Error(FOLLOWER_STOP)
+      // No publish while the code is being ended; a stop that fails keeps the one that was due.
+      const due = stateOf(label, profileId).timer !== undefined
       cancelTimer(label, profileId)
       const file = keyFile(sync.code)
-      if (file && !deps.secrets.isAvailable()) throw new Error(noSecureStorage(WHAT))
-      const key = file ? await loadSecret(file, deps.secrets) : null
-      // Without a key the code can't be ended on the server; it expires on its own.
-      if (key) await endSync(client(), sync.code, key)
+      try {
+        if (file && !deps.secrets.isAvailable()) throw new Error(noSecureStorage(WHAT))
+        const key = file ? await loadSecret(file, deps.secrets) : null
+        // Without a key the code can't be ended on the server; it expires on its own.
+        if (key) await endSync(client(), sync.code, key)
+      } catch (e) {
+        if (due) schedulePublish(label, profileId)
+        throw e
+      }
       const changed = await lock(label, profileId, async () => {
         const profile = await getProfile(deps.paths, label, profileId)
         if (profile.sync?.role !== 'owner' || profile.sync.code !== sync.code) return false
@@ -609,15 +640,7 @@ export function createSyncServices(ctx: SyncContext): {
     // for profiles that don't own a code (followers re-enter it while a revision is applied).
     touched(game, profileId) {
       if (profileId === DEPLOY_KEY || !owners.has(`${game}\0${profileId}`)) return
-      const st = stateOf(game, profileId)
-      if (st.timer !== undefined) timers.clearTimeout(st.timer)
-      st.timer = timers.setTimeout(() => {
-        st.timer = undefined
-        // Network failures are recorded as pending; anything else (disk, collect) is logged.
-        publishNow(game, profileId).catch((e: unknown) => {
-          console.warn(`Sync publish failed for ${game}/${profileId}:`, e)
-        })
-      }, SYNC_DEBOUNCE_MS)
+      schedulePublish(game, profileId)
     },
 
     async publishNow(game, profileId) {
@@ -723,6 +746,11 @@ export function createSyncServices(ctx: SyncContext): {
       const res = await fetchSync(client(), code, 0)
       if (res.kind !== 'updated') throw new Error(NO_SUCH_SYNC)
       return { revision: res.revision, data: res.data }
+    },
+
+    async pruneManual(game, profileId) {
+      const label = await labelOf(game)
+      if (label) await pruneManual(label, profileId)
     },
 
     isApplying(game, profileId) {

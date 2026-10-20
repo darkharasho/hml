@@ -30,6 +30,7 @@ import {
 } from './api'
 import type { NexusGames } from './games'
 import type { NxmLink } from './nxm'
+import { FOLLOWER_LOCKED_MESSAGE, matchesManualEntry } from '../sync/lock'
 
 export interface NexusContext {
   deps: ServiceDeps
@@ -342,6 +343,11 @@ export function createNexusServices(ctx: NexusContext): Pick<
     requireSupported(def)
     const profileId = settings.lastProfile[def.label]
     if (!profileId) throw new Error(`Pick a profile for ${def.displayName} in HML first.`)
+    // A follower takes only the downloads its sync asked for by hand.
+    const target = await getProfile(paths, def.label, profileId).catch(() => null)
+    if (target?.sync?.role === 'follower' && !matchesManualEntry(target.sync.manual ?? [], link)) {
+      throw new Error(FOLLOWER_LOCKED_MESSAGE)
+    }
     const key = await loadKey()
     if (!key) throw new Error(NX_NO_KEY)
     const { gameId } = await requireDomain(def, settings)

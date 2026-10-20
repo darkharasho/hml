@@ -54,3 +54,29 @@ export function lockFollowers<T extends HmlApi>(
   }
   return out
 }
+
+/**
+ * Whether a Nexus download (`domain`, `modId`, `fileId`) is one of a follower's manual entries,
+ * whose URLs are file pages: `https://www.nexusmods.com/<domain>/mods/<modId>?tab=files&file_id=<fileId>`.
+ */
+export function matchesManualEntry(
+  manual: readonly { url: string }[],
+  link: { domain: string; modId: number; fileId: number }
+): boolean {
+  return manual.some((e) => {
+    let u: URL
+    try {
+      u = new URL(e.url)
+    } catch {
+      return false
+    }
+    const m = /^\/([^/]+)\/mods\/(\d+)\/?$/.exec(u.pathname)
+    return (
+      u.hostname === 'www.nexusmods.com' &&
+      m !== null &&
+      m[1].toLowerCase() === link.domain.toLowerCase() &&
+      Number(m[2]) === link.modId &&
+      Number(u.searchParams.get('file_id')) === link.fileId
+    )
+  })
+}
