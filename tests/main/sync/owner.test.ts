@@ -319,6 +319,28 @@ describe('publishing', () => {
     expect(timers.pending.size).toBe(0)
   })
 
+  it('touched is a no-op for plain and follower profiles', async () => {
+    const s = createSyncServices(makeCtx())
+    s.touched(GAME, ID)
+    await writeManifest({ sync: { role: 'follower', code: CODE, revision: 3 } })
+    s.touched(GAME, ID)
+    expect(timers.pending.size).toBe(0)
+  })
+
+  it('touched schedules nothing after stopSync or forgetOwnerKey', async () => {
+    const s = await makeOwner()
+    await s.stopSync(GAME, ID)
+    s.touched(GAME, ID)
+    expect(timers.pending.size).toBe(0)
+    const t = await makeOwner()
+    t.touched(GAME, ID)
+    expect(timers.pending.size).toBe(1)
+    await t.forgetOwnerKey(CODE)
+    expect(timers.pending.size).toBe(0)
+    t.touched(GAME, ID)
+    expect(timers.pending.size).toBe(0)
+  })
+
   it('touched during a publish leads to exactly one follow-up publish', async () => {
     const s = await makeOwner()
     let release!: () => void

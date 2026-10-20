@@ -1756,7 +1756,8 @@ describe('services', () => {
       'emitOpenProfile',
       'handleNxm',
       'serveArt',
-      'cancelLaunchWatches'
+      'cancelLaunchWatches',
+      'syncTick'
     ]
     const keys = Object.keys(createServices(deps)).filter((k) => !mainOnly.includes(k))
     expect([...HML_METHODS].sort()).toEqual(keys.sort())
@@ -2208,6 +2209,43 @@ describe('services', () => {
       await api.ghAutoUpdateAll()
       expect(emitted.filter((e) => e.type === 'github-updated')).toEqual([])
       expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
+    })
+
+    /** Marks a profile as following a sync code. */
+    const follow = async (id: string): Promise<void> => {
+      const p = await getProfile(deps.paths, 'repo', id)
+      await saveProfile(deps.paths, {
+        ...p,
+        sync: { role: 'follower', code: 'ABCDEFGHJKMN', revision: 1 }
+      })
+    }
+
+    test('auto-update skips follower profiles', async () => {
+      await setup()
+      const p2 = (await api.createProfile('repo', 'q')).id
+      publish('a', 'ra', 'v1.0.0', { 'x.zip': zipOf('ramod', '1.0.0') })
+      await api.ghInstall('repo', pid, 'a/ra')
+      await api.ghInstall('repo', p2, 'a/ra')
+      await follow(p2)
+      publish('a', 'ra', 'v2.0.0', { 'x.zip': zipOf('ramod', '2.0.0') })
+      await api.ghAutoUpdateAll()
+      expect((await modsOf(pid))[0].source).toMatchObject({ tag: 'v2.0.0' })
+      expect((await modsOf(p2))[0].source).toMatchObject({ tag: 'v1.0.0' })
+    })
+
+    test('background checks skip followers', async () => {
+      await setup()
+      const p2 = (await api.createProfile('repo', 'q')).id
+      publish('a', 'ra', 'v1.0.0', { 'x.zip': zipOf('ramod', '1.0.0') })
+      await api.ghInstall('repo', pid, 'a/ra')
+      await api.ghInstall('repo', p2, 'a/ra')
+      await api.ghSetUpdateMode('repo', pid, 'a-ra', 'notify')
+      await api.ghSetUpdateMode('repo', p2, 'a-ra', 'notify')
+      await follow(p2)
+      publish('a', 'ra', 'v2.0.0', { 'x.zip': zipOf('ramod', '2.0.0') })
+      clock += 11 * 60_000 // past the install-time lookup's memo window
+      await api.runBackgroundChecks()
+      expect(await api.getUpdateSummary()).toEqual({ repo: { [pid]: 1 } })
     })
 
     test('ghUpdate asks the user to reinstall when no file matches the saved pattern', async () => {
@@ -4783,6 +4821,39 @@ describe('services launch, folders and domains', () => {
     expect(existsSync(path.join(gameDir, 'version.dll'))).toBe(false)
   })
 
+  test('launch modded on a follower runs the pre-launch check first', async () => {
+    writeFileSync(path.join(gameDir, 'REPO.exe'), '')
+    const d = withExtraGames()
+    const order: string[] = []
+    const baseFetch = d.fetch
+    d.fetch = (async (url: string, init?: RequestInit) => {
+      if (String(url).startsWith('https://share.test/v1/sync/')) {
+        order.push('sync')
+        return new Response(null, { status: 304, headers: { 'x-hml-revision': '1' } })
+      }
+      return (baseFetch as (u: string, i?: RequestInit) => Promise<Response>)(url, init)
+    }) as unknown as typeof fetch
+    const baseSpawn = d.spawn
+    d.spawn = ((...a: Parameters<ServiceDeps['spawn']>) => {
+      order.push('spawn')
+      return baseSpawn(...a)
+    }) as ServiceDeps['spawn']
+    const api = createServices(d)
+    const profile = await api.createProfile('melongame', 'Test')
+    const profileDir = d.paths.profileDir('melongame', profile.id)
+    mkdirSync(path.join(profileDir, 'MelonLoader'), { recursive: true })
+    writeFileSync(path.join(profileDir, 'version.dll'), 'proxy')
+    await saveProfile(d.paths, {
+      ...(await getProfile(d.paths, 'melongame', profile.id)),
+      sync: { role: 'follower', code: 'ABCDEFGHJKMN', revision: 1 }
+    })
+    await api.launch('melongame', profile.id, 'modded')
+    expect(order).toEqual(['sync', 'spawn'])
+    // Vanilla launches don't check.
+    await api.launch('melongame', null, 'vanilla')
+    expect(order).toEqual(['sync', 'spawn', 'spawn'])
+  })
+
   test('lovely: modded points lovely at the profile mods folder; vanilla passes --vanilla', async () => {
     writeFileSync(path.join(gameDir, 'REPO.exe'), '')
     const d = withExtraGames()
@@ -5027,5 +5098,106 @@ describe('Proton prefix for modded launches', () => {
     const api = createServices(deps)
     const profile = await api.createProfile('repo', 'Test')
     expect(await api.getLaunchWarnings('repo', profile.id)).not.toContain('proton-first-run')
+  })
+})
+
+describe('synced profiles', () => {
+  const CODE = 'ABCDEFGHJKMN'
+  let requests: { method: string; url: string }[]
+
+  beforeEach(() => {
+    requests = []
+    const base = deps.fetch
+    deps.fetch = (async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (!u.startsWith('https://share.test/v1/sync')) {
+        return (base as (u: string, i?: RequestInit) => Promise<Response>)(url, init)
+      }
+      const method = init?.method ?? 'GET'
+      requests.push({ method, url: u })
+      if (method === 'POST') {
+        return new Response(JSON.stringify({ code: CODE, ownerKey: 'owner-key', revision: 1 }), {
+          status: 201
+        })
+      }
+      if (method === 'PUT') return new Response(JSON.stringify({ revision: 2 }), { status: 200 })
+      if (method === 'DELETE') return new Response(null, { status: 200 })
+      return new Response(null, { status: 304, headers: { 'x-hml-revision': '1' } })
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const writeCfg = (game: string, id: string, text: string): void => {
+    const dir = path.join(deps.paths.profileDir(game, id), 'BepInEx', 'config')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(path.join(dir, 'a.cfg'), text)
+  }
+
+  test('a mutation on an owner profile schedules a publish', async () => {
+    const api = createServices(deps)
+    const owner = await api.createProfile('repo', 'Owner')
+    const plain = await api.createProfile('repo', 'Plain')
+    writeCfg('repo', owner.id, '[General]\nA = 1\n')
+    writeCfg('repo', plain.id, '[General]\nA = 1\n')
+    expect(await api.createSyncCode('repo', owner.id)).toEqual({ code: CODE, localMods: 0 })
+    requests = []
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    // A plain profile's change schedules nothing.
+    await api.writeConfig('repo', plain.id, 'BepInEx/config/a.cfg', '[General]\nA = 2\n')
+    expect(vi.getTimerCount()).toBe(0)
+
+    await api.writeConfig('repo', owner.id, 'BepInEx/config/a.cfg', '[General]\nA = 2\n')
+    expect(vi.getTimerCount()).toBe(1)
+    expect(requests).toEqual([])
+    vi.advanceTimersByTime(10_000)
+    await vi.waitFor(async () =>
+      expect((await getProfile(deps.paths, 'repo', owner.id)).sync).toMatchObject({
+        role: 'owner',
+        revision: 2
+      })
+    )
+    expect(requests).toEqual([{ method: 'PUT', url: `https://share.test/v1/sync/${CODE}` }])
+  })
+
+  test('deleting an owner profile removes its key file', async () => {
+    const api = createServices(deps)
+    const owner = await api.createProfile('repo', 'Owner')
+    await api.createSyncCode('repo', owner.id)
+    const key = deps.paths.syncKey(CODE)
+    expect(existsSync(key)).toBe(true)
+    await api.deleteProfile('repo', owner.id)
+    expect(existsSync(key)).toBe(false)
+    expect(existsSync(deps.paths.profileDir('repo', owner.id))).toBe(false)
+  })
+
+  test('the API refuses mod changes on a follower, and detachSync lifts that', async () => {
+    const api = createServices(deps)
+    const p = await api.createProfile('repo', 'F')
+    await saveProfile(deps.paths, {
+      ...(await getProfile(deps.paths, 'repo', p.id)),
+      sync: { role: 'follower', code: CODE, revision: 1 }
+    })
+    await expect(api.setModEnabled('repo', p.id, 'x', false)).rejects.toThrow(
+      'This profile is synced from a friend. Detach it to change its mods.'
+    )
+    await api.detachSync('repo', p.id)
+    expect((await getProfile(deps.paths, 'repo', p.id)).sync).toBeUndefined()
+    await expect(api.setModEnabled('repo', p.id, 'x', false)).rejects.not.toThrow(
+      'This profile is synced from a friend.'
+    )
+  })
+
+  test('stopSync ends an owner code', async () => {
+    const api = createServices(deps)
+    const owner = await api.createProfile('repo', 'Owner')
+    await api.createSyncCode('repo', owner.id)
+    requests = []
+    await api.stopSync('repo', owner.id)
+    expect(requests).toEqual([{ method: 'DELETE', url: `https://share.test/v1/sync/${CODE}` }])
+    expect((await getProfile(deps.paths, 'repo', owner.id)).sync).toBeUndefined()
   })
 })

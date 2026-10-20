@@ -749,6 +749,8 @@ export function createGithubServices(ctx: GhContext): Pick<
         const installs = !(await ctx.isGameRunning(def))
         try {
           for (const profile of await listProfiles(paths, def.label)) {
+            // A follower's mods come from its sync code; the owner updates them.
+            if (profile.sync?.role === 'follower') continue
             try {
               await autoUpdateProfile(def, catalog, profile.id, token, latestOf, installs)
             } catch (e) {

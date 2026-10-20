@@ -165,7 +165,12 @@ export async function duplicateProfile(
   const to = paths.profileDir(game, created.id)
   try {
     const manifest = path.join(from, MANIFEST)
-    await fs.cp(from, to, { recursive: true, filter: (p) => p !== manifest })
+    // A copy is a plain profile: no sync state, so no sync bases either.
+    const syncDir = path.join(from, '.hml-sync')
+    await fs.cp(from, to, {
+      recursive: true,
+      filter: (p) => p !== manifest && p !== syncDir
+    })
     const copy: ProfileManifest = { ...created, mods: source.mods }
     await saveProfile(paths, copy)
     return copy

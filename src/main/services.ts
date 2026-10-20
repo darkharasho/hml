@@ -5,6 +5,7 @@ import path from 'node:path'
 import type {
   Catalog,
   GameDef,
+  HmlCustomGame,
   HmlEvent,
   InstalledMod,
   LaunchMode,
@@ -95,6 +96,10 @@ import { listInstalledApps, type InstalledApp } from './steam/installedApps'
 import { createCustomGameServices, customLoaderSpec, loaderMismatch } from './custom/service'
 import { createNexusServices } from './nexus/service'
 import { createShareServices } from './share/service'
+import { createEntryInstaller, type ShareInstallers } from './share/entries'
+import { applyRevision } from './sync/apply'
+import { lockFollowers } from './sync/lock'
+import { createSyncServices } from './sync/service'
 import { gameByDomain, getMod } from './nexus/api'
 import { parseNxm, type HandlerPort } from './nexus/nxm'
 import { findInstalledMod, providesPackage } from '../shared/modIdentity'
@@ -237,7 +242,7 @@ async function assertZipFile(file: string): Promise<void> {
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export function createServices(deps: ServiceDeps): HmlApi & {
+export type Services = HmlApi & {
   ghAutoUpdateAll(): Promise<void>
   /** Checks every profile for mod updates, publishes the counts and notifies of new ones. */
   runBackgroundChecks(): Promise<void>
@@ -248,7 +253,11 @@ export function createServices(deps: ServiceDeps): HmlApi & {
   serveArt(url: string): Promise<Response>
   /** Stops every waitForGame (the window closed or reloaded, so nobody is waiting). */
   cancelLaunchWatches(): void
-} {
+  /** Synced profiles: checks followers and publishes owners (startup, then every SYNC_POLL_MS). */
+  syncTick(): Promise<void>
+}
+
+export function createServices(deps: ServiceDeps): Services {
   const { paths } = deps
   const platform: 'win32' | 'linux' = deps.platform === 'win32' ? 'win32' : 'linux'
   const now = deps.now ?? Date.now
@@ -447,7 +456,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
 
   // Serializes mutating operations on one profile.
   const tails = new Map<string, Promise<void>>()
-  function serialize<T>(game: string, profileId: string, fn: () => Promise<T>): Promise<T> {
+  function lock<T>(game: string, profileId: string, fn: () => Promise<T>): Promise<T> {
     const key = `${game}/${profileId}`
     const run = (tails.get(key) ?? Promise.resolve()).then(fn)
     const tail = run.then(
@@ -459,6 +468,21 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       if (tails.get(key) === tail) tails.delete(key)
     })
     return run
+  }
+  // Created further down; bound late because the services it needs use `serialize`.
+  const late: { sync?: ReturnType<typeof createSyncServices> } = {}
+  /**
+   * The profile lock, telling the sync service afterwards that the profile may have changed (an
+   * owner's change is published after a debounce). The sync service itself takes the raw lock.
+   */
+  function serialize<T>(game: string, profileId: string, fn: () => Promise<T>): Promise<T> {
+    return lock(game, profileId, fn).finally(() => {
+      try {
+        late.sync?.touched(game, profileId)
+      } catch (e) {
+        console.warn(`Sync couldn't note a change to ${game}/${profileId}:`, e)
+      }
+    })
   }
 
   /**
@@ -1243,11 +1267,71 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     await launch(plan, paths.gameDir(def.label), gameDir, deps.spawn)
   }
 
+  async function uninstallModService(
+    game: string,
+    profileId: string,
+    modId: string
+  ): Promise<void> {
+    const def = await requireGame(game)
+    await assertGameClosed(def)
+    return serialize(game, profileId, () => uninstallMod(paths, def, profileId, modId))
+  }
+
+  /** In-process installers for share imports and sync applies; not behind the follower lock. */
+  const installers: ShareInstallers = {
+    tsGetPackage: tsServices.tsGetPackage,
+    tsRefresh: tsServices.tsRefresh,
+    // An import's profile is new, and a sync apply runs only while the game is closed, so
+    // nothing in the profile can be locked by the running game.
+    tsInstall: (game, profileId, fullName, version) =>
+      tsInstallChecked(game, profileId, fullName, version, false),
+    ghInstall: (game, profileId, url, opts) => ghInstallWith(game, profileId, url, undefined, opts),
+    nxInstall: nexusApi.nxInstall,
+    nxGetDomain,
+    setModEnabled: setModEnabledService,
+    createProfile: (game, name) => createProfile(paths, game, name),
+    addNexusGame,
+    addCustomGame: customApi.addCustomGame
+  }
+  const getCustomGame = async (label: string): Promise<HmlCustomGame | null> => {
+    const g = await customGames.get(label)
+    return g
+      ? {
+          source: g.source,
+          displayName: g.displayName,
+          steamAppId: g.steamAppId,
+          loaderChoice: g.loaderChoice
+        }
+      : null
+  }
+
+  const syncApplyCtx = {
+    deps,
+    serialize,
+    installers: { ...installers, uninstallMod: uninstallModService },
+    entries: createEntryInstaller({ deps, installers })
+  }
+  // Never call detachSync, stopSync, beforeLaunch or checkFollower under the profile lock: they
+  // wait for a check that takes it.
+  const syncApi = createSyncServices({
+    deps,
+    lock,
+    requireGame,
+    getCustomGame,
+    isGameRunning: (def) =>
+      isGameProcessRunning(deps.platform, deps.execFile, def.exeNames, deps.procFs)
+        .then((r) => r === true)
+        .catch(() => false),
+    apply: (game, profileId, rev) => applyRevision(syncApplyCtx, game, profileId, rev)
+  })
+  late.sync = syncApi
+
   const shareApi = createShareServices({
     deps,
     getCatalog,
     requireGame,
     serialize,
+    sync: syncApi,
     findCustomGameByName: async (displayName) => {
       const wanted = displayName.trim().toLowerCase()
       const found = (await customGames.list()).find(
@@ -1301,32 +1385,8 @@ export function createServices(deps: ServiceDeps): HmlApi & {
         }
       })
     },
-    getCustomGame: async (label) => {
-      const g = await customGames.get(label)
-      return g
-        ? {
-            source: g.source,
-            displayName: g.displayName,
-            steamAppId: g.steamAppId,
-            loaderChoice: g.loaderChoice
-          }
-        : null
-    },
-    installers: {
-      tsGetPackage: tsServices.tsGetPackage,
-      tsRefresh: tsServices.tsRefresh,
-      // The import's profile is new, so nothing in it can be locked by the running game.
-      tsInstall: (game, profileId, fullName, version) =>
-        tsInstallChecked(game, profileId, fullName, version, false),
-      ghInstall: (game, profileId, url, opts) =>
-        ghInstallWith(game, profileId, url, undefined, opts),
-      nxInstall: nexusApi.nxInstall,
-      nxGetDomain,
-      setModEnabled: setModEnabledService,
-      createProfile: (game, name) => createProfile(paths, game, name),
-      addNexusGame,
-      addCustomGame: customApi.addCustomGame
-    }
+    getCustomGame,
+    installers
   })
 
   const artSources: ArtSources = {
@@ -1441,7 +1501,9 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       }
       return out
     },
-    profiles: (game) => listProfiles(paths, game),
+    // A follower's mods come from its sync code, so it has no updates of its own to offer.
+    profiles: async (game) =>
+      (await listProfiles(paths, game)).filter((p) => p.sync?.role !== 'follower'),
     checks: {
       thunderstore: async (game, profileId) => await tsServices.tsCheckUpdates(game, profileId),
       github: async (game, profileId) => await ghServices.ghCheckUpdates(game, profileId),
@@ -1455,7 +1517,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     }
   })
 
-  return {
+  const api: Services = {
     ...tsServices,
     ...ghServices,
     runBackgroundChecks: async () => void (await background.run()),
@@ -1468,15 +1530,10 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     },
     ...nexusApi,
     ...shareApi,
-    createSyncCode: async () => {
-      throw new Error('not yet')
-    },
-    stopSync: async () => {
-      throw new Error('not yet')
-    },
-    detachSync: async () => {
-      throw new Error('not yet')
-    },
+    createSyncCode: syncApi.createSyncCode,
+    stopSync: syncApi.stopSync,
+    detachSync: syncApi.detachSync,
+    syncTick: () => syncApi.tick(),
     ...customApi,
     handleNxm,
     serveArt: (url) => serveArt(url, artSources),
@@ -1619,7 +1676,16 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     // Serialized on the source, so an install in progress doesn't land half copied.
     duplicateProfile: (game, id, name) =>
       serialize(game, id, () => duplicateProfile(paths, game, id, name)),
-    deleteProfile: (game, id) => serialize(game, id, () => deleteProfile(paths, game, id)),
+    async deleteProfile(game, id) {
+      // The renderer offers stopSync first; deleting an owner without it forgets the key, and
+      // the code expires on the server on its own.
+      const owned = await serialize(game, id, async () => {
+        const s = (await getProfile(paths, game, id).catch(() => null))?.sync
+        await deleteProfile(paths, game, id)
+        return s?.role === 'owner' ? s.code : null
+      })
+      if (owned) await syncApi.forgetOwnerKey(owned)
+    },
 
     async installFromFile(game: string, profileId: string): Promise<InstalledMod[]> {
       const def = await requireGame(game)
@@ -1693,11 +1759,7 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       })
     },
 
-    async uninstallMod(game, profileId, modId): Promise<void> {
-      const def = await requireGame(game)
-      await assertGameClosed(def)
-      return serialize(game, profileId, () => uninstallMod(paths, def, profileId, modId))
-    },
+    uninstallMod: uninstallModService,
 
     async deployProfile(game, profileId) {
       const { def, gameDir } = await requireDeploy(game)
@@ -1783,6 +1845,8 @@ export function createServices(deps: ServiceDeps): HmlApi & {
       if (mode !== 'modded' && mode !== 'vanilla') {
         throw new Error(`Unknown launch mode: ${String(mode)}`)
       }
+      // Outside the profile lock: the check takes it to apply a newer revision first.
+      if (mode === 'modded' && profileId) await syncApi.beforeLaunch(game, profileId)
       const def = await requireGame(game)
       directExits.delete(def.label)
       if (isFolderGame(def)) return launchFolderGame(def, profileId, mode)
@@ -1928,4 +1992,6 @@ export function createServices(deps: ServiceDeps): HmlApi & {
 
     getGamesDataDir: async () => paths.gamesDir
   }
+  // Mod changes on a follower are refused; a sync apply uses the inner installers above.
+  return lockFollowers(api, syncApi)
 }

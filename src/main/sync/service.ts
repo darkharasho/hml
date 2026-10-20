@@ -161,6 +161,12 @@ export function createSyncServices(ctx: SyncContext): {
     }
     return st
   }
+  /**
+   * Profiles known to own a sync code (state key -> code), so `touched` costs nothing for any
+   * other profile. Filled by createSyncCode and every publish (tick publishes each owner, so an
+   * edit made before the first tick is still published); emptied by stopSync and forgetOwnerKey.
+   */
+  const owners = new Map<string, string>()
   // createSyncCode calls under way, so a double click doesn't make two codes.
   const creating = new Map<string, Promise<{ code: string; localMods: number }>>()
 
@@ -209,6 +215,8 @@ export function createSyncServices(ctx: SyncContext): {
     const snap = await lock(game, profileId, async () => {
       const profile = await getProfile(deps.paths, game, profileId)
       const sync = profile.sync
+      if (sync?.role === 'owner') owners.set(`${game}\0${profileId}`, sync.code)
+      else owners.delete(`${game}\0${profileId}`)
       // An orphaned code can never publish again, so nothing is collected or sent.
       if (sync?.role !== 'owner' || sync.orphaned) return null
       const parts = await collect(game, profileId, profile)
@@ -295,7 +303,10 @@ export function createSyncServices(ctx: SyncContext): {
       if (!deps.secrets.isAvailable()) throw new Error(noSecureStorage(WHAT))
       return { parts: await collect(game, profileId, profile), localMods }
     })
-    if ('existing' in snap) return { code: snap.existing, localMods: snap.localMods }
+    if ('existing' in snap) {
+      owners.set(`${game}\0${profileId}`, snap.existing)
+      return { code: snap.existing, localMods: snap.localMods }
+    }
 
     const digest = revisionDigest(snap.parts)
     const created = await createSync(client(), zipHmlParts(snap.parts))
@@ -321,6 +332,7 @@ export function createSyncServices(ctx: SyncContext): {
       await undo()
       throw e
     }
+    owners.set(`${game}\0${profileId}`, created.code)
     emitState(game, profileId)
     return { code: created.code, localMods: snap.localMods }
   }
@@ -570,6 +582,7 @@ export function createSyncServices(ctx: SyncContext): {
       const label = (await ctx.requireGame(game)).label
       const sync = (await lock(label, profileId, () => getProfile(deps.paths, label, profileId)))
         .sync
+      if (sync?.role !== 'owner') owners.delete(`${label}\0${profileId}`)
       if (!sync) return
       if (sync.role !== 'owner') throw new Error(FOLLOWER_STOP)
       cancelTimer(label, profileId)
@@ -587,11 +600,15 @@ export function createSyncServices(ctx: SyncContext): {
         return true
       })
       if (file) await saveSecret(file, deps.secrets, null, WHAT)
+      owners.delete(`${label}\0${profileId}`)
+      cancelTimer(label, profileId)
       if (changed) emitState(label, profileId)
     },
 
+    // Runs after every serialized operation, so it is synchronous, never throws, and does nothing
+    // for profiles that don't own a code (followers re-enter it while a revision is applied).
     touched(game, profileId) {
-      if (profileId === DEPLOY_KEY) return
+      if (profileId === DEPLOY_KEY || !owners.has(`${game}\0${profileId}`)) return
       const st = stateOf(game, profileId)
       if (st.timer !== undefined) timers.clearTimeout(st.timer)
       st.timer = timers.setTimeout(() => {
@@ -609,6 +626,14 @@ export function createSyncServices(ctx: SyncContext): {
     },
 
     async forgetOwnerKey(code) {
+      // The profile is gone: drop it, and the publish its deletion scheduled.
+      for (const [key, owned] of [...owners]) {
+        if (owned !== code) continue
+        owners.delete(key)
+        const st = states.get(key)
+        if (st?.timer !== undefined) timers.clearTimeout(st.timer)
+        if (st) st.timer = undefined
+      }
       const file = keyFile(code)
       if (file) await saveSecret(file, deps.secrets, null, WHAT)
     },

@@ -22,6 +22,7 @@ import { registerUpdates } from './updateIpc'
 import { createServices } from './services'
 import { findNxmArg, linuxDesktopEntry, type HandlerPort } from './nexus/nxm'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
+import { SYNC_POLL_MS } from './sync/service'
 import { makePaths } from './store/paths'
 import { resolveSnapshotPath } from './snapshotPath'
 import { ART_SCHEME } from './art/protocol'
@@ -312,6 +313,12 @@ if (hasLock)
     setTimeout(() => {
       runGhUpdates()
       setInterval(runGhUpdates, GH_CHECK_INTERVAL_MS)
+    }, 10_000)
+
+    // Synced profiles: followers check for a newer revision, owners publish what's pending.
+    setTimeout(() => {
+      void ready.syncTick()
+      setInterval(() => void ready.syncTick(), SYNC_POLL_MS)
     }, 10_000)
 
     // HML's own updates: on launch and every 6 hours, installed builds only.

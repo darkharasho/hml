@@ -175,6 +175,26 @@ describe('profiles', () => {
     expect((await getProfile(paths, 'repo', 'default')).name).toBe('Default')
   })
 
+  test('duplicate of a synced profile is a plain profile without .hml-sync', async () => {
+    const m = await createProfile(paths, 'repo', 'Synced')
+    await saveProfile(paths, {
+      ...m,
+      sync: { role: 'follower', code: 'ABCDEFGHJKMN', revision: 3 }
+    })
+    const src = paths.profileDir('repo', m.id)
+    await fs.mkdir(path.join(src, '.hml-sync', 'base'), { recursive: true })
+    await fs.writeFile(path.join(src, '.hml-sync', 'base', 'a.cfg'), 'x = 1')
+    await fs.mkdir(path.join(src, 'BepInEx', 'config'), { recursive: true })
+    await fs.writeFile(path.join(src, 'BepInEx', 'config', 'a.cfg'), 'x = 1')
+
+    const copy = await duplicateProfile(paths, 'repo', m.id, 'Copy')
+    expect(copy.sync).toBeUndefined()
+    expect((await getProfile(paths, 'repo', copy.id)).sync).toBeUndefined()
+    const dst = paths.profileDir('repo', copy.id)
+    expect(await exists(path.join(dst, '.hml-sync'))).toBe(false)
+    expect(await fs.readFile(path.join(dst, 'BepInEx', 'config', 'a.cfg'), 'utf8')).toBe('x = 1')
+  })
+
   test('duplicate refuses a missing profile and leaves no folder behind', async () => {
     await expect(duplicateProfile(paths, 'repo', 'nope', 'Copy')).rejects.toThrow(/not found/i)
     expect(await exists(paths.profileDir('repo', 'copy'))).toBe(false)
