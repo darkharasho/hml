@@ -88,12 +88,12 @@ async function collectConfigs(
   }
 }
 
-/** Builds a .hml zip: export.json first, then the profile's BepInEx/config and UserData settings. */
-export async function buildHmlFile(
+/** Gathers what a .hml holds: the export object and the profile's config files, in collection order. */
+export async function collectHmlParts(
   profile: ProfileManifest,
   profileDir: string,
   opts: { maxBytes?: number; customGame?: HmlCustomGame } = {}
-): Promise<Uint8Array> {
+): Promise<{ export: HmlExport; configs: Map<string, Uint8Array> }> {
   const maxBytes = opts.maxBytes ?? MAX_HML_BYTES
   const exp: HmlExport = {
     formatVersion: 1,
@@ -109,9 +109,9 @@ export async function buildHmlFile(
     })),
     ...(opts.customGame ? { customGame: opts.customGame } : {})
   }
-  const json = strToU8(JSON.stringify(exp, null, 2))
-  const files: Record<string, Uint8Array> = { 'export.json': json }
-  const budget = { left: maxBytes - json.length }
+  // export.json counts against the budget like it did when it was zipped here.
+  const budget = { left: maxBytes - strToU8(JSON.stringify(exp, null, 2)).length }
+  const files: Record<string, Uint8Array> = {}
   await collectConfigs(join(profileDir, 'BepInEx', 'config'), CONFIG_PREFIXES[0], files, budget)
   await collectConfigs(join(profileDir, 'UserData'), CONFIG_PREFIXES[1], files, budget, (name) =>
     USERDATA_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext))
@@ -122,7 +122,28 @@ export async function buildHmlFile(
     files,
     budget
   )
+  return { export: exp, configs: new Map(Object.entries(files)) }
+}
+
+/** Zips parts into a .hml: export.json first, then the configs in the Map's order. */
+export function zipHmlParts(parts: {
+  export: HmlExport
+  configs: Map<string, Uint8Array>
+}): Uint8Array {
+  const files: Record<string, Uint8Array> = {
+    'export.json': strToU8(JSON.stringify(parts.export, null, 2))
+  }
+  for (const [name, data] of parts.configs) files[name] = data
   return zipSync(files)
+}
+
+/** Builds a .hml zip: export.json first, then the profile's BepInEx/config and UserData settings. */
+export async function buildHmlFile(
+  profile: ProfileManifest,
+  profileDir: string,
+  opts: { maxBytes?: number; customGame?: HmlCustomGame } = {}
+): Promise<Uint8Array> {
+  return zipHmlParts(await collectHmlParts(profile, profileDir, opts))
 }
 
 export function isSafeConfigPath(name: string): boolean {
