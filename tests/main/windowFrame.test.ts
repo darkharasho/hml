@@ -48,7 +48,13 @@ describe('windowControls', () => {
         w.maximized = false
       },
       isMaximized: () => w.maximized,
-      close: () => void w.calls.push('close')
+      close: () => void w.calls.push('close'),
+      webContents: {
+        cut: () => void w.calls.push('cut'),
+        copy: () => void w.calls.push('copy'),
+        paste: () => void w.calls.push('paste'),
+        selectAll: () => void w.calls.push('selectAll')
+      }
     }
     return w
   }
@@ -61,6 +67,16 @@ describe('windowControls', () => {
     c.toggleMaximize()
     expect(c.isMaximized()).toBe(false)
     expect(w.calls).toEqual(['maximize', 'unmaximize'])
+  })
+
+  test("edit commands go to the window's page", () => {
+    const w = fakeWindow()
+    const c = windowControls(w)
+    c.cut()
+    c.copy()
+    c.paste()
+    c.selectAll()
+    expect(w.calls).toEqual(['cut', 'copy', 'paste', 'selectAll'])
   })
 
   test('in full screen it counts as maximized, and the toggle leaves full screen', () => {
@@ -83,7 +99,16 @@ describe('windowControls', () => {
 })
 
 test('window channels are namespaced apart from the HML API', () => {
-  expect(WINDOW_METHODS).toEqual(['minimize', 'toggleMaximize', 'close', 'isMaximized'])
+  expect(WINDOW_METHODS).toEqual([
+    'minimize',
+    'toggleMaximize',
+    'close',
+    'isMaximized',
+    'cut',
+    'copy',
+    'paste',
+    'selectAll'
+  ])
   expect(windowChannel('close')).toBe('hml:window:close')
 })
 

@@ -190,6 +190,7 @@ const ICONS = {
     'M11 4a7 7 0 1 0 4.2 12.6l4.1 4.1 1.4-1.4-4.1-4.1A7 7 0 0 0 11 4Zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z',
   gear: 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.74 8.87a.47.47 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.47.47 0 0 0-.12-.61l-2.01-1.58ZM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2Z',
   plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z',
+  star: 'm12 17.3 6.2 3.7-1.6-7 5.4-4.7-7.2-.6L12 2 9.2 8.7 2 9.3l5.4 4.7-1.6 7 6.2-3.7Z',
   back: 'M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20v-2Z',
   dots: 'M12 7.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm0 6a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm0 6a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z',
   play: 'M8 5.5v13a.5.5 0 0 0 .8.4l10-6.5a.5.5 0 0 0 0-.8l-10-6.5a.5.5 0 0 0-.8.4Z',
@@ -289,7 +290,6 @@ export function Menu({
   const [up, setUp] = useState(false)
   const [alignLeft, setAlignLeft] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const hasChecks = items.some((i) => i.checked !== undefined)
   const ref = useRef<HTMLDetailsElement>(null)
   useEffect(() => {
     const close = (e: Event): void => {
@@ -334,44 +334,76 @@ export function Menu({
       <div
         ref={menuRef}
         role="menu"
-        className={`absolute ${alignLeft ? 'left-0' : 'right-0'} z-20 min-w-40 overflow-hidden whitespace-nowrap rounded-lg border border-line bg-raised py-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)] ${
+        className={`absolute ${alignLeft ? 'left-0' : 'right-0'} z-20 ${MENU_PANEL} ${
           up ? 'bottom-full mb-1' : 'mt-1'
         }`}
       >
-        {items.map((item) => (
-          <Fragment key={item.id ?? item.label}>
-            {item.divider && <div role="separator" className="my-1 h-px bg-line" />}
-            <button
-              type="button"
-              role={
-                item.checked === undefined
-                  ? 'menuitem'
-                  : item.toggle
-                    ? 'menuitemcheckbox'
-                    : 'menuitemradio'
-              }
-              aria-checked={item.checked}
-              disabled={item.disabled}
-              onClick={() => {
-                if (ref.current) ref.current.open = false
-                item.onSelect()
-              }}
-              className={`flex w-full items-center gap-2 py-1.5 pr-4 text-left text-sm hover:bg-line/60 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent ${
-                hasChecks ? 'pl-2' : 'pl-3'
-              } ${item.danger ? 'text-danger' : 'text-fg'}`}
-            >
-              {hasChecks && (
-                <span className="grid size-4 shrink-0 place-items-center text-ember">
-                  {item.checked && <Icon name="check" className="size-3.5" />}
-                </span>
-              )}
-              {item.icon}
-              {item.label}
-            </button>
-          </Fragment>
-        ))}
+        <MenuRows
+          items={items}
+          onPick={() => {
+            if (ref.current) ref.current.open = false
+          }}
+        />
       </div>
     </details>
+  )
+}
+
+/** The surface a dropdown or right-click menu draws its rows on. */
+export const MENU_PANEL =
+  'min-w-40 overflow-hidden whitespace-nowrap rounded-lg border border-line bg-raised py-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)]'
+
+/**
+ * A menu's rows. `keepFocus` leaves focus where it was when a row is clicked, so an edit command
+ * from the right-click menu still acts on the text field.
+ */
+export function MenuRows({
+  items,
+  onPick,
+  keepFocus = false
+}: {
+  items: MenuItem[]
+  /** Called before the item's own onSelect, to close the menu. */
+  onPick(): void
+  keepFocus?: boolean
+}): React.JSX.Element {
+  const hasChecks = items.some((i) => i.checked !== undefined)
+  return (
+    <>
+      {items.map((item) => (
+        <Fragment key={item.id ?? item.label}>
+          {item.divider && <div role="separator" className="my-1 h-px bg-line" />}
+          <button
+            type="button"
+            role={
+              item.checked === undefined
+                ? 'menuitem'
+                : item.toggle
+                  ? 'menuitemcheckbox'
+                  : 'menuitemradio'
+            }
+            aria-checked={item.checked}
+            disabled={item.disabled}
+            onMouseDown={keepFocus ? (e) => e.preventDefault() : undefined}
+            onClick={() => {
+              onPick()
+              item.onSelect()
+            }}
+            className={`flex w-full items-center gap-2 py-1.5 pr-4 text-left text-sm hover:bg-line/60 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent ${
+              hasChecks ? 'pl-2' : 'pl-3'
+            } ${item.danger ? 'text-danger' : 'text-fg'}`}
+          >
+            {hasChecks && (
+              <span className="grid size-4 shrink-0 place-items-center text-ember">
+                {item.checked && <Icon name="check" className="size-3.5" />}
+              </span>
+            )}
+            {item.icon}
+            {item.label}
+          </button>
+        </Fragment>
+      ))}
+    </>
   )
 }
 

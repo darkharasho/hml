@@ -252,12 +252,17 @@ describe('services', () => {
     const api = createServices(deps)
     const slow = api.nxSetDomain('repo', 'skyrimspecialedition')
     await reached
-    await api.saveSettings({ ...(await api.getSettings()), lastGame: 'repo' })
+    await api.saveSettings({
+      ...(await api.getSettings()),
+      lastGame: 'repo',
+      favoriteGames: ['repo']
+    })
     release()
     await slow
     const s = await api.getSettings()
     expect(s.nexusDomainOverrides).toEqual({ repo: 'skyrimspecialedition' })
     expect(s.lastGame).toBe('repo')
+    expect(s.favoriteGames).toEqual(['repo'])
   })
 
   test('saveSettings keeps the path and domain overrides already on disk', async () => {
@@ -950,7 +955,8 @@ describe('services', () => {
       nexusDomainOverrides: {},
       manualLoaderKept: [],
       gameColors: true,
-      updateNotifications: true
+      updateNotifications: true,
+      favoriteGames: []
     })
   })
 

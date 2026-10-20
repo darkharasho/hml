@@ -28,6 +28,7 @@ export interface ControllableWindow {
   isFullScreen(): boolean
   setFullScreen(on: boolean): void
   close(): void
+  webContents: { cut(): void; copy(): void; paste(): void; selectAll(): void }
 }
 
 /** Full screen counts as maximized, so the button shows restore and its click leaves full screen. */
@@ -42,7 +43,11 @@ export function windowControls(win: ControllableWindow): {
       else win.maximize()
     },
     close: () => win.close(),
-    isMaximized: () => win.isMaximized() || win.isFullScreen()
+    isMaximized: () => win.isMaximized() || win.isFullScreen(),
+    cut: () => win.webContents.cut(),
+    copy: () => win.webContents.copy(),
+    paste: () => win.webContents.paste(),
+    selectAll: () => win.webContents.selectAll()
   }
 }
 

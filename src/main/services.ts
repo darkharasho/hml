@@ -1989,7 +1989,8 @@ export function createServices(deps: ServiceDeps): Services {
         ...cur,
         steamRootOverride: s.steamRootOverride,
         lastGame: s.lastGame,
-        lastProfile: s.lastProfile
+        lastProfile: s.lastProfile,
+        favoriteGames: s.favoriteGames
       }))
       invalidateSteamRoot()
     },

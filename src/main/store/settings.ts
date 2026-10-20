@@ -13,7 +13,8 @@ export function defaultSettings(): Settings {
     nexusDomainOverrides: {},
     manualLoaderKept: [],
     gameColors: true,
-    updateNotifications: true
+    updateNotifications: true,
+    favoriteGames: []
   }
 }
 
@@ -51,7 +52,10 @@ export function normalizeSettings(stored: unknown): Settings {
     updateNotifications:
       typeof stored.updateNotifications === 'boolean'
         ? stored.updateNotifications
-        : defaults.updateNotifications
+        : defaults.updateNotifications,
+    favoriteGames: Array.isArray(stored.favoriteGames)
+      ? [...new Set(stored.favoriteGames.filter((x): x is string => typeof x === 'string'))]
+      : defaults.favoriteGames
   }
 }
 

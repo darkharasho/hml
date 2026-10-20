@@ -25,6 +25,7 @@ import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
 import { isFollower, manualDownloadToast, moreManualToast, syncUpdatedToast } from './syncView'
+import { toggleFavorite } from './titleView'
 import { displayName, installToast, progressLabel } from './tsView'
 
 export type ToastKind = 'error' | 'success' | 'info'
@@ -91,6 +92,8 @@ interface State {
   init(): Promise<void>
   selectGame(game: GameSummary): Promise<void>
   leaveGame(): void
+  /** Stars a game on the picker, or unstars it. */
+  toggleFavoriteGame(label: string): Promise<void>
   addCustomGame(input: AddCustomGameInput): Promise<void>
   resolveManualLoader(action: 'remove' | 'keep'): Promise<void>
   /** Installs (or switches to) the game's chosen BepInEx in the current profile. */
@@ -255,7 +258,7 @@ export const useStore = create<State>()((set, get) => {
   async function runInit(): Promise<void> {
     try {
       const settings = await api.getSettings()
-      // The app always opens on the game picker; lastGame only powers its Back button.
+      // The app always opens on the game picker; lastGame only orders the games it lists.
       set({ settings })
       // Not ready at startup (the first check runs a little later); the event brings it then.
       void api.getUpdateSummary().then(
@@ -555,6 +558,14 @@ export const useStore = create<State>()((set, get) => {
           get().toast('success', `Moved the manual BepInEx install to ${backup}`)
         }
         set({ manualLoader: null })
+      } catch (e) {
+        fail(e)
+      }
+    },
+
+    async toggleFavoriteGame(label) {
+      try {
+        await persist((s) => ({ ...s, favoriteGames: toggleFavorite(s.favoriteGames, label) }))
       } catch (e) {
         fail(e)
       }

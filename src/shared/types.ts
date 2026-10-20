@@ -109,6 +109,8 @@ export interface Settings {
   gameColors: boolean
   /** Show a system notification when the background check finds mod updates. */
   updateNotifications: boolean
+  /** Game labels the user starred, in the order they were added. */
+  favoriteGames: string[]
 }
 
 export type ModSource =

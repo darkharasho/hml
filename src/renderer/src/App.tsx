@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { ContextMenuHost } from './components/ContextMenu'
 import { GamePicker } from './components/GamePicker'
 import { LaunchBar } from './components/LaunchBar'
 import { ManualLoaderDialog } from './components/ManualLoaderDialog'
@@ -76,6 +77,7 @@ function App(): React.JSX.Element {
       <ManualLoaderDialog />
       <SettingsDialog />
       <Toasts />
+      <ContextMenuHost />
     </>
   )
 }

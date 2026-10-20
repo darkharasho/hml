@@ -18,7 +18,14 @@ const isMac = window.hmlPlatform === 'darwin'
  */
 export function TitleBar(): React.JSX.Element {
   const game = useStore((s) => s.currentGame)
+  const leaveGame = useStore((s) => s.leaveGame)
   const maximized = useMaximized()
+  const brand = (
+    <>
+      <Logo />
+      <span className="font-bold tracking-tight text-ember">HML</span>
+    </>
+  )
 
   return (
     <header
@@ -29,10 +36,21 @@ export function TitleBar(): React.JSX.Element {
         isMac ? 'pl-[78px]' : 'pl-3'
       }`}
     >
-      <div className="pointer-events-none flex shrink-0 items-center gap-2">
-        <Logo />
-        <span className="font-bold tracking-tight text-ember">HML</span>
-      </div>
+      {game ? (
+        // Back to the game picker. Inert under a dialog, which could be acting on this game.
+        <button
+          type="button"
+          title="All games"
+          aria-label="HML: all games"
+          onClick={leaveGame}
+          data-inert-under-modal
+          className={`-ml-1.5 flex h-7 shrink-0 items-center gap-2 rounded-md px-1.5 hover:bg-raised ${NO_DRAG}`}
+        >
+          {brand}
+        </button>
+      ) : (
+        <div className="pointer-events-none flex shrink-0 items-center gap-2">{brand}</div>
+      )}
       {game && <Crumbs game={game} />}
       {/* Restarting for an update under an open dialog would drop whatever it was doing. */}
       <div className="flex shrink-0 items-center" data-inert-under-modal>

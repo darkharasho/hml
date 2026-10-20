@@ -576,6 +576,7 @@ describe('custom game services', () => {
       nexusDomainOverrides: { [label]: 'x', keep: 'y' },
       lastProfile: { [label]: profile.id, keep: 'z' },
       manualLoaderKept: [label, 'keep'],
+      favoriteGames: [label, 'keep'],
       lastGame: label
     }))
     expect(s.gamePathOverrides[label]).toBe(tmp)
@@ -585,6 +586,7 @@ describe('custom game services', () => {
     expect(after.nexusDomainOverrides).toEqual({ keep: 'y' })
     expect(after.lastProfile).toEqual({ keep: 'z' })
     expect(after.manualLoaderKept).toEqual(['keep'])
+    expect(after.favoriteGames).toEqual(['keep'])
     expect(after.lastGame).toBeNull()
     expect(existsSync(deps.paths.profileDir(label, profile.id))).toBe(true)
     await expect(api.removeCustomGame(label)).rejects.toThrow(`Unknown game: ${label}`)

@@ -2,7 +2,9 @@ import { describe, expect, test } from 'vitest'
 import type { GameSummary } from '../../src/shared/ipc'
 import type { Settings } from '../../src/shared/types'
 import {
+  favoriteLabels,
   MAX_MENU_GAMES,
+  toggleFavorite,
   MAX_YOUR_GAMES,
   uniqueGames,
   usedGameLabels
@@ -16,7 +18,8 @@ const settings = (lastGame: string | null, used: string[]): Settings => ({
   nexusDomainOverrides: {},
   manualLoaderKept: [],
   gameColors: true,
-  updateNotifications: true
+  updateNotifications: true,
+  favoriteGames: []
 })
 const game = (label: string, displayName: string): GameSummary =>
   ({ label, displayName }) as GameSummary
@@ -35,6 +38,20 @@ describe('usedGameLabels', () => {
     const many = Array.from({ length: 20 }, (_, i) => `g${i}`)
     expect(usedGameLabels(settings(null, many), 'cur')).toHaveLength(21)
     expect(usedGameLabels(settings(null, many), 'cur')[0]).toBe('cur')
+  })
+})
+
+describe('favorites', () => {
+  test('come right after the current game, so the menu limit keeps them', () => {
+    const s = { ...settings('b', ['a', 'b']), favoriteGames: ['z', 'a'] }
+    expect(usedGameLabels(s, 'c')).toEqual(['c', 'z', 'a', 'b'])
+    expect(favoriteLabels(s)).toEqual(['z', 'a'])
+    expect(favoriteLabels(null)).toEqual([])
+  })
+
+  test('toggleFavorite adds at the end and removes', () => {
+    expect(toggleFavorite(['a'], 'b')).toEqual(['a', 'b'])
+    expect(toggleFavorite(['a', 'b'], 'a')).toEqual(['b'])
   })
 })
 

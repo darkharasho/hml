@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import type { GameSummary } from '../../../shared/ipc'
 import type { GameDetection } from '../../../shared/types'
 import { api, errorMessage } from '../api'
+import { openContextMenu } from '../contextMenu'
 import { isNexusOnly, isSteamCandidate } from '../customView'
 import { formatCount } from '../nxView'
 import { useStore } from '../store'
-import { MAX_YOUR_GAMES, uniqueGames, usedGameLabels } from '../titleView'
+import { favoriteLabels, MAX_YOUR_GAMES, uniqueGames, usedGameLabels } from '../titleView'
 import { AddGameDialog } from './AddGameDialog'
 import { GameCover } from './GameCover'
 import { Button, Icon } from './ui'
@@ -34,23 +35,9 @@ export function GamePicker(): React.JSX.Element {
   const [addRequest, setAddRequest] = useState<AddRequest | null>(null)
   // Re-run the search when the Steam folder changes, since install dirs depend on it.
   const steamRoot = useStore((s) => s.settings?.steamRootOverride)
-  const yourGames = useYourGames(reload)
-  // The game the user just left, so they can go straight back to it.
-  const lastGame = useStore((s) => s.settings?.lastGame)
-  const backTo = yourGames?.find((g) => g.label === lastGame) ?? null
-
-  useEffect(() => {
-    if (!backTo) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return
-      // Escape in a filled search box clears it first; a dialog takes its own Escape.
-      if (query || document.querySelector('dialog[open]')) return
-      e.preventDefault()
-      void selectGame(backTo)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [backTo, query, selectGame])
+  const { favorites, yourGames } = useYourGames(reload)
+  const favoriteSet = useStore((s) => s.settings?.favoriteGames)
+  const toggleFavoriteGame = useStore((s) => s.toggleFavoriteGame)
 
   useEffect(() => {
     let stale = false
@@ -130,6 +117,37 @@ export function GamePicker(): React.JSX.Element {
     if (resolved && (await pickGamePath(resolved.label))) setReload((n) => n + 1)
   }
 
+  async function toggleFavorite(game: GameSummary): Promise<void> {
+    // A Nexus-only game is saved first, so the star points at a game HML can look up again.
+    const resolved = await resolve(game)
+    if (resolved) await toggleFavoriteGame(resolved.label)
+  }
+
+  function cardMenu(e: React.MouseEvent, game: GameSummary): void {
+    const starred = favoriteSet?.includes(game.label) ?? false
+    const installed = game.installDir !== null
+    const candidate = isSteamCandidate(game)
+    openContextMenu(e, [
+      { label: 'Open', disabled: adding !== null, onSelect: () => void choose(game) },
+      {
+        label: starred ? 'Remove from favorites' : 'Add to favorites',
+        divider: true,
+        // A Steam game HML has no entry for yet is added through a dialog first; open it then.
+        disabled: adding !== null || candidate,
+        onSelect: () => void toggleFavorite(game)
+      },
+      ...(!installed && !candidate
+        ? [
+            {
+              label: 'Set folder…',
+              disabled: adding !== null,
+              onSelect: () => void setFolder(game)
+            }
+          ]
+        : [])
+    ])
+  }
+
   // Every game appears once, so this is the cards badged Installed or On Steam.
   const installedCount = games?.filter((g) => g.installDir).length ?? 0
   // Nexus-only games sit with the rest, badged Nexus; Steam games HML has no entry for yet follow.
@@ -140,11 +158,14 @@ export function GamePicker(): React.JSX.Element {
       key={g.label}
       game={g}
       disabled={adding !== null}
+      favorite={favoriteSet?.includes(g.label) ?? false}
       onSelect={() => void choose(g)}
       onSetFolder={() => void setFolder(g)}
+      onContextMenu={(e) => cardMenu(e, g)}
     />
   )
-  // Games the user has opened, above the full list while not searching.
+  // Starred games, then other games the user has opened, above the full list while not searching.
+  const showFavorites = !query && favorites !== null && favorites.length > 0
   const showYours = !query && yourGames !== null && yourGames.length > 0
   const grid = 'grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-x-4 gap-y-6'
 
@@ -152,17 +173,6 @@ export function GamePicker(): React.JSX.Element {
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-4 border-b border-line px-6 py-4">
         {/* The HML logo and name are in the titlebar above. */}
-        {backTo && (
-          <Button
-            variant="quiet"
-            className="-ml-2 shrink-0"
-            title="Back (Esc)"
-            onClick={() => void selectGame(backTo)}
-          >
-            <Icon name="back" />
-            {backTo.displayName}
-          </Button>
-        )}
         <h1 className="shrink-0 text-base font-semibold tracking-tight">Choose a game</h1>
         <label className="relative flex-1">
           <span className="sr-only">Search games</span>
@@ -208,6 +218,12 @@ export function GamePicker(): React.JSX.Element {
               {games.length} {games.length === 1 ? 'game' : 'games'}
               {installedCount > 0 && `, ${installedCount} installed on this PC`}
             </p>
+            {showFavorites && (
+              <section aria-labelledby="favorite-games" className="mb-8">
+                <SectionHeading id="favorite-games">Favorites</SectionHeading>
+                <ul className={grid}>{favorites.map(card)}</ul>
+              </section>
+            )}
             {showYours && (
               <section aria-labelledby="your-games" className="mb-8">
                 <SectionHeading id="your-games">Your games</SectionHeading>
@@ -216,7 +232,9 @@ export function GamePicker(): React.JSX.Element {
             )}
             {catalogGames.length > 0 && (
               <section aria-labelledby="all-games">
-                {showYours && <SectionHeading id="all-games">All games</SectionHeading>}
+                {(showFavorites || showYours) && (
+                  <SectionHeading id="all-games">All games</SectionHeading>
+                )}
                 <ul className={grid}>{catalogGames.map(card)}</ul>
               </section>
             )}
@@ -257,36 +275,62 @@ function SectionHeading({ id, children }: { id: string; children: string }): Rea
   )
 }
 
-/** The games the user has opened before, by name; null while loading. */
-function useYourGames(reload: number): GameSummary[] | null {
+/**
+ * The starred games, and the other games the user has opened before, each by name; null while
+ * loading.
+ */
+function useYourGames(reload: number): {
+  favorites: GameSummary[] | null
+  yourGames: GameSummary[] | null
+} {
   const settings = useStore((s) => s.settings)
+  const favoriteKey = favoriteLabels(settings).join('\n')
   const key = usedGameLabels(settings, null).join('\n')
-  const [games, setGames] = useState<GameSummary[] | null>(null)
+  const [games, setGames] = useState<{
+    favorites: GameSummary[] | null
+    yourGames: GameSummary[] | null
+  }>({ favorites: null, yourGames: null })
   useEffect(() => {
     let live = true
+    const starred = new Set(favoriteKey ? favoriteKey.split('\n') : [])
     const labels = key ? key.split('\n') : []
     // A game that can't be looked up (a removed custom game) is left out, and each game shows
     // once.
     void Promise.all(labels.map((l) => api.getGame(l).catch(() => null))).then((found) => {
-      if (live) setGames(uniqueGames(found, null, MAX_YOUR_GAMES))
+      if (!live) return
+      const favorites = uniqueGames(
+        found.filter((g) => g && starred.has(g.label)),
+        null,
+        Infinity
+      )
+      const yourGames = uniqueGames(
+        found.filter((g) => g && !starred.has(g.label)),
+        null,
+        MAX_YOUR_GAMES
+      ).filter((g) => !favorites.some((f) => f.displayName === g.displayName))
+      setGames({ favorites, yourGames })
     })
     return () => {
       live = false
     }
-  }, [key, reload])
+  }, [key, favoriteKey, reload])
   return games
 }
 
 function GameCard({
   game,
   disabled,
+  favorite,
   onSelect,
-  onSetFolder
+  onSetFolder,
+  onContextMenu
 }: {
   game: GameSummary
   disabled: boolean
+  favorite: boolean
   onSelect(): void
   onSetFolder(): void
+  onContextMenu(e: React.MouseEvent): void
 }): React.JSX.Element {
   const installed = game.installDir !== null
   const nexus = isNexusOnly(game)
@@ -295,7 +339,7 @@ function GameCard({
     Object.values(s.updateSummary[game.label] ?? {}).reduce((n, c) => n + c, 0)
   )
   return (
-    <li className="group flex flex-col">
+    <li className="group flex flex-col" onContextMenu={onContextMenu}>
       <button
         type="button"
         disabled={disabled}
@@ -303,6 +347,14 @@ function GameCard({
         className="relative block aspect-[3/4] overflow-hidden rounded-lg bg-raised ring-1 ring-line group-hover:ring-2 group-hover:ring-ember/70"
       >
         <GameCover game={game} />
+        {favorite && (
+          <span
+            className="absolute top-2 left-2 grid size-6 place-items-center rounded-full bg-ink/85 text-ember shadow backdrop-blur-sm"
+            title="Favorite"
+          >
+            <Icon name="star" className="size-3.5" />
+          </span>
+        )}
         {updates > 0 && (
           <span
             className="absolute top-2 right-2 rounded-full bg-ember px-2 py-0.5 text-[11px] font-semibold text-ink tabular-nums shadow"

@@ -347,6 +347,7 @@ export function createCustomGameServices(ctx: CustomGameContext): CustomApi & {
         nexusDomainOverrides,
         lastProfile,
         manualLoaderKept: s.manualLoaderKept.filter((l) => l !== label),
+        favoriteGames: s.favoriteGames.filter((l) => l !== label),
         lastGame: s.lastGame === label ? null : s.lastGame
       }
     })

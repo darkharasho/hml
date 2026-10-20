@@ -7,16 +7,28 @@ export const MAX_MENU_GAMES = 8
 export const MAX_YOUR_GAMES = 14
 
 /**
- * Labels of the games the user has opened (each remembers its last profile), the current one
- * first. All of them: uniqueGames drops duplicates before applying a limit.
+ * Labels of the games the user has opened (each remembers its last profile) or starred, the
+ * current one first and favorites next, so a limit keeps them. All of them: uniqueGames drops
+ * duplicates before applying a limit.
  */
 export function usedGameLabels(settings: Settings | null, current: string | null): string[] {
   const labels = [
     ...(current ? [current] : []),
+    ...(settings?.favoriteGames ?? []),
     ...(settings?.lastGame ? [settings.lastGame] : []),
     ...Object.keys(settings?.lastProfile ?? {})
   ]
   return [...new Set(labels)]
+}
+
+/** The starred games' labels; empty before settings load. */
+export function favoriteLabels(settings: Settings | null): string[] {
+  return settings?.favoriteGames ?? []
+}
+
+/** Stars a game, or unstars it if it already is. */
+export function toggleFavorite(favorites: string[], label: string): string[] {
+  return favorites.includes(label) ? favorites.filter((l) => l !== label) : [...favorites, label]
 }
 
 /**

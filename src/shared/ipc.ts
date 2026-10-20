@@ -330,13 +330,22 @@ export interface WindowApi {
   toggleMaximize(): Promise<void>
   close(): Promise<void>
   isMaximized(): Promise<boolean>
+  /** Edit commands for the right-click menu, run on whatever has focus in the page. */
+  cut(): Promise<void>
+  copy(): Promise<void>
+  paste(): Promise<void>
+  selectAll(): Promise<void>
 }
 
 const WINDOW_METHOD_TABLE = {
   minimize: true,
   toggleMaximize: true,
   close: true,
-  isMaximized: true
+  isMaximized: true,
+  cut: true,
+  copy: true,
+  paste: true,
+  selectAll: true
 } satisfies Record<keyof WindowApi, true>
 
 export const WINDOW_METHODS = Object.keys(WINDOW_METHOD_TABLE) as (keyof WindowApi)[]

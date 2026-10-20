@@ -62,7 +62,8 @@ describe('settings store', () => {
       nexusDomainOverrides: {},
       manualLoaderKept: [],
       gameColors: true,
-      updateNotifications: true
+      updateNotifications: true,
+      favoriteGames: []
     })
   })
 
@@ -76,7 +77,8 @@ describe('settings store', () => {
       nexusDomainOverrides: {},
       manualLoaderKept: [],
       gameColors: true,
-      updateNotifications: true
+      updateNotifications: true,
+      favoriteGames: []
     }
     await saveSettings(paths, s)
     expect(await loadSettings(paths)).toEqual(s)
@@ -101,7 +103,8 @@ describe('settings store', () => {
       nexusDomainOverrides: {},
       manualLoaderKept: [],
       gameColors: true,
-      updateNotifications: true
+      updateNotifications: true,
+      favoriteGames: []
     })
   })
 
@@ -116,7 +119,8 @@ describe('settings store', () => {
       nexusDomainOverrides: {},
       manualLoaderKept: [],
       gameColors: true,
-      updateNotifications: true
+      updateNotifications: true,
+      favoriteGames: []
     })
   })
 })
@@ -138,7 +142,8 @@ describe('resolveGameDir', () => {
     nexusDomainOverrides: {},
     manualLoaderKept: [],
     gameColors: true,
-    updateNotifications: true
+    updateNotifications: true,
+    favoriteGames: []
   }
 
   test('override beats steam detection', async () => {
@@ -187,6 +192,17 @@ describe('resolveGameDir', () => {
     expect(await resolveGameDir(game(), empty, root)).toBeNull()
     expect(await resolveGameDir(game({ steamAppId: null }), empty, root)).toBeNull()
     expect(await resolveGameDir(game(), empty, null)).toBeNull()
+  })
+})
+
+describe('favoriteGames', () => {
+  test('defaults to none, and keeps string entries once each', () => {
+    expect(defaultSettings().favoriteGames).toEqual([])
+    expect(normalizeSettings({ favoriteGames: ['a', 5, 'b', 'a'] }).favoriteGames).toEqual([
+      'a',
+      'b'
+    ])
+    expect(normalizeSettings({ favoriteGames: 'a' }).favoriteGames).toEqual([])
   })
 })
 
