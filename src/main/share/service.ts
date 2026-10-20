@@ -56,7 +56,7 @@ export interface ShareSync {
     code: string,
     revision: number,
     configs: Map<string, Uint8Array>,
-    opts?: { behind?: boolean }
+    opts?: { behind?: boolean; failed?: string[] }
   ): Promise<void>
 }
 
@@ -390,8 +390,14 @@ export function createShareServices(ctx: ShareContext): ShareApi {
             held.sync.revision,
             held.configs,
             // A mod that didn't install is retried by the next check (the owner's local mods are
-            // never synced, so they don't count).
-            { behind: unresolved.some((u) => u.kind !== 'local') }
+            // never synced, so they don't count). Those this import reports aren't told again;
+            // a manual download (with a url) isn't a failure to the sync either.
+            {
+              behind: unresolved.some((u) => u.kind !== 'local'),
+              failed: unresolved
+                .filter((u) => u.kind !== 'local' && u.url === undefined)
+                .map((u) => u.name)
+            }
           )
         } catch (e) {
           warnings.push(`This profile couldn't be set to follow its sync code: ${errMsg(e)}`)

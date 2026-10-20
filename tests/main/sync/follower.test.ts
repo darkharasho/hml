@@ -7,6 +7,7 @@ import { makePaths, type AppPaths } from '../../../src/main/store/paths'
 import { zipHmlParts } from '../../../src/main/share/hmlFile'
 import type { SyncApplyResult } from '../../../src/main/sync/apply'
 import {
+  SYNC_BEHIND_RETRY_MS,
   SYNC_HOLD_RETRY_MS,
   SYNC_LAUNCH_CHECK_MS,
   createSyncServices,
@@ -33,6 +34,7 @@ let requests: string[]
 let serve: (since: number) => Promise<Response>
 let timers: FakeTimers
 let running: boolean
+let runningCheck: () => Promise<boolean>
 let applyImpl: () => Promise<SyncApplyResult>
 let applyCalls: number
 
@@ -92,11 +94,11 @@ const emptyResult = (o: Partial<SyncApplyResult> = {}): SyncApplyResult => ({
   ...o
 })
 
-const nexusMod = (modId: number): InstalledMod => ({
+const nexusMod = (modId: number, fileId = 1): InstalledMod => ({
   id: `n${modId}`,
   name: `Nexus ${modId}`,
   version: '1.0.0',
-  source: { kind: 'nexus', domain: 'repo', modId, fileId: 1 },
+  source: { kind: 'nexus', domain: 'repo', modId, fileId },
   enabled: true,
   files: [],
   disableable: [],
@@ -143,7 +145,7 @@ function makeCtx(): SyncContext {
     lock: (_g, _p, fn) => fn(),
     requireGame: async (label) => ({ label }) as never,
     getCustomGame: async () => null,
-    isGameRunning: async () => running,
+    isGameRunning: () => runningCheck(),
     apply: async () => {
       applyCalls++
       return applyImpl()
@@ -159,6 +161,7 @@ beforeEach(async () => {
   requests = []
   timers = new FakeTimers()
   running = false
+  runningCheck = async () => running
   applyCalls = 0
   applyImpl = async () => emptyResult()
   serve = async (since) => unchanged(since)
@@ -392,6 +395,142 @@ describe('checkFollower', () => {
   })
 })
 
+describe('behind followers', () => {
+  const gone = (name: string): never => ({ name, version: '1', kind: 'thunderstore' }) as never
+  const since0 = `https://share.test/v1/sync/${CODE}?since=0`
+  const since3 = `https://share.test/v1/sync/${CODE}?since=3`
+
+  it('failed mods alone are no update: no sync-applied, one failure notice', async () => {
+    serve = async () => updated(4)
+    applyImpl = async () => emptyResult({ failed: [gone('A'), gone('B')] })
+    const s = createSyncServices(makeCtx())
+    await s.checkFollower(GAME, ID)
+    expect(ofType('sync-applied')).toEqual([])
+    expect(ofType('sync-error')).toEqual([
+      {
+        type: 'sync-error',
+        game: GAME,
+        profileId: ID,
+        message: "Friends: 2 mods couldn't be installed"
+      }
+    ])
+    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 4, behind: true })
+  })
+
+  it('says so once per revision and failed set, not on every retry', async () => {
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      serve = async (since) => (since >= 4 ? unchanged(4) : updated(4))
+      applyImpl = async () => emptyResult({ failed: [gone('A')] })
+      const s = createSyncServices(makeCtx())
+      await s.checkFollower(GAME, ID)
+      expect(ofType('sync-error').map((e) => e.message)).toEqual([
+        "Friends: 1 mod couldn't be installed"
+      ])
+      now += SYNC_BEHIND_RETRY_MS
+      await s.checkFollower(GAME, ID)
+      expect(applyCalls).toBe(2)
+      expect(ofType('sync-error')).toHaveLength(1)
+      expect(ofType('sync-applied')).toEqual([])
+
+      // The failed set changed: say it again.
+      applyImpl = async () => emptyResult({ failed: [gone('A'), gone('B')] })
+      now += SYNC_BEHIND_RETRY_MS
+      await s.checkFollower(GAME, ID)
+      expect(ofType('sync-error').map((e) => e.message)).toEqual([
+        "Friends: 1 mod couldn't be installed",
+        "Friends: 2 mods couldn't be installed"
+      ])
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('a behind retry runs at most once per SYNC_BEHIND_RETRY_MS; cheap checks continue', async () => {
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      await follow({ behind: true })
+      serve = async (since) => (since >= 3 ? unchanged(3) : updated(3))
+      applyImpl = async () => emptyResult({ failed: [gone('A')] })
+      const s = createSyncServices(makeCtx())
+      // The first check (startup) retries.
+      await s.checkFollower(GAME, ID)
+      expect(requests).toEqual([since0])
+      expect(applyCalls).toBe(1)
+
+      // The next ticks only ask whether there is a newer revision.
+      now += SYNC_BEHIND_RETRY_MS - 1
+      await s.checkFollower(GAME, ID)
+      await s.tick()
+      expect(requests).toEqual([since0, since3, since3])
+      expect(applyCalls).toBe(1)
+
+      now += 1
+      await s.checkFollower(GAME, ID)
+      expect(requests.at(-1)).toBe(since0)
+      expect(applyCalls).toBe(2)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('a behind follower still takes a new revision on a regular check', async () => {
+    await follow({ behind: true })
+    serve = async (since) => (since >= 4 ? unchanged(4) : updated(since === 0 ? 3 : 4))
+    applyImpl = async () => emptyResult({ failed: [gone('A')] })
+    const s = createSyncServices(makeCtx())
+    await s.checkFollower(GAME, ID)
+    expect(applyCalls).toBe(1)
+    applyImpl = async () => emptyResult({ added: 1 })
+    await s.checkFollower(GAME, ID)
+    expect(requests.at(-1)).toBe(since3)
+    expect(applyCalls).toBe(2)
+    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 4 })
+    expect(ofType('sync-applied')).toHaveLength(1)
+  })
+
+  it('a check before launch retries a behind profile despite the backoff', async () => {
+    await follow({ behind: true })
+    serve = async (since) => (since >= 3 ? unchanged(3) : updated(3))
+    applyImpl = async () => emptyResult({ failed: [gone('A')] })
+    const s = createSyncServices(makeCtx())
+    await s.checkFollower(GAME, ID)
+    await s.beforeLaunch(GAME, ID)
+    expect(requests).toEqual([since0, since0])
+    expect(applyCalls).toBe(2)
+  })
+
+  it('manual downloads already reported are not toasted again on a retry', async () => {
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const manual = [
+        { name: 'Paid', url: 'https://www.nexusmods.com/repo/mods/7?tab=files&file_id=1' }
+      ]
+      serve = async (since) => (since >= 4 ? unchanged(4) : updated(4))
+      applyImpl = async () => emptyResult({ manual, failed: [gone('A')] })
+      const s = createSyncServices(makeCtx())
+      await s.checkFollower(GAME, ID)
+      expect(ofType('sync-applied')).toHaveLength(1)
+      now += SYNC_BEHIND_RETRY_MS
+      await s.checkFollower(GAME, ID)
+      expect(applyCalls).toBe(2)
+      expect(ofType('sync-applied')).toHaveLength(1)
+      expect(await readSync()).toEqual({
+        role: 'follower',
+        code: CODE,
+        revision: 4,
+        behind: true,
+        manual
+      })
+    } finally {
+      clock.mockRestore()
+    }
+  })
+})
+
 describe('beforeLaunch', () => {
   it('beforeLaunch gives up after the timeout', async () => {
     serve = () => new Promise<Response>(() => undefined)
@@ -426,6 +565,31 @@ describe('beforeLaunch', () => {
     expect(done).toBe(false)
     release()
     await p
+    expect((await readSync())?.revision).toBe(4)
+  })
+
+  it('a timeout while the check tests for the running game waits instead of launching', async () => {
+    serve = async () => updated(4)
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    let testing!: () => void
+    const inTest = new Promise<void>((r) => (testing = r))
+    runningCheck = async () => {
+      testing()
+      await gate
+      return false
+    }
+    const s = createSyncServices(makeCtx())
+    let done = false
+    const p = s.beforeLaunch(GAME, ID).then(() => (done = true))
+    await inTest
+    timers.fire(SYNC_LAUNCH_CHECK_MS)
+    await new Promise((r) => setTimeout(r, 10))
+    // The check is past the point of no return: launching now would race its apply.
+    expect(done).toBe(false)
+    release()
+    await p
+    expect(applyCalls).toBe(1)
     expect((await readSync())?.revision).toBe(4)
   })
 
@@ -534,6 +698,19 @@ describe('attach, lookup and tick', () => {
     expect(await s.isFollower(GAME, 'nope')).toBe(false)
   })
 
+  it("the check after a behind import retries without repeating the import's failures", async () => {
+    await writeManifest()
+    serve = async () => updated(7)
+    const gone = (name: string): never => ({ name, version: '1', kind: 'thunderstore' }) as never
+    applyImpl = async () => emptyResult({ failed: [gone('A')] })
+    const s = createSyncServices(makeCtx())
+    await s.attachFollower(GAME, ID, CODE, 7, new Map(), { behind: true, failed: ['A'] })
+    await s.checkFollower(GAME, ID)
+    expect(requests).toEqual([`https://share.test/v1/sync/${CODE}?since=0`])
+    expect(applyCalls).toBe(1)
+    expect(ofType('sync-error')).toEqual([])
+  })
+
   it('findByCode finds the profile that follows a code', async () => {
     const s = createSyncServices(makeCtx())
     expect(await s.findByCode('abcd-efgh-jkmn')).toEqual({ game: GAME, profileId: ID })
@@ -546,7 +723,11 @@ describe('attach, lookup and tick', () => {
     const latest = await s.fetchLatest(CODE)
     expect(latest.revision).toBe(9)
     expect(requests).toEqual([`https://share.test/v1/sync/${CODE}?since=0`])
-    serve = async () => new Response(null, { status: 404 })
+    serve = async () =>
+      new Response(JSON.stringify({ error: 'not-found' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
+      })
     await expect(s.fetchLatest(CODE)).rejects.toThrow(
       'No synced profile has that code. It may have ended.'
     )
@@ -554,8 +735,8 @@ describe('attach, lookup and tick', () => {
 
   it('tick prunes manual entries that are now installed', async () => {
     const manual = [
-      { name: 'Paid', url: 'https://www.nexusmods.com/repo/mods/7' },
-      { name: 'Other', url: 'https://www.nexusmods.com/repo/mods/8' }
+      { name: 'Paid', url: 'https://www.nexusmods.com/repo/mods/7?tab=files&file_id=1' },
+      { name: 'Other', url: 'https://www.nexusmods.com/repo/mods/8?tab=files&file_id=1' }
     ]
     await writeManifest({
       mods: [nexusMod(7)],
@@ -571,6 +752,28 @@ describe('attach, lookup and tick', () => {
     })
     expect(requests).toHaveLength(1)
     expect(ofType('sync-state')).toHaveLength(1)
+  })
+
+  it('pruneManual keeps an entry for a newer file of a mod already installed', async () => {
+    // The owner moved mod 7 to file 2; the follower still has file 1 installed.
+    const manual = [
+      { name: 'Paid', url: 'https://www.nexusmods.com/repo/mods/7?tab=files&file_id=2' }
+    ]
+    await writeManifest({
+      mods: [nexusMod(7, 1)],
+      sync: { role: 'follower', code: CODE, revision: 3, manual }
+    })
+    const s = createSyncServices(makeCtx())
+    await s.pruneManual(GAME, ID)
+    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 3, manual })
+    expect(events).toEqual([])
+
+    await writeManifest({
+      mods: [nexusMod(7, 2)],
+      sync: { role: 'follower', code: CODE, revision: 3, manual }
+    })
+    await s.pruneManual(GAME, ID)
+    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 3 })
   })
 
   it('tick keeps going when one profile fails', async () => {

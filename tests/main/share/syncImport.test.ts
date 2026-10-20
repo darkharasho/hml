@@ -76,7 +76,7 @@ function make(
           sync: {
             fetchLatest: sync.fetchLatest,
             findByCode: found ? async () => found : sync.findByCode,
-            attachFollower: sync.attachFollower
+            attachFollower: (...args) => sync.attachFollower(...args)
           }
         }
       : {})
@@ -183,6 +183,25 @@ describe('sync code import', () => {
       warn.mockRestore()
     }
     expect(requests).toEqual([`https://share.test/v1/sync/${SYNC}?since=0`])
+  })
+
+  it('passes the failures it reported, so the retry check does not repeat them', async () => {
+    mods = [
+      { source: { kind: 'thunderstore', fullName: 'Gone-Mod' }, version: '1.0.0', enabled: true },
+      {
+        source: { kind: 'local', fileName: 'x.zip', sha256: 'a'.repeat(64) },
+        version: '1.0.0',
+        enabled: true
+      }
+    ]
+    const share = make()
+    const attach = vi.spyOn(syncApi, 'attachFollower')
+    const r = await share.importShare((await share.previewShare({ code: SYNC }))!.token, '')
+    expect(r.unresolved).toHaveLength(2)
+    expect(attach).toHaveBeenCalledWith('repo', r.profile.id, SYNC, 6, expect.any(Map), {
+      behind: true,
+      failed: [r.unresolved.find((u) => u.kind === 'thunderstore')!.name]
+    })
   })
 
   it("the owner's local mods don't mark a sync import behind", async () => {

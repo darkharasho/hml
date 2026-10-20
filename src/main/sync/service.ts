@@ -22,12 +22,15 @@ import {
   SyncGoneError,
   type SyncClientOptions
 } from './client'
+import { matchesManualEntry } from './lock'
 import { revisionDigest } from './revision'
 
 export const SYNC_DEBOUNCE_MS = 10_000
 export const SYNC_POLL_MS = 300_000
 export const SYNC_HOLD_RETRY_MS = 30_000
 export const SYNC_LAUNCH_CHECK_MS = 10_000
+/** A behind follower re-applies its revision at most this often (startup and launch excepted). */
+export const SYNC_BEHIND_RETRY_MS = 3_600_000
 
 export interface SyncTimers {
   setTimeout(fn: () => void, ms: number): unknown
@@ -74,6 +77,15 @@ interface ProfileState {
   launchHoldUntil?: number
   /** Follower: a detach is waiting for the check under way; that check must not apply. */
   detaching?: boolean
+  /**
+   * Follower: from the running-game test until the apply ends, so a launch whose check timed out
+   * waits for it instead of starting the game on a half-updated profile.
+   */
+  committed?: boolean
+  /** Follower: when a behind profile last re-fetched its revision to retry (ms since epoch). */
+  behindRetryAt?: number
+  /** Follower: the revision and failed mods last reported, so a retry doesn't repeat it. */
+  failedNotice?: string
 }
 
 const DEPLOY_KEY = '__deploy__'
@@ -83,16 +95,28 @@ const FOLLOWER_STOP = 'This profile follows a sync code. Detach it instead.'
 const NOT_FOLLOWER = "This profile isn't following a sync code."
 const NO_SUCH_SYNC = 'No synced profile has that code. It may have ended.'
 
-/** The Nexus mod id in a mod page URL (`…/mods/<id>`), or null. */
-const nexusModIdOf = (url: string): number | null => {
-  const m = /\/mods\/(\d+)/.exec(url)
-  return m ? Number(m[1]) : null
+/** Counted changes only: failed mods are reported on their own, once (see failedNotice). */
+const hasChanges = (r: SyncApplyResult): boolean =>
+  r.added + r.removed + r.updated + r.enabled + r.disabled + r.configs > 0
+
+const sameManual = (
+  a: readonly { name: string; url: string }[] | undefined,
+  b: readonly { name: string; url: string }[]
+): boolean => {
+  const key = (l: readonly { url: string }[]): string =>
+    l
+      .map((e) => e.url)
+      .sort()
+      .join('\n')
+  return key(a ?? []) === key(b)
 }
 
-const hasChanges = (r: SyncApplyResult): boolean =>
-  r.added + r.removed + r.updated + r.enabled + r.disabled + r.configs > 0 ||
-  r.manual.length > 0 ||
-  r.failed.length > 0
+/** Identifies one report of failed mods: the revision and the mods' names. */
+const failedKeyOf = (revision: number, names: readonly string[]): string =>
+  [revision, ...[...names].sort()].join('\0')
+
+const failedMessage = (profileName: string, n: number): string =>
+  `${profileName}: ${n === 1 ? "1 mod couldn't" : `${n} mods couldn't`} be installed`
 
 const localModCount = (p: ProfileManifest): number =>
   p.mods.filter((m) => m.source.kind === 'local').length
@@ -120,9 +144,15 @@ export function createSyncServices(ctx: SyncContext): {
   forgetOwnerKey(code: string): Promise<void>
   /** Follower: stop following; the profile keeps its mods and configs. */
   detachSync(game: string, profileId: string): Promise<void>
-  /** Follower: fetch and apply a newer revision. Never throws. */
+  /**
+   * Follower: fetch and apply a newer revision. Never throws. A behind profile re-applies its
+   * revision at most once per SYNC_BEHIND_RETRY_MS; beforeLaunch always retries.
+   */
   checkFollower(game: string, profileId: string): Promise<void>
-  /** Follower: a check that gives up after SYNC_LAUNCH_CHECK_MS unless it is mid-apply. */
+  /**
+   * Follower: a check that gives up after SYNC_LAUNCH_CHECK_MS, unless it has already committed
+   * to holding or applying a revision.
+   */
   beforeLaunch(game: string, profileId: string): Promise<void>
   /** Startup and every SYNC_POLL_MS: check followers, publishNow owners, prune manual lists. */
   tick(): Promise<void>
@@ -133,14 +163,17 @@ export function createSyncServices(ctx: SyncContext): {
     code: string,
     revision: number,
     configs: Map<string, Uint8Array>,
-    /** `behind`: some mods didn't install, so the next check re-applies this revision. */
-    opts?: { behind?: boolean }
+    /**
+     * `behind`: some mods didn't install, so the next check re-applies this revision.
+     * `failed`: the names of those the import already reported, so that retry doesn't repeat them.
+     */
+    opts?: { behind?: boolean; failed?: string[] }
   ): Promise<void>
   /** The profile that owns or follows this code. */
   findByCode(code: string): Promise<{ game: string; profileId: string } | null>
   /** Import: the newest revision of a code. */
   fetchLatest(code: string): Promise<{ revision: number; data: Uint8Array }>
-  /** Follower: drops manual entries whose Nexus mod is now installed. */
+  /** Follower: drops manual entries whose Nexus file is now installed. */
   pruneManual(game: string, profileId: string): Promise<void>
   /** True while applyRevision runs for this profile (lets the follower lock pass). */
   isApplying(game: string, profileId: string): boolean
@@ -384,7 +417,7 @@ export function createSyncServices(ctx: SyncContext): {
     if (st.holdTimer !== undefined) return
     st.holdTimer = timers.setTimeout(() => {
       st.holdTimer = undefined
-      void checkFollower(game, profileId, true)
+      void checkFollower(game, profileId, { fromHold: true })
     }, SYNC_HOLD_RETRY_MS)
   }
 
@@ -404,11 +437,16 @@ export function createSyncServices(ctx: SyncContext): {
     return s?.role === 'follower' && s.code === code
   }
 
-  /**
-   * One check. `fromHold`: a retry of a held revision, which only re-tests whether it may apply
-   * the revision it already downloaded.
-   */
-  async function checkOnce(game: string, profileId: string, fromHold: boolean): Promise<void> {
+  interface CheckOptions {
+    /** A retry of a held revision, which only re-tests whether it may apply what it downloaded. */
+    fromHold?: boolean
+    /** A behind profile re-applies its revision even within SYNC_BEHIND_RETRY_MS. */
+    retryBehind?: boolean
+  }
+
+  /** One check. */
+  async function checkOnce(game: string, profileId: string, opts: CheckOptions): Promise<void> {
+    const { fromHold = false } = opts
     const st = stateOf(game, profileId)
     const profile = await readProfile(game, profileId)
     const sync = profile?.sync
@@ -421,9 +459,19 @@ export function createSyncServices(ctx: SyncContext): {
     if (fromHold && st.held) {
       ;({ revision, rev } = st.held)
     } else {
+      // A behind profile re-fetches its own revision to retry the mods that failed, but not on
+      // every poll: a mod that can never install would re-apply (and re-index) every few minutes.
+      // Between retries it asks only for newer revisions, like any follower.
+      const now = Date.now()
+      const retry =
+        !!sync.behind &&
+        (opts.retryBehind ||
+          st.behindRetryAt === undefined ||
+          now - st.behindRetryAt >= SYNC_BEHIND_RETRY_MS)
+      if (retry) st.behindRetryAt = now
       // A revision this HML can't read, or one already held, isn't downloaded again.
       const since = Math.max(
-        sync.behind ? 0 : sync.revision,
+        retry ? 0 : sync.revision,
         st.lastErrorRevision ?? 0,
         st.held?.revision ?? 0
       )
@@ -464,22 +512,28 @@ export function createSyncServices(ctx: SyncContext): {
     }
 
     const def = await ctx.requireGame(game)
-    const launching = (st.launchHoldUntil ?? 0) > Date.now()
-    if (launching || (await ctx.isGameRunning(def))) {
-      st.held = { code, revision, rev }
-      scheduleHold(game, profileId)
-      return
-    }
-    st.held = undefined
-    cancelHold(game, profileId)
-    // A detach since the manifest was read wins: its apply would merge against cleared bases.
-    if (st.detaching || !(await stillFollowing(game, profileId, code))) return
+    // Committed from here (no await before this line since the launch test): a launch whose
+    // check times out now waits for this one, which either holds or applies.
+    st.committed = true
     let result: SyncApplyResult
-    st.applying = true
     try {
-      result = await ctx.apply(game, profileId, rev)
+      if ((st.launchHoldUntil ?? 0) > Date.now() || (await ctx.isGameRunning(def))) {
+        st.held = { code, revision, rev }
+        scheduleHold(game, profileId)
+        return
+      }
+      st.held = undefined
+      cancelHold(game, profileId)
+      // A detach since the manifest was read wins: its apply would merge against cleared bases.
+      if (st.detaching || !(await stillFollowing(game, profileId, code))) return
+      st.applying = true
+      try {
+        result = await ctx.apply(game, profileId, rev)
+      } finally {
+        st.applying = false
+      }
     } finally {
-      st.applying = false
+      st.committed = false
     }
     const saved = await updateFollower(game, profileId, code, () => ({
       role: 'follower',
@@ -489,19 +543,39 @@ export function createSyncServices(ctx: SyncContext): {
       ...(result.manual.length > 0 ? { manual: result.manual } : {})
     }))
     if (!saved) return
-    if (hasChanges(result)) {
-      const { added, removed, updated, enabled, disabled, configs, manual } = result
+    // Manual downloads are news on a new revision, or when the list changed; not on a retry.
+    const manual =
+      revision !== sync.revision || !sameManual(sync.manual, result.manual) ? result.manual : []
+    if (hasChanges(result) || manual.length > 0) {
+      const { added, removed, updated, enabled, disabled, configs } = result
       const changes = { added, removed, updated, enabled, disabled, configs }
       deps.emit({ type: 'sync-applied', game, profileId, profileName: saved.name, changes, manual })
     }
+    // Failures are told once per revision and failed set, not on every retry.
+    const failedKey =
+      result.failed.length > 0
+        ? failedKeyOf(
+            revision,
+            result.failed.map((f) => f.name)
+          )
+        : undefined
+    if (failedKey !== undefined && failedKey !== st.failedNotice) {
+      deps.emit({
+        type: 'sync-error',
+        game,
+        profileId,
+        message: failedMessage(saved.name, result.failed.length)
+      })
+    }
+    st.failedNotice = failedKey
     emitState(game, profileId)
   }
 
   /** Single-flight per profile; logs and swallows every failure. */
-  function checkFollower(game: string, profileId: string, fromHold = false): Promise<void> {
+  function checkFollower(game: string, profileId: string, opts: CheckOptions = {}): Promise<void> {
     const st = stateOf(game, profileId)
     if (st.checking) return st.checking
-    const run = checkOnce(game, profileId, fromHold)
+    const run = checkOnce(game, profileId, opts)
       .catch((e: unknown) => {
         console.warn(`Sync check failed for ${game}/${profileId}:`, e)
       })
@@ -541,19 +615,15 @@ export function createSyncServices(ctx: SyncContext): {
     }
   }
 
-  /** Drops manual entries whose Nexus mod is now installed. */
+  /** Drops manual entries whose Nexus file (same mod and file id) is now installed. */
   async function pruneManual(game: string, profileId: string): Promise<void> {
     const changed = await lock(game, profileId, async () => {
       const profile = await getProfile(deps.paths, game, profileId)
       const sync = profile.sync
       if (sync?.role !== 'follower' || !sync.manual?.length) return false
-      const installed = new Set(
-        profile.mods.flatMap((m) => (m.source.kind === 'nexus' ? [m.source.modId] : []))
-      )
-      const manual = sync.manual.filter((e) => {
-        const id = nexusModIdOf(e.url)
-        return id === null || !installed.has(id)
-      })
+      const installed = profile.mods.flatMap((m) => (m.source.kind === 'nexus' ? [m.source] : []))
+      // The same file the entry names, not just the mod: an owner's newer file is still due.
+      const manual = sync.manual.filter((e) => !installed.some((s) => matchesManualEntry([e], s)))
       if (manual.length === sync.manual.length) return false
       const next: FollowerSync = { ...sync, manual }
       if (manual.length === 0) delete next.manual
@@ -682,6 +752,8 @@ export function createSyncServices(ctx: SyncContext): {
       st.lastErrorRevision = undefined
       st.held = undefined
       st.launchHoldUntil = undefined
+      st.behindRetryAt = undefined
+      st.failedNotice = undefined
       await clearBases(deps.paths.profileDir(label, profileId))
       emitState(label, profileId)
     },
@@ -694,7 +766,9 @@ export function createSyncServices(ctx: SyncContext): {
     async beforeLaunch(game, profileId) {
       const label = await labelOf(game)
       if (!label) return
-      const check = checkFollower(label, profileId).then(() => 'done' as const)
+      const check = checkFollower(label, profileId, { retryBehind: true }).then(
+        () => 'done' as const
+      )
       let timer: unknown
       const timeout = new Promise<'timeout'>((resolve) => {
         timer = timers.setTimeout(() => resolve('timeout'), SYNC_LAUNCH_CHECK_MS)
@@ -703,7 +777,7 @@ export function createSyncServices(ctx: SyncContext): {
       const st = stateOf(label, profileId)
       if (won === 'done') timers.clearTimeout(timer)
       // Launching halfway through an apply would start the game on a half-updated profile.
-      else if (st.applying) await check
+      else if (st.committed) await check
       // The game may not show as running yet: hold any apply this late check would start.
       else st.launchHoldUntil = Date.now() + SYNC_HOLD_RETRY_MS
     },
@@ -730,6 +804,10 @@ export function createSyncServices(ctx: SyncContext): {
         await writeBases(deps.paths.profileDir(game, profileId), configs)
         await saveProfile(deps.paths, { ...profile, sync })
       })
+      // The import already reported its failures; the retry it leads to shouldn't repeat them.
+      const st = stateOf(game, profileId)
+      st.behindRetryAt = undefined
+      st.failedNotice = opts?.failed?.length ? failedKeyOf(revision, opts.failed) : undefined
       emitState(game, profileId)
     },
 
