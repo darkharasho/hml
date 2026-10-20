@@ -1,3 +1,4 @@
+import { promises as fs } from 'node:fs'
 import type {
   GameDef,
   HmlCustomGame,
@@ -7,12 +8,20 @@ import type {
 } from '../../shared/types'
 import { noSecureStorage } from '../../shared/messages'
 import { normalizeSyncCode } from '../../shared/shareCode'
-import { getProfile, saveProfile } from '../profiles/profiles'
+import { getProfile, listProfiles, saveProfile } from '../profiles/profiles'
 import { loadSecret, saveSecret } from '../secrets'
 import type { ServiceDeps } from '../services'
-import { collectHmlParts, zipHmlParts } from '../share/hmlFile'
+import { collectHmlParts, readHmlFile, zipHmlParts } from '../share/hmlFile'
 import type { SyncApplyResult } from './apply'
-import { createSync, endSync, publishSync, SyncGoneError, type SyncClientOptions } from './client'
+import { clearBases, writeBases } from './bases'
+import {
+  createSync,
+  endSync,
+  fetchSync,
+  publishSync,
+  SyncGoneError,
+  type SyncClientOptions
+} from './client'
 import { revisionDigest } from './revision'
 
 export const SYNC_DEBOUNCE_MS = 10_000
@@ -42,6 +51,7 @@ export interface SyncContext {
 }
 
 type OwnerSync = Extract<ProfileSync, { role: 'owner' }>
+type FollowerSync = Extract<ProfileSync, { role: 'follower' }>
 type Parts = { export: HmlExport; configs: Map<string, Uint8Array> }
 
 /** In-memory state of one profile: its debounce timer and the publish under way. */
@@ -50,12 +60,33 @@ interface ProfileState {
   publishing?: Promise<void>
   /** A publish was asked for while one ran: run once more when it ends. */
   dirty?: boolean
+  /** Follower: the check under way. */
+  checking?: Promise<void>
+  /** Follower: true while a revision is being applied. */
+  applying?: boolean
+  /** Follower: the retry scheduled while the game runs. */
+  holdTimer?: unknown
+  /** Follower: the revision this HML couldn't read, already reported. */
+  lastErrorRevision?: number
 }
 
 const DEPLOY_KEY = '__deploy__'
 const WHAT = 'sync codes'
 const FOLLOWER_CREATE = 'Detach this profile from its sync before creating a sync code.'
 const FOLLOWER_STOP = 'This profile follows a sync code. Detach it instead.'
+const NOT_FOLLOWER = "This profile isn't following a sync code."
+const NO_SUCH_SYNC = 'No synced profile has that code. It may have ended.'
+
+/** The Nexus mod id in a mod page URL (`…/mods/<id>`), or null. */
+const nexusModIdOf = (url: string): number | null => {
+  const m = /\/mods\/(\d+)/.exec(url)
+  return m ? Number(m[1]) : null
+}
+
+const hasChanges = (r: SyncApplyResult): boolean =>
+  r.added + r.removed + r.updated + r.enabled + r.disabled + r.configs > 0 ||
+  r.manual.length > 0 ||
+  r.failed.length > 0
 
 const localModCount = (p: ProfileManifest): number =>
   p.mods.filter((m) => m.source.kind === 'local').length
@@ -81,6 +112,29 @@ export function createSyncServices(ctx: SyncContext): {
   publishNow(game: string, profileId: string): Promise<void>
   /** Owner: forget the key file (used by deleteProfile). */
   forgetOwnerKey(code: string): Promise<void>
+  /** Follower: stop following; the profile keeps its mods and configs. */
+  detachSync(game: string, profileId: string): Promise<void>
+  /** Follower: fetch and apply a newer revision. Never throws. */
+  checkFollower(game: string, profileId: string): Promise<void>
+  /** Follower: a check that gives up after SYNC_LAUNCH_CHECK_MS unless it is mid-apply. */
+  beforeLaunch(game: string, profileId: string): Promise<void>
+  /** Startup and every SYNC_POLL_MS: check followers, publishNow owners, prune manual lists. */
+  tick(): Promise<void>
+  /** Import: make a fresh profile follow `code` at `revision`, with `configs` as its bases. */
+  attachFollower(
+    game: string,
+    profileId: string,
+    code: string,
+    revision: number,
+    configs: Map<string, Uint8Array>
+  ): Promise<void>
+  /** The profile that owns or follows this code. */
+  findByCode(code: string): Promise<{ game: string; profileId: string } | null>
+  /** Import: the newest revision of a code. */
+  fetchLatest(code: string): Promise<{ revision: number; data: Uint8Array }>
+  /** True while applyRevision runs for this profile (lets the follower lock pass). */
+  isApplying(game: string, profileId: string): boolean
+  isFollower(game: string, profileId: string): Promise<boolean>
 } {
   const { deps, lock } = ctx
   const timers = ctx.timers ?? {
@@ -263,6 +317,197 @@ export function createSyncServices(ctx: SyncContext): {
     return { code: created.code, localMods: snap.localMods }
   }
 
+  /** The manifest, or null when the profile is gone. */
+  const readProfile = (game: string, profileId: string): Promise<ProfileManifest | null> =>
+    getProfile(deps.paths, game, profileId).catch(() => null)
+
+  /**
+   * Re-reads the manifest under the lock and changes its follower state, only while it still
+   * follows `code` (a detach meanwhile wins). Returns the manifest as saved, or null.
+   */
+  async function updateFollower(
+    game: string,
+    profileId: string,
+    code: string,
+    change: (s: FollowerSync) => FollowerSync | undefined
+  ): Promise<ProfileManifest | null> {
+    return lock(game, profileId, async () => {
+      const profile = await getProfile(deps.paths, game, profileId)
+      const s = profile.sync
+      if (s?.role !== 'follower' || s.code !== code) return null
+      const next: ProfileManifest = { ...profile }
+      const sync = change(s)
+      if (sync) next.sync = sync
+      else delete next.sync
+      await saveProfile(deps.paths, next)
+      return next
+    })
+  }
+
+  function scheduleHold(game: string, profileId: string): void {
+    const st = stateOf(game, profileId)
+    if (st.holdTimer !== undefined) return
+    st.holdTimer = timers.setTimeout(() => {
+      st.holdTimer = undefined
+      void checkFollower(game, profileId)
+    }, SYNC_HOLD_RETRY_MS)
+  }
+
+  function cancelHold(game: string, profileId: string): void {
+    const st = stateOf(game, profileId)
+    if (st.holdTimer !== undefined) timers.clearTimeout(st.holdTimer)
+    st.holdTimer = undefined
+  }
+
+  async function checkOnce(game: string, profileId: string): Promise<void> {
+    const st = stateOf(game, profileId)
+    const profile = await readProfile(game, profileId)
+    const sync = profile?.sync
+    if (!profile || sync?.role !== 'follower') return
+    const { code } = sync
+    const res = await fetchSync(client(), code, sync.behind ? 0 : sync.revision)
+    if (res.kind === 'unchanged') return
+    if (res.kind === 'ended' || res.kind === 'missing') {
+      const saved = await updateFollower(game, profileId, code, () => undefined)
+      if (!saved) return
+      cancelHold(game, profileId)
+      await clearBases(deps.paths.profileDir(game, profileId))
+      deps.emit({ type: 'sync-ended', game, profileId, profileName: saved.name })
+      emitState(game, profileId)
+      return
+    }
+    if (st.lastErrorRevision === res.revision) return
+    let rev: Parts
+    try {
+      rev = await readHmlFile(res.data, { forImport: true })
+    } catch {
+      st.lastErrorRevision = res.revision
+      deps.emit({
+        type: 'sync-error',
+        game,
+        profileId,
+        message: `Update HML to keep following ${profile.name}.`
+      })
+      return
+    }
+    if (rev.export.game !== game) {
+      console.warn(`Sync ${code} is for ${rev.export.game}, not ${game}; ignored.`)
+      return
+    }
+    const def = await ctx.requireGame(game)
+    if (await ctx.isGameRunning(def)) {
+      scheduleHold(game, profileId)
+      return
+    }
+    cancelHold(game, profileId)
+    let result: SyncApplyResult
+    st.applying = true
+    try {
+      result = await ctx.apply(game, profileId, rev)
+    } finally {
+      st.applying = false
+    }
+    const saved = await updateFollower(game, profileId, code, () => ({
+      role: 'follower',
+      code,
+      revision: res.revision,
+      ...(result.failed.length > 0 ? { behind: true as const } : {}),
+      ...(result.manual.length > 0 ? { manual: result.manual } : {})
+    }))
+    if (!saved) return
+    if (hasChanges(result)) {
+      const { added, removed, updated, enabled, disabled, configs, manual } = result
+      const changes = { added, removed, updated, enabled, disabled, configs }
+      deps.emit({ type: 'sync-applied', game, profileId, profileName: saved.name, changes, manual })
+    }
+    emitState(game, profileId)
+  }
+
+  /** Single-flight per profile; logs and swallows every failure. */
+  function checkFollower(game: string, profileId: string): Promise<void> {
+    const st = stateOf(game, profileId)
+    if (st.checking) return st.checking
+    const run = checkOnce(game, profileId)
+      .catch((e: unknown) => {
+        console.warn(`Sync check failed for ${game}/${profileId}:`, e)
+      })
+      .finally(() => {
+        st.checking = undefined
+      })
+    st.checking = run
+    return run
+  }
+
+  /** The game label, or null (logged) when the game is no longer known. */
+  async function labelOf(game: string): Promise<string | null> {
+    try {
+      return (await ctx.requireGame(game)).label
+    } catch (e) {
+      console.warn(`Sync skipped for unknown game ${game}:`, e)
+      return null
+    }
+  }
+
+  async function* allProfiles(): AsyncGenerator<{ game: string; profile: ProfileManifest }> {
+    let games: string[]
+    try {
+      const dirents = await fs.readdir(deps.paths.gamesDir, { withFileTypes: true })
+      games = dirents.filter((d) => d.isDirectory()).map((d) => d.name)
+    } catch {
+      return
+    }
+    for (const game of games) {
+      let profiles: ProfileManifest[]
+      try {
+        profiles = await listProfiles(deps.paths, game)
+      } catch {
+        continue
+      }
+      for (const profile of profiles) yield { game, profile }
+    }
+  }
+
+  /** Drops manual entries whose Nexus mod is now installed. */
+  async function pruneManual(game: string, profileId: string): Promise<void> {
+    const changed = await lock(game, profileId, async () => {
+      const profile = await getProfile(deps.paths, game, profileId)
+      const sync = profile.sync
+      if (sync?.role !== 'follower' || !sync.manual?.length) return false
+      const installed = new Set(
+        profile.mods.flatMap((m) => (m.source.kind === 'nexus' ? [m.source.modId] : []))
+      )
+      const manual = sync.manual.filter((e) => {
+        const id = nexusModIdOf(e.url)
+        return id === null || !installed.has(id)
+      })
+      if (manual.length === sync.manual.length) return false
+      const next: FollowerSync = { ...sync, manual }
+      if (manual.length === 0) delete next.manual
+      await saveProfile(deps.paths, { ...profile, sync: next })
+      return true
+    })
+    if (changed) emitState(game, profileId)
+  }
+
+  let ticking: Promise<void> | null = null
+  async function tickOnce(): Promise<void> {
+    for await (const { game, profile } of allProfiles()) {
+      try {
+        const role = profile.sync?.role
+        if (role === 'follower') {
+          await pruneManual(game, profile.id)
+          const label = await labelOf(game)
+          if (label) await checkFollower(label, profile.id)
+        } else if (role === 'owner') {
+          const label = await labelOf(game)
+          if (label) await publishNow(label, profile.id)
+        }
+      } catch (e) {
+        console.warn(`Sync tick failed for ${game}/${profile.id}:`, e)
+      }
+    }
+  }
+
   return {
     async createSyncCode(game, profileId) {
       const label = (await ctx.requireGame(game)).label
@@ -319,6 +564,83 @@ export function createSyncServices(ctx: SyncContext): {
     async forgetOwnerKey(code) {
       const file = keyFile(code)
       if (file) await saveSecret(file, deps.secrets, null, WHAT)
+    },
+
+    async detachSync(game, profileId) {
+      const label = (await ctx.requireGame(game)).label
+      await lock(label, profileId, async () => {
+        const profile = await getProfile(deps.paths, label, profileId)
+        if (profile.sync?.role !== 'follower') throw new Error(NOT_FOLLOWER)
+        const next: ProfileManifest = { ...profile }
+        delete next.sync
+        await saveProfile(deps.paths, next)
+      })
+      cancelHold(label, profileId)
+      stateOf(label, profileId).lastErrorRevision = undefined
+      await clearBases(deps.paths.profileDir(label, profileId))
+      emitState(label, profileId)
+    },
+
+    async checkFollower(game, profileId) {
+      const label = await labelOf(game)
+      if (label) await checkFollower(label, profileId)
+    },
+
+    async beforeLaunch(game, profileId) {
+      const label = await labelOf(game)
+      if (!label) return
+      const check = checkFollower(label, profileId).then(() => 'done' as const)
+      let timer: unknown
+      const timeout = new Promise<'timeout'>((resolve) => {
+        timer = timers.setTimeout(() => resolve('timeout'), SYNC_LAUNCH_CHECK_MS)
+      })
+      const won = await Promise.race([check, timeout])
+      if (won === 'done') timers.clearTimeout(timer)
+      // Launching halfway through an apply would start the game on a half-updated profile.
+      else if (stateOf(label, profileId).applying) await check
+    },
+
+    tick() {
+      ticking ??= tickOnce().finally(() => {
+        ticking = null
+      })
+      return ticking
+    },
+
+    async attachFollower(game, profileId, code, revision, configs) {
+      const normalized = normalizeSyncCode(code)
+      if (!normalized) throw new Error("That isn't a valid sync code.")
+      await lock(game, profileId, async () => {
+        const profile = await getProfile(deps.paths, game, profileId)
+        const sync: FollowerSync = { role: 'follower', code: normalized, revision }
+        // Bases first: a follower without bases would merge as if every owner value were new.
+        await writeBases(deps.paths.profileDir(game, profileId), configs)
+        await saveProfile(deps.paths, { ...profile, sync })
+      })
+      emitState(game, profileId)
+    },
+
+    async findByCode(code) {
+      const normalized = normalizeSyncCode(code)
+      if (!normalized) return null
+      for await (const { game, profile } of allProfiles()) {
+        if (profile.sync?.code === normalized) return { game, profileId: profile.id }
+      }
+      return null
+    },
+
+    async fetchLatest(code) {
+      const res = await fetchSync(client(), code, 0)
+      if (res.kind !== 'updated') throw new Error(NO_SUCH_SYNC)
+      return { revision: res.revision, data: res.data }
+    },
+
+    isApplying(game, profileId) {
+      return !!states.get(`${game}\0${profileId}`)?.applying
+    },
+
+    async isFollower(game, profileId) {
+      return (await readProfile(game, profileId))?.sync?.role === 'follower'
     }
   }
 }

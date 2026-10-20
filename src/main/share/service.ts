@@ -11,6 +11,7 @@ import type {
   ProfileManifest,
   UnresolvedMod
 } from '../../shared/types'
+import { normalizeSyncCode } from '../../shared/shareCode'
 import { getProfile, RESERVED } from '../profiles/profiles'
 import type { ServiceDeps } from '../services'
 import { buildHmlFile, IMPORT_TOO_BIG, MAX_HML_BYTES, readHmlFile } from './hmlFile'
@@ -42,6 +43,20 @@ export interface ShareContext {
   getCustomGame(label: string): Promise<HmlCustomGame | null>
   /** Icons and descriptions of mods shared for `game`, in order; never throws. */
   describeMods(game: string, sources: ModSource[]): ReturnType<HmlApi['shareModDetails']>
+  /** Sync codes; bound late by services.ts. Without it, sync codes are refused. */
+  sync?: ShareSync
+}
+
+export interface ShareSync {
+  fetchLatest(code: string): Promise<{ revision: number; data: Uint8Array }>
+  findByCode(code: string): Promise<{ game: string; profileId: string } | null>
+  attachFollower(
+    game: string,
+    profileId: string,
+    code: string,
+    revision: number,
+    configs: Map<string, Uint8Array>
+  ): Promise<void>
 }
 
 type ShareApi = Pick<
@@ -53,6 +68,7 @@ const PENDING_MS = 600_000
 const EXPIRED = 'This import has expired. Open the code or file again.'
 const R2_NO_GAME =
   "r2modman profiles don't say which game they're for. Open the game first, then import."
+const SYNC_UNAVAILABLE = 'Syncing is unavailable right now.'
 const NEXUS_PREFIX = 'nexus-'
 const NEXUS_DOMAIN_RE = /^[a-z0-9_-]{1,64}$/
 
@@ -60,6 +76,8 @@ interface Pending {
   export: HmlExport
   configs: Map<string, Uint8Array>
   expiresAt: number
+  /** A sync code's revision: importing makes the profile follow it. */
+  sync?: { code: string; revision: number }
 }
 
 const unknownGame = (game: string): Error =>
@@ -203,7 +221,8 @@ export function createShareServices(ctx: ShareContext): ShareApi {
 
     async previewShare(input) {
       let data: Uint8Array
-      let r2: boolean
+      let r2 = false
+      let sync: Pending['sync']
       if (input && typeof input === 'object' && 'file' in input && input.file === true) {
         const files = await deps.dialog.pickFiles({
           title: 'Import profile',
@@ -216,10 +235,34 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         data = new Uint8Array(await fs.readFile(files[0]))
       } else if (input && typeof input === 'object' && 'code' in input) {
         const code = String(input.code)
-        r2 = isR2modmanCode(code)
-        data = r2
-          ? await downloadR2modman({ fetch: deps.fetch }, code)
-          : await downloadShare({ fetch: deps.fetch, base: deps.shareBaseUrl }, code)
+        const syncCode = normalizeSyncCode(code)
+        if (syncCode) {
+          if (!ctx.sync) throw new Error(SYNC_UNAVAILABLE)
+          // Already followed here: the UI offers to open that profile instead of a second copy.
+          const existing = await ctx.sync.findByCode(syncCode)
+          if (existing) {
+            const profile = await getProfile(deps.paths, existing.game, existing.profileId)
+            const def = await findGame(existing.game)
+            return {
+              token: '',
+              game: existing.game,
+              gameName: def?.displayName ?? existing.game,
+              profileName: profile.name,
+              mods: [],
+              configFiles: 0,
+              sync: true,
+              existing
+            }
+          }
+          const latest = await ctx.sync.fetchLatest(syncCode)
+          data = latest.data
+          sync = { code: syncCode, revision: latest.revision }
+        } else {
+          r2 = isR2modmanCode(code)
+          data = r2
+            ? await downloadR2modman({ fetch: deps.fetch }, code)
+            : await downloadShare({ fetch: deps.fetch, base: deps.shareBaseUrl }, code)
+        }
       } else {
         throw new Error('Expected a share code or a file.')
       }
@@ -240,7 +283,7 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       const plan = !def && exp.customGame ? await customPlan(exp.customGame) : null
       dropExpired()
       const token = randomUUID()
-      pending.set(token, { ...read, expiresAt: now() + PENDING_MS })
+      pending.set(token, { ...read, expiresAt: now() + PENDING_MS, ...(sync ? { sync } : {}) })
       return {
         token,
         game: exp.game,
@@ -251,7 +294,8 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         mods: exp.mods.map((m) => ({ name: modName(m), version: m.version, kind: m.source.kind })),
         configFiles: read.configs.size,
         ...(plan?.needsFolder ? { needsFolder: true } : {}),
-        ...(r2game ? { fromR2modman: true as const } : {})
+        ...(r2game ? { fromR2modman: true as const } : {}),
+        ...(sync ? { sync: true as const } : {})
       }
     },
 
@@ -331,6 +375,20 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         )
       } catch (e) {
         warnings.push(`The config files couldn't be restored: ${errMsg(e)}`)
+      }
+      if (held.sync) {
+        try {
+          if (!ctx.sync) throw new Error(SYNC_UNAVAILABLE)
+          await ctx.sync.attachFollower(
+            game,
+            profileId,
+            held.sync.code,
+            held.sync.revision,
+            held.configs
+          )
+        } catch (e) {
+          warnings.push(`This profile couldn't be set to follow its sync code: ${errMsg(e)}`)
+        }
       }
       deps.emit({ type: 'progress', message: 'Done', done: total, total })
 
