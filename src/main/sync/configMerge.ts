@@ -57,6 +57,7 @@ function parseSettings(lines: string[], toml: boolean): Map<string, Setting> {
   const settings = new Map<string, Setting>()
   let section = ''
   for (const line of lines) {
+    if (/^\s*\[\[.*\]\]\s*$/.test(line)) throw new Unmergeable('array of tables')
     const c = classify(line)
     if (c.kind === 'section') section = c.name
     else if (c.kind === 'setting') {
@@ -73,12 +74,25 @@ function isTomlMultiline(value: string): boolean {
   return value.startsWith('[') && !value.includes(']')
 }
 
-function splitLines(text: string): { lines: string[]; trailing: boolean } {
-  const lines = text.split(/\r?\n/)
-  const trailing = lines.length > 1 && lines[lines.length - 1] === ''
-  if (trailing) lines.pop()
-  return { lines, trailing }
+interface Row {
+  text: string
+  /** The line ending that followed this line in the file ('' for an unterminated last line). */
+  eol: string
 }
+
+function splitRows(text: string): Row[] {
+  const rows: Row[] = []
+  const re = /\r?\n/g
+  let start = 0
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    rows.push({ text: text.slice(start, m.index), eol: m[0] })
+    start = m.index + m[0].length
+  }
+  if (start < text.length) rows.push({ text: text.slice(start), eol: '' })
+  return rows
+}
+
+const textsOf = (text: string): string[] => splitRows(text).map((r) => r.text)
 
 function mergeLines(
   rel: string,
@@ -89,11 +103,15 @@ function mergeLines(
   const toml = extensionOf(rel) === '.toml'
   const localText = decode(local)
   const bom = localText.startsWith(BOM) ? BOM : ''
-  const eol = localText.includes('\r\n') ? '\r\n' : '\n'
-  const baseSettings = parseSettings(base ? splitLines(stripBom(decode(base))).lines : [], toml)
-  const ownerSettings = parseSettings(splitLines(stripBom(decode(owner))).lines, toml)
-  const { lines, trailing } = splitLines(stripBom(localText))
-  parseSettings(lines, toml)
+  const rows = splitRows(stripBom(localText))
+  const crlf = rows.filter((r) => r.eol === '\r\n').length
+  const eol = crlf > rows.filter((r) => r.eol === '\n').length ? '\r\n' : '\n'
+  const baseSettings = parseSettings(base ? textsOf(stripBom(decode(base))) : [], toml)
+  const ownerSettings = parseSettings(textsOf(stripBom(decode(owner))), toml)
+  parseSettings(
+    rows.map((r) => r.text),
+    toml
+  )
 
   const changed = new Map<string, Setting>()
   for (const [id, s] of ownerSettings) {
@@ -102,38 +120,59 @@ function mergeLines(
   const removed = new Set<string>()
   for (const id of baseSettings.keys()) if (!ownerSettings.has(id)) removed.add(id)
 
-  const out: string[] = []
+  const out: Row[] = []
   const present = new Set<string>()
   let section = ''
-  for (const line of lines) {
+  for (const row of rows) {
+    const line = row.text
     const c = classify(line)
     if (c.kind === 'section') {
       section = c.name
     } else if (c.kind === 'setting') {
       const id = idOf(section, c.key)
       present.add(id)
-      if (removed.has(id)) continue
+      if (removed.has(id)) {
+        // Dropping an unterminated last line keeps the file unterminated.
+        if (row.eol === '' && out.length > 0)
+          out[out.length - 1] = { ...out[out.length - 1], eol: '' }
+        continue
+      }
       const next = changed.get(id)
       if (next && next.value !== c.value) {
         const rest = line.slice(c.eq + 1)
         const spacing = /^\s*/.exec(rest)?.[0] ?? ''
-        out.push(`${line.slice(0, c.eq + 1)}${spacing}${next.value}`)
+        out.push({ text: `${line.slice(0, c.eq + 1)}${spacing}${next.value}`, eol: row.eol })
         continue
       }
     }
-    out.push(line)
+    out.push(row)
   }
 
+  const insert = (at: number, text: string): void => {
+    const last = at === out.length
+    // Inserting after an unterminated last line: terminate it and leave the new line unterminated.
+    if (last && out[at - 1]?.eol === '') {
+      out[at - 1] = { text: out[at - 1].text, eol }
+      out.push({ text, eol: '' })
+    } else {
+      out.splice(at, 0, { text, eol })
+    }
+  }
   for (const [id, s] of changed) {
     if (present.has(id)) continue
     const line = `${s.key} = ${s.value}`
-    const at = insertionPoint(out, s.section)
-    if (at < 0) out.push(`[${s.section}]`, line)
-    else out.splice(at, 0, line)
+    const at = insertionPoint(
+      out.map((r) => r.text),
+      s.section
+    )
+    if (at < 0) {
+      insert(out.length, `[${s.section}]`)
+      insert(out.length, line)
+    } else insert(at, line)
     present.add(id)
   }
 
-  return new TextEncoder().encode(bom + out.join(eol) + (trailing ? eol : ''))
+  return new TextEncoder().encode(bom + out.map((r) => r.text + r.eol).join(''))
 }
 
 /** Index just after the last setting of `target` (or its header); -1 if local lacks the section. */
@@ -161,16 +200,24 @@ const same = (a: Json, b: Json): boolean => JSON.stringify(a) === JSON.stringify
 
 function mergeObject(base: JsonObject, owner: JsonObject, local: JsonObject): JsonObject {
   const result: JsonObject = { ...local }
+  const set = (key: string, value: Json): void => {
+    Object.defineProperty(result, key, {
+      value,
+      enumerable: true,
+      writable: true,
+      configurable: true
+    })
+  }
   for (const [key, o] of Object.entries(owner)) {
-    const l = local[key]
-    const b = base[key]
+    const l = Object.hasOwn(local, key) ? local[key] : undefined
+    const b = Object.hasOwn(base, key) ? base[key] : undefined
     if (isObject(o) && isObject(l)) {
-      result[key] = mergeObject(isObject(b) ? b : {}, o, l)
-    } else if (!(key in base) || !same(b, o)) {
-      result[key] = o
+      set(key, mergeObject(isObject(b) ? b : {}, o, l))
+    } else if (!Object.hasOwn(base, key) || !same(b, o)) {
+      set(key, o)
     }
   }
-  for (const key of Object.keys(base)) if (!(key in owner)) delete result[key]
+  for (const key of Object.keys(base)) if (!Object.hasOwn(owner, key)) delete result[key]
   return result
 }
 

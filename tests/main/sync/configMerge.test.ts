@@ -138,4 +138,60 @@ describe('mergeConfig', () => {
   it('null local returns owner', () => {
     expect(merge('a.cfg', base, 'x = 1', null)).toBe('x = 1')
   })
+
+  it('toml array of tables returns owner whole', () => {
+    const b = '[[m]]\nv=1\n[[m]]\nv=2'
+    const owner = '[[m]]\nv=5\n[[m]]\nv=2'
+    expect(merge('p.toml', b, owner, b)).toBe(owner)
+    expect(merge('a.cfg', b, owner, b)).toBe(owner)
+  })
+
+  it('json: an owner-changed __proto__ key lands in the output', () => {
+    const owner = '{"__proto__":{"x":2},"a":1}'
+    const out = merge('s.json', '{"__proto__":{"x":1},"a":1}', owner, '{"a":1}\n')
+    expect(Object.keys(JSON.parse(out))).toContain('__proto__')
+    expect(out).toContain('"__proto__"')
+  })
+
+  it('keeps each existing line ending when local mixes CRLF and LF', () => {
+    const local = '[A]\r\nK = 1\nL = 1\r\nM = 1\n'
+    const out = merge('a.cfg', '[A]\nK = 1', '[A]\nK = 2', local)
+    expect(out).toBe('[A]\r\nK = 2\nL = 1\r\nM = 1\n')
+  })
+
+  it('inserts with the dominant ending of a mixed file', () => {
+    const local = '[A]\r\nK = 1\r\nL = 1\n'
+    const out = merge('a.cfg', '[A]\nK = 1', '[A]\nK = 1\nN = 3', local)
+    expect(out).toBe('[A]\r\nK = 1\r\nL = 1\nN = 3\r\n')
+  })
+
+  it('changes a section-less key before the first header', () => {
+    const out = merge(
+      'a.cfg',
+      'top = 1\n[A]\nK = 1',
+      'top = 2\n[A]\nK = 1',
+      'top = 1\n[A]\nK = 1\n'
+    )
+    expect(out).toBe('top = 2\n[A]\nK = 1\n')
+  })
+
+  it('puts a new key right after a header-only section', () => {
+    const out = merge('a.cfg', '[A]\n[B]\nX = 1', '[A]\nN = 1\n[B]\nX = 1', '[A]\n[B]\nX = 1\n')
+    expect(out).toBe('[A]\nN = 1\n[B]\nX = 1\n')
+  })
+
+  it('inserting into a CRLF file produces a CRLF line', () => {
+    const out = merge('a.cfg', '[A]\nK = 1', '[A]\nK = 1\nN = 2', '[A]\r\nK = 1\r\n')
+    expect(out).toBe('[A]\r\nK = 1\r\nN = 2\r\n')
+  })
+
+  it('appends a section to a local file without a trailing newline', () => {
+    const out = merge('a.cfg', '[A]\nK = 1', '[A]\nK = 1\n[B]\nN = 2', '[A]\nK = 1')
+    expect(out).toBe('[A]\nK = 1\n[B]\nN = 2')
+  })
+
+  it('changes a duplicate key in both places', () => {
+    const out = merge('a.cfg', '[A]\nK = 1', '[A]\nK = 2', '[A]\nK = 1\nK = 1\n')
+    expect(out).toBe('[A]\nK = 2\nK = 2\n')
+  })
 })
