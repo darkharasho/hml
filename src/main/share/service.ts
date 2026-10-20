@@ -55,7 +55,8 @@ export interface ShareSync {
     profileId: string,
     code: string,
     revision: number,
-    configs: Map<string, Uint8Array>
+    configs: Map<string, Uint8Array>,
+    opts?: { behind?: boolean }
   ): Promise<void>
 }
 
@@ -240,8 +241,11 @@ export function createShareServices(ctx: ShareContext): ShareApi {
           if (!ctx.sync) throw new Error(SYNC_UNAVAILABLE)
           // Already followed here: the UI offers to open that profile instead of a second copy.
           const existing = await ctx.sync.findByCode(syncCode)
-          if (existing) {
-            const profile = await getProfile(deps.paths, existing.game, existing.profileId)
+          // A profile deleted since it was found falls through to a normal preview.
+          const profile =
+            existing &&
+            (await getProfile(deps.paths, existing.game, existing.profileId).catch(() => null))
+          if (existing && profile) {
             const def = await findGame(existing.game)
             return {
               token: '',
@@ -384,7 +388,10 @@ export function createShareServices(ctx: ShareContext): ShareApi {
             profileId,
             held.sync.code,
             held.sync.revision,
-            held.configs
+            held.configs,
+            // A mod that didn't install is retried by the next check (the owner's local mods are
+            // never synced, so they don't count).
+            { behind: unresolved.some((u) => u.kind !== 'local') }
           )
         } catch (e) {
           warnings.push(`This profile couldn't be set to follow its sync code: ${errMsg(e)}`)

@@ -367,7 +367,7 @@ describe('checkFollower', () => {
     expect(requests).toEqual([])
   })
 
-  it('a detach during apply is not resurrected', async () => {
+  it('a detach during apply waits for it and is not undone by it', async () => {
     serve = async () => updated(4)
     const s = createSyncServices(makeCtx())
     let release!: () => void
@@ -381,11 +381,14 @@ describe('checkFollower', () => {
     }
     const check = s.checkFollower(GAME, ID)
     await inApply
-    await s.detachSync(GAME, ID)
+    let detached = false
+    const detach = s.detachSync(GAME, ID).then(() => (detached = true))
+    await new Promise((r) => setTimeout(r, 10))
+    expect(detached).toBe(false)
     release()
-    await check
+    await Promise.all([check, detach])
     expect(await readSync()).toBeUndefined()
-    expect(ofType('sync-applied')).toEqual([])
+    expect(await exists(baseFile())).toBe(false)
   })
 })
 
@@ -431,9 +434,76 @@ describe('beforeLaunch', () => {
     await s.beforeLaunch(GAME, ID)
     expect(timers.count(SYNC_LAUNCH_CHECK_MS)).toBe(0)
   })
+  it('a check that finishes after the launch timeout holds instead of applying', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    serve = async () => {
+      await gate
+      return updated(4)
+    }
+    const s = createSyncServices(makeCtx())
+    const p = s.beforeLaunch(GAME, ID)
+    await vi.waitFor(() => expect(requests).toHaveLength(1))
+    timers.fire(SYNC_LAUNCH_CHECK_MS)
+    await p
+    const late = s.checkFollower(GAME, ID)
+    release()
+    await late
+    expect(applyCalls).toBe(0)
+    expect(timers.count(SYNC_HOLD_RETRY_MS)).toBe(1)
+    expect((await readSync())?.revision).toBe(3)
+  })
 })
 
 describe('detachSync', () => {
+  it('a detach while the fetch is pending stops the apply', async () => {
+    await mkdir(join(baseFile(), '..'), { recursive: true })
+    await writeFile(baseFile(), 'x')
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    serve = async () => {
+      await gate
+      return updated(4)
+    }
+    const s = createSyncServices(makeCtx())
+    const check = s.checkFollower(GAME, ID)
+    await vi.waitFor(() => expect(requests).toHaveLength(1))
+    const detach = s.detachSync(GAME, ID)
+    release()
+    await Promise.all([check, detach])
+    expect(applyCalls).toBe(0)
+    expect(await readSync()).toBeUndefined()
+    expect(await exists(baseFile())).toBe(false)
+  })
+
+  it('a held revision is applied from memory, not downloaded again', async () => {
+    serve = async (since) => (since >= 4 ? unchanged(4) : updated(4))
+    running = true
+    const s = createSyncServices(makeCtx())
+    await s.checkFollower(GAME, ID)
+    // A regular poll while held asks only whether there is anything newer.
+    await s.checkFollower(GAME, ID)
+    expect(requests.at(-1)).toBe(`https://share.test/v1/sync/${CODE}?since=4`)
+    expect(applyCalls).toBe(0)
+    running = false
+    timers.fire(SYNC_HOLD_RETRY_MS)
+    await vi.waitFor(async () => expect((await readSync())?.revision).toBe(4))
+    expect(requests).toHaveLength(2)
+    expect(applyCalls).toBe(1)
+  })
+
+  it('an unreadable revision is not downloaded again', async () => {
+    const future = zipSync({
+      'export.json': strToU8(JSON.stringify({ ...exportOf(), formatVersion: 2 }))
+    })
+    serve = async (since) => (since >= 4 ? unchanged(4) : updated(4, future))
+    const s = createSyncServices(makeCtx())
+    await s.checkFollower(GAME, ID)
+    await s.checkFollower(GAME, ID)
+    expect(requests.at(-1)).toBe(`https://share.test/v1/sync/${CODE}?since=4`)
+    expect(ofType('sync-error')).toHaveLength(1)
+  })
+
   it('detachSync clears sync and bases', async () => {
     await mkdir(join(baseFile(), '..'), { recursive: true })
     await writeFile(baseFile(), 'x')

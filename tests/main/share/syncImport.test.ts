@@ -8,7 +8,7 @@ import { zipHmlParts } from '../../../src/main/share/hmlFile'
 import { createShareServices, type ShareContext } from '../../../src/main/share/service'
 import { makePaths, type AppPaths } from '../../../src/main/store/paths'
 import { createSyncServices } from '../../../src/main/sync/service'
-import type { HmlExport } from '../../../src/shared/types'
+import type { HmlExport, HmlExportMod } from '../../../src/shared/types'
 
 const SYNC = 'ABCDEFGHJKMN'
 const SHARE = '0123456789'
@@ -18,10 +18,12 @@ let root: string
 let paths: AppPaths
 let requests: string[]
 let syncStatus: number
+let mods: HmlExportMod[]
+let syncApi: ReturnType<typeof createSyncServices>
 
-const exp: HmlExport = { formatVersion: 1, game: 'repo', profileName: 'Friends', mods: [] }
+const exp = (): HmlExport => ({ formatVersion: 1, game: 'repo', profileName: 'Friends', mods })
 const data = (): Uint8Array =>
-  zipHmlParts({ export: exp, configs: new Map([[CFG, strToU8('[G]\nA = 1\n')]]) })
+  zipHmlParts({ export: exp(), configs: new Map([[CFG, strToU8('[G]\nA = 1\n')]]) })
 
 const fakeFetch = vi.fn(async (input: RequestInfo | URL) => {
   const url = String(input)
@@ -34,14 +36,17 @@ const fakeFetch = vi.fn(async (input: RequestInfo | URL) => {
   return new Response(null, { status: 500 })
 }) as unknown as typeof fetch
 
-function make(withSync = true): ReturnType<typeof createShareServices> {
+function make(
+  withSync = true,
+  found?: { game: string; profileId: string }
+): ReturnType<typeof createShareServices> {
   const deps = {
     paths,
     fetch: fakeFetch,
     shareBaseUrl: 'https://share.test',
     emit: () => undefined
   } as never
-  const sync = createSyncServices({
+  const sync = (syncApi = createSyncServices({
     deps,
     lock: (_g, _p, fn) => fn(),
     requireGame: async (label) => ({ label }) as never,
@@ -50,14 +55,16 @@ function make(withSync = true): ReturnType<typeof createShareServices> {
     apply: async () => {
       throw new Error('not used')
     }
-  })
+  }))
   const ctx: ShareContext = {
     deps,
     getCatalog: async () => ({ games: [{ label: 'repo', displayName: 'R.E.P.O.' }] }) as never,
     requireGame: async (label) => ({ label }),
     serialize: (_g, _p, fn) => fn(),
     installers: {
-      createProfile: (game: string, name: string) => createProfile(paths, game, name)
+      createProfile: (game: string, name: string) => createProfile(paths, game, name),
+      tsGetPackage: async () => null,
+      tsRefresh: async () => undefined
     } as never,
     findCustomGameByName: async () => undefined,
     findCustomGameByFolder: async () => undefined,
@@ -68,7 +75,7 @@ function make(withSync = true): ReturnType<typeof createShareServices> {
       ? {
           sync: {
             fetchLatest: sync.fetchLatest,
-            findByCode: sync.findByCode,
+            findByCode: found ? async () => found : sync.findByCode,
             attachFollower: sync.attachFollower
           }
         }
@@ -82,6 +89,7 @@ beforeEach(async () => {
   paths = makePaths(root)
   requests = []
   syncStatus = 200
+  mods = []
 })
 
 afterEach(async () => {
@@ -157,5 +165,44 @@ describe('sync code import', () => {
     const r = await share.importShare(p!.token, '')
     expect(r.warnings).toEqual([])
     expect((await getProfile(paths, 'repo', r.profile.id)).sync).toBeUndefined()
+  })
+
+  it('a sync import whose mods did not all install is retried by the next check', async () => {
+    mods = [
+      { source: { kind: 'thunderstore', fullName: 'Gone-Mod' }, version: '1.0.0', enabled: true }
+    ]
+    const share = make()
+    const r = await share.importShare((await share.previewShare({ code: SYNC }))!.token, '')
+    expect(r.unresolved).toHaveLength(1)
+    expect(r.profile.sync).toEqual({ role: 'follower', code: SYNC, revision: 6, behind: true })
+    requests = []
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await syncApi.checkFollower('repo', r.profile.id)
+    } finally {
+      warn.mockRestore()
+    }
+    expect(requests).toEqual([`https://share.test/v1/sync/${SYNC}?since=0`])
+  })
+
+  it("the owner's local mods don't mark a sync import behind", async () => {
+    mods = [
+      {
+        source: { kind: 'local', fileName: 'x.zip', sha256: 'a'.repeat(64) },
+        version: '1.0.0',
+        enabled: true
+      }
+    ]
+    const share = make()
+    const r = await share.importShare((await share.previewShare({ code: SYNC }))!.token, '')
+    expect(r.profile.sync).toEqual({ role: 'follower', code: SYNC, revision: 6 })
+  })
+
+  it('a followed profile deleted since it was found falls through to a normal preview', async () => {
+    const share = make(true, { game: 'repo', profileId: 'gone' })
+    const p = await share.previewShare({ code: SYNC })
+    expect(p!.existing).toBeUndefined()
+    expect(p!.token).not.toBe('')
+    expect(requests).toEqual([`https://share.test/v1/sync/${SYNC}?since=0`])
   })
 })

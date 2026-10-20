@@ -68,6 +68,12 @@ interface ProfileState {
   holdTimer?: unknown
   /** Follower: the revision this HML couldn't read, already reported. */
   lastErrorRevision?: number
+  /** Follower: a revision fetched but held while the game runs, so a retry needn't download it. */
+  held?: { code: string; revision: number; rev: Parts }
+  /** Follower: launched before a check finished; hold applies until then (ms since epoch). */
+  launchHoldUntil?: number
+  /** Follower: a detach is waiting for the check under way; that check must not apply. */
+  detaching?: boolean
 }
 
 const DEPLOY_KEY = '__deploy__'
@@ -126,7 +132,9 @@ export function createSyncServices(ctx: SyncContext): {
     profileId: string,
     code: string,
     revision: number,
-    configs: Map<string, Uint8Array>
+    configs: Map<string, Uint8Array>,
+    /** `behind`: some mods didn't install, so the next check re-applies this revision. */
+    opts?: { behind?: boolean }
   ): Promise<void>
   /** The profile that owns or follows this code. */
   findByCode(code: string): Promise<{ game: string; profileId: string } | null>
@@ -349,7 +357,7 @@ export function createSyncServices(ctx: SyncContext): {
     if (st.holdTimer !== undefined) return
     st.holdTimer = timers.setTimeout(() => {
       st.holdTimer = undefined
-      void checkFollower(game, profileId)
+      void checkFollower(game, profileId, true)
     }, SYNC_HOLD_RETRY_MS)
   }
 
@@ -359,47 +367,86 @@ export function createSyncServices(ctx: SyncContext): {
     st.holdTimer = undefined
   }
 
-  async function checkOnce(game: string, profileId: string): Promise<void> {
+  /** Whether the profile still follows `code`. */
+  const stillFollowing = async (
+    game: string,
+    profileId: string,
+    code: string
+  ): Promise<boolean> => {
+    const s = (await readProfile(game, profileId))?.sync
+    return s?.role === 'follower' && s.code === code
+  }
+
+  /**
+   * One check. `fromHold`: a retry of a held revision, which only re-tests whether it may apply
+   * the revision it already downloaded.
+   */
+  async function checkOnce(game: string, profileId: string, fromHold: boolean): Promise<void> {
     const st = stateOf(game, profileId)
     const profile = await readProfile(game, profileId)
     const sync = profile?.sync
     if (!profile || sync?.role !== 'follower') return
     const { code } = sync
-    const res = await fetchSync(client(), code, sync.behind ? 0 : sync.revision)
-    if (res.kind === 'unchanged') return
-    if (res.kind === 'ended' || res.kind === 'missing') {
-      const saved = await updateFollower(game, profileId, code, () => undefined)
-      if (!saved) return
-      cancelHold(game, profileId)
-      await clearBases(deps.paths.profileDir(game, profileId))
-      deps.emit({ type: 'sync-ended', game, profileId, profileName: saved.name })
-      emitState(game, profileId)
-      return
-    }
-    if (st.lastErrorRevision === res.revision) return
+    if (st.held && st.held.code !== code) st.held = undefined
+
+    let revision: number
     let rev: Parts
-    try {
-      rev = await readHmlFile(res.data, { forImport: true })
-    } catch {
-      st.lastErrorRevision = res.revision
-      deps.emit({
-        type: 'sync-error',
-        game,
-        profileId,
-        message: `Update HML to keep following ${profile.name}.`
-      })
-      return
+    if (fromHold && st.held) {
+      ;({ revision, rev } = st.held)
+    } else {
+      // A revision this HML can't read, or one already held, isn't downloaded again.
+      const since = Math.max(
+        sync.behind ? 0 : sync.revision,
+        st.lastErrorRevision ?? 0,
+        st.held?.revision ?? 0
+      )
+      const res = await fetchSync(client(), code, since)
+      if (res.kind === 'ended' || res.kind === 'missing') {
+        st.held = undefined
+        const saved = await updateFollower(game, profileId, code, () => undefined)
+        if (!saved) return
+        cancelHold(game, profileId)
+        await clearBases(deps.paths.profileDir(game, profileId))
+        deps.emit({ type: 'sync-ended', game, profileId, profileName: saved.name })
+        emitState(game, profileId)
+        return
+      }
+      if (res.kind === 'unchanged') {
+        if (!st.held || st.held.revision !== res.revision) return
+        ;({ revision, rev } = st.held)
+      } else {
+        revision = res.revision
+        if (st.lastErrorRevision === revision) return
+        try {
+          rev = await readHmlFile(res.data, { forImport: true })
+        } catch {
+          st.lastErrorRevision = revision
+          deps.emit({
+            type: 'sync-error',
+            game,
+            profileId,
+            message: `Update HML to keep following ${profile.name}.`
+          })
+          return
+        }
+        if (rev.export.game !== game) {
+          console.warn(`Sync ${code} is for ${rev.export.game}, not ${game}; ignored.`)
+          return
+        }
+      }
     }
-    if (rev.export.game !== game) {
-      console.warn(`Sync ${code} is for ${rev.export.game}, not ${game}; ignored.`)
-      return
-    }
+
     const def = await ctx.requireGame(game)
-    if (await ctx.isGameRunning(def)) {
+    const launching = (st.launchHoldUntil ?? 0) > Date.now()
+    if (launching || (await ctx.isGameRunning(def))) {
+      st.held = { code, revision, rev }
       scheduleHold(game, profileId)
       return
     }
+    st.held = undefined
     cancelHold(game, profileId)
+    // A detach since the manifest was read wins: its apply would merge against cleared bases.
+    if (st.detaching || !(await stillFollowing(game, profileId, code))) return
     let result: SyncApplyResult
     st.applying = true
     try {
@@ -410,7 +457,7 @@ export function createSyncServices(ctx: SyncContext): {
     const saved = await updateFollower(game, profileId, code, () => ({
       role: 'follower',
       code,
-      revision: res.revision,
+      revision,
       ...(result.failed.length > 0 ? { behind: true as const } : {}),
       ...(result.manual.length > 0 ? { manual: result.manual } : {})
     }))
@@ -424,10 +471,10 @@ export function createSyncServices(ctx: SyncContext): {
   }
 
   /** Single-flight per profile; logs and swallows every failure. */
-  function checkFollower(game: string, profileId: string): Promise<void> {
+  function checkFollower(game: string, profileId: string, fromHold = false): Promise<void> {
     const st = stateOf(game, profileId)
     if (st.checking) return st.checking
-    const run = checkOnce(game, profileId)
+    const run = checkOnce(game, profileId, fromHold)
       .catch((e: unknown) => {
         console.warn(`Sync check failed for ${game}/${profileId}:`, e)
       })
@@ -568,15 +615,25 @@ export function createSyncServices(ctx: SyncContext): {
 
     async detachSync(game, profileId) {
       const label = (await ctx.requireGame(game)).label
-      await lock(label, profileId, async () => {
-        const profile = await getProfile(deps.paths, label, profileId)
-        if (profile.sync?.role !== 'follower') throw new Error(NOT_FOLLOWER)
-        const next: ProfileManifest = { ...profile }
-        delete next.sync
-        await saveProfile(deps.paths, next)
-      })
+      const st = stateOf(label, profileId)
+      // A check under way finishes first (it never throws) and, seeing this flag, doesn't apply.
+      st.detaching = true
+      try {
+        await st.checking
+        await lock(label, profileId, async () => {
+          const profile = await getProfile(deps.paths, label, profileId)
+          if (profile.sync?.role !== 'follower') throw new Error(NOT_FOLLOWER)
+          const next: ProfileManifest = { ...profile }
+          delete next.sync
+          await saveProfile(deps.paths, next)
+        })
+      } finally {
+        st.detaching = false
+      }
       cancelHold(label, profileId)
-      stateOf(label, profileId).lastErrorRevision = undefined
+      st.lastErrorRevision = undefined
+      st.held = undefined
+      st.launchHoldUntil = undefined
       await clearBases(deps.paths.profileDir(label, profileId))
       emitState(label, profileId)
     },
@@ -595,9 +652,12 @@ export function createSyncServices(ctx: SyncContext): {
         timer = timers.setTimeout(() => resolve('timeout'), SYNC_LAUNCH_CHECK_MS)
       })
       const won = await Promise.race([check, timeout])
+      const st = stateOf(label, profileId)
       if (won === 'done') timers.clearTimeout(timer)
       // Launching halfway through an apply would start the game on a half-updated profile.
-      else if (stateOf(label, profileId).applying) await check
+      else if (st.applying) await check
+      // The game may not show as running yet: hold any apply this late check would start.
+      else st.launchHoldUntil = Date.now() + SYNC_HOLD_RETRY_MS
     },
 
     tick() {
@@ -607,12 +667,17 @@ export function createSyncServices(ctx: SyncContext): {
       return ticking
     },
 
-    async attachFollower(game, profileId, code, revision, configs) {
+    async attachFollower(game, profileId, code, revision, configs, opts) {
       const normalized = normalizeSyncCode(code)
       if (!normalized) throw new Error("That isn't a valid sync code.")
       await lock(game, profileId, async () => {
         const profile = await getProfile(deps.paths, game, profileId)
-        const sync: FollowerSync = { role: 'follower', code: normalized, revision }
+        const sync: FollowerSync = {
+          role: 'follower',
+          code: normalized,
+          revision,
+          ...(opts?.behind ? { behind: true as const } : {})
+        }
         // Bases first: a follower without bases would merge as if every owner value were new.
         await writeBases(deps.paths.profileDir(game, profileId), configs)
         await saveProfile(deps.paths, { ...profile, sync })
