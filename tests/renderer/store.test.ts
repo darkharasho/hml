@@ -719,6 +719,23 @@ describe('store sync events', () => {
     expect(opened()).toEqual(manual.map((m) => m.url))
   })
 
+  test('openManualDownloads opens the first pages and offers the rest behind Open', async () => {
+    const urls = Array.from(
+      { length: NX_MAX_UPDATE_TABS + 1 },
+      (_, i) => `https://www.nexusmods.com/repo/mods/${i}`
+    )
+    await useStore.getState().openManualDownloads(urls)
+    const opened = (): unknown[] => api.openExternal.mock.calls.map((c) => (c as unknown[])[0])
+    expect(opened()).toEqual(urls.slice(0, NX_MAX_UPDATE_TABS))
+    expect(shown()).toEqual([
+      ['info', openWebsiteToast('registered')],
+      ['info', '1 more mod needs a manual download']
+    ])
+    useStore.getState().toasts[1].action?.run()
+    await settle()
+    expect(opened()).toEqual(urls)
+  })
+
   test('a sync change to the open profile refreshes its warnings and updates', async () => {
     useStore.getState().handleEvent({ type: 'sync-state', game: 'repo', profileId: 'p' })
     await settle()

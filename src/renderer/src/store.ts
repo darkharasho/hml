@@ -113,6 +113,8 @@ interface State {
   stopSync(id: string): Promise<void>
   /** Turns a followed profile into a normal one; errors propagate. */
   detachSync(id: string): Promise<void>
+  /** Opens a follower's manual Nexus downloads; pages past the tab limit wait behind a toast. */
+  openManualDownloads(urls: string[]): Promise<void>
   /** Switches to a game's profile (after an import) and reloads its list. */
   openImportedProfile(game: string, profileId: string): Promise<void>
   openProfileFolder(): Promise<void>
@@ -427,7 +429,7 @@ export const useStore = create<State>()((set, get) => {
     const message = first ? manualDownloadToast(urls.length) : moreManualToast(urls.length)
     get().toast('info', message, {
       label: 'Open',
-      run: () => void openNexusPages(urls, (rest) => manualDownloads(rest, false))
+      run: () => void get().openManualDownloads(urls)
     })
   }
 
@@ -689,6 +691,10 @@ export const useStore = create<State>()((set, get) => {
       if (!game) return
       await tracked(() => api.stopSync(game.label, id))
       await afterSyncChange(game.label, id)
+    },
+
+    openManualDownloads(urls) {
+      return openNexusPages(urls, (rest) => manualDownloads(rest, false))
     },
 
     async detachSync(id) {

@@ -4,7 +4,7 @@ import { formatCode, formatSyncCode } from '../../../shared/shareCode'
 import { api, errorMessage } from '../api'
 import { COPY_FAILED, fileNameOf, localModsNote } from '../shareView'
 import { useStore } from '../store'
-import { CREATE_SYNC_NOTE, STOP_SYNC_CONFIRM, isFollower } from '../syncView'
+import { CREATE_SYNC_NOTE, ORPHANED_NOTE, STOP_SYNC_CONFIRM, isFollower } from '../syncView'
 import { Button, ConfirmDialog, Icon, Modal } from './ui'
 
 type Running = 'code' | 'file' | 'sync' | 'stop'
@@ -103,6 +103,7 @@ export function ShareDialog({
   const [head, tail] = display?.split('-') ?? []
   const sync = profile.sync
   const syncDisplay = sync?.role === 'owner' ? formatSyncCode(sync.code) : null
+  const orphaned = sync?.role === 'owner' && !!sync.orphaned
   // Before a code exists the count comes from the profile; afterwards from the server's answer.
   const localCount = profile.mods.filter((m) => m.source.kind === 'local').length
   const syncNote = syncDisplay
@@ -186,7 +187,16 @@ export function ShareDialog({
           <h3 className="font-medium text-fg">Sync code</h3>
           {syncDisplay ? (
             <>
-              <p className="mt-1">Friends who imported this code get your changes automatically.</p>
+              {orphaned ? (
+                <p className="mt-1 flex items-start gap-2 text-warn">
+                  <Icon name="warn" className="mt-0.5 size-4 shrink-0" />
+                  <span>{ORPHANED_NOTE}</span>
+                </p>
+              ) : (
+                <p className="mt-1">
+                  Friends who imported this code get your changes automatically.
+                </p>
+              )}
               <div className="mt-3 flex items-center gap-3 rounded-lg border border-line bg-ink py-2.5 pr-3 pl-5">
                 <output
                   aria-label="Sync code"

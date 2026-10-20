@@ -324,6 +324,7 @@ function SyncBadge({ profile }: { profile: ProfileManifest }): React.JSX.Element
   if (!badge) return null
   return (
     <span
+      title={badge.title}
       className={`shrink-0 rounded px-1.5 py-px text-[10px] font-medium ${SYNC_TONE_CLASS[badge.tone]}`}
     >
       {badge.label}

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ProfileManifest, ProfileSync, SyncChangeSummary } from '../../src/shared/types'
 import {
+  BEHIND_NOTE,
+  ORPHANED_NOTE,
   SYNC_LOCKED_NOTE,
   isFollower,
   manualDownloadToast,
@@ -86,19 +88,39 @@ describe('syncBadge', () => {
   it('shows an owner as Syncing, pending or orphaned', () => {
     expect(syncBadge(owner)).toEqual({ label: 'Syncing', tone: 'teal' })
     expect(syncBadge({ ...owner, pending: true })).toEqual({ label: 'Sync pending', tone: 'warn' })
-    expect(syncBadge({ ...owner, orphaned: true })).toEqual({ label: "Can't sync", tone: 'warn' })
+    expect(syncBadge({ ...owner, orphaned: true })).toEqual({
+      label: "Can't sync",
+      tone: 'warn',
+      title: ORPHANED_NOTE
+    })
   })
 
   it("orphaned wins over pending: the code can't be published at all", () => {
     expect(syncBadge({ ...owner, pending: true, orphaned: true })).toEqual({
       label: "Can't sync",
-      tone: 'warn'
+      tone: 'warn',
+      title: ORPHANED_NOTE
     })
   })
 
   it('shows a follower as Synced', () => {
     expect(syncBadge(follower)).toEqual({ label: 'Synced', tone: 'muted' })
-    expect(syncBadge({ ...follower, behind: true })).toEqual({ label: 'Synced', tone: 'muted' })
+  })
+
+  it('shows a behind follower as missing mods', () => {
+    expect(syncBadge({ ...follower, behind: true })).toEqual({
+      label: 'Missing mods',
+      tone: 'warn',
+      title: BEHIND_NOTE
+    })
+  })
+})
+
+describe('sync notes', () => {
+  it('tells an orphaned owner what to do', () => {
+    expect(ORPHANED_NOTE).toBe(
+      "This PC can't publish to this code anymore. Stop syncing and create a new code."
+    )
   })
 })
 

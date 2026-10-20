@@ -12,6 +12,14 @@ export const STOP_SYNC_CONFIRM =
 export const DETACH_CONFIRM = 'It becomes a normal profile and stops getting updates.'
 export const ALREADY_FOLLOWING = 'You already have this synced profile'
 
+/** An owner whose key is lost or whose code ended on the server: its code no longer updates. */
+export const ORPHANED_NOTE =
+  "This PC can't publish to this code anymore. Stop syncing and create a new code."
+
+/** A follower some of whose owner's mods didn't install. */
+export const BEHIND_NOTE =
+  "Some of the owner's mods couldn't be installed. HML tries again every hour and before launching."
+
 /** The toast for a follower that just took its owner's changes; zero counts are left out. */
 export function syncUpdatedToast(profileName: string, c: SyncChangeSummary): string {
   const parts: string[] = []
@@ -37,13 +45,19 @@ export function moreManualToast(n: number): string {
 export type SyncTone = 'teal' | 'warn' | 'muted'
 
 /** The sidebar badge for a profile's sync role; null for a plain profile. */
-export function syncBadge(
-  sync: ProfileSync | undefined
-): { label: 'Syncing' | 'Sync pending' | "Can't sync" | 'Synced'; tone: SyncTone } | null {
+export function syncBadge(sync: ProfileSync | undefined): {
+  label: 'Syncing' | 'Sync pending' | "Can't sync" | 'Synced' | 'Missing mods'
+  tone: SyncTone
+  /** Tooltip explaining a warning. */
+  title?: string
+} | null {
   if (!sync) return null
-  if (sync.role === 'follower') return { label: 'Synced', tone: 'muted' }
+  if (sync.role === 'follower')
+    return sync.behind
+      ? { label: 'Missing mods', tone: 'warn', title: BEHIND_NOTE }
+      : { label: 'Synced', tone: 'muted' }
   // An orphaned code can't be published at all, which matters more than a publish that's due.
-  if (sync.orphaned) return { label: "Can't sync", tone: 'warn' }
+  if (sync.orphaned) return { label: "Can't sync", tone: 'warn', title: ORPHANED_NOTE }
   if (sync.pending) return { label: 'Sync pending', tone: 'warn' }
   return { label: 'Syncing', tone: 'teal' }
 }
