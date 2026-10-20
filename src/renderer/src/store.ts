@@ -24,7 +24,7 @@ import { isGhAccessError } from '../../shared/messages'
 import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
-import { isFollower, manualDownloadToast, syncUpdatedToast } from './syncView'
+import { isFollower, manualDownloadToast, moreManualToast, syncUpdatedToast } from './syncView'
 import { displayName, installToast, progressLabel } from './tsView'
 
 export type ToastKind = 'error' | 'success' | 'info'
@@ -407,24 +407,38 @@ export const useStore = create<State>()((set, get) => {
     get().toast('success', `Installed ${e.mod.name} ${e.mod.version} from Nexus Mods`)
   }
 
-  /** Reloads the profile list when a sync event is about the open game. */
-  async function reloadIfCurrent(game: string): Promise<void> {
-    if (get().currentGame?.label === game) await reloadProfiles().catch(fail)
+  /**
+   * After a sync change: reloads the profile list when it is about the open game, and the
+   * warnings and updates too when it is about the open profile.
+   */
+  async function afterSyncChange(game: string, profileId: string): Promise<void> {
+    if (get().currentGame?.label !== game) return
+    await reloadProfiles().catch(fail)
+    if (get().currentGame?.label !== game || get().currentProfile !== profileId) return
+    await refreshWarnings()
+    await get().checkUpdates()
+  }
+
+  /**
+   * Offers a follower's manual downloads. Open shows the first pages; any left over get a new
+   * toast whose Open shows the next ones.
+   */
+  function manualDownloads(urls: string[], first: boolean): void {
+    const message = first ? manualDownloadToast(urls.length) : moreManualToast(urls.length)
+    get().toast('info', message, {
+      label: 'Open',
+      run: () => void openNexusPages(urls, (rest) => manualDownloads(rest, false))
+    })
   }
 
   async function onSyncApplied(e: Extract<HmlEvent, { type: 'sync-applied' }>): Promise<void> {
     get().toast('success', syncUpdatedToast(e.profileName, e.changes))
-    if (e.manual.length > 0) {
-      const urls = e.manual.map((m) => m.url)
-      get().toast('info', manualDownloadToast(e.manual.length), {
-        label: 'Open',
-        run: () => {
-          for (const url of urls.slice(0, NX_MAX_UPDATE_TABS))
-            void api.openExternal(url).catch(fail)
-        }
-      })
-    }
-    await reloadIfCurrent(e.game)
+    if (e.manual.length > 0)
+      manualDownloads(
+        e.manual.map((m) => m.url),
+        true
+      )
+    await afterSyncChange(e.game, e.profileId)
   }
 
   /** Toasts a Nexus error, with a Settings action when the API key is missing. */
@@ -440,8 +454,11 @@ export const useStore = create<State>()((set, get) => {
     return noKey ? 'needs-key' : 'done'
   }
 
-  /** Opens a free account's file pages; the nxm:// links bring the downloads back. */
-  async function openNexusPages(urls: string[]): Promise<void> {
+  /**
+   * Opens a free account's file pages; the nxm:// links bring the downloads back. Pages past
+   * the tab limit go to `onMore`, or get the Update all hint without it.
+   */
+  async function openNexusPages(urls: string[], onMore?: (rest: string[]) => void): Promise<void> {
     try {
       for (const url of urls.slice(0, NX_MAX_UPDATE_TABS)) await api.openExternal(url)
     } catch (e) {
@@ -452,7 +469,9 @@ export const useStore = create<State>()((set, get) => {
       () => 'not-registered' as const
     )
     get().toast('info', openWebsiteToast(handler))
-    if (urls.length > NX_MAX_UPDATE_TABS) get().toast('info', NX_MORE_UPDATES)
+    if (urls.length <= NX_MAX_UPDATE_TABS) return
+    if (onMore) onMore(urls.slice(NX_MAX_UPDATE_TABS))
+    else get().toast('info', NX_MORE_UPDATES)
   }
 
   return {
@@ -642,8 +661,11 @@ export const useStore = create<State>()((set, get) => {
       if (!game) return false
       // Once the profile is gone its owner key is forgotten and the code can't be ended, so a
       // stop that fails keeps the profile.
-      if (opts?.stopSync && (await busy(() => api.stopSync(game.label, id))) === failed)
-        return false
+      if (opts?.stopSync) {
+        if ((await busy(() => api.stopSync(game.label, id))) === failed) return false
+        // The profile is a plain one now, even if the delete below fails.
+        await reloadProfiles().catch(fail)
+      }
       const ok = await busy(async () => {
         await api.deleteProfile(game.label, id)
         const profiles = await loadProfilesEnsuringOne(game.label)
@@ -666,14 +688,14 @@ export const useStore = create<State>()((set, get) => {
       const game = get().currentGame
       if (!game) return
       await tracked(() => api.stopSync(game.label, id))
-      await reloadProfiles().catch(fail)
+      await afterSyncChange(game.label, id)
     },
 
     async detachSync(id) {
       const game = get().currentGame
       if (!game) return
       await tracked(() => api.detachSync(game.label, id))
-      await reloadProfiles().catch(fail)
+      await afterSyncChange(game.label, id)
     },
 
     async openImportedProfile(game, profileId) {
@@ -1162,9 +1184,9 @@ export const useStore = create<State>()((set, get) => {
       if (e.type === 'sync-applied') return void onSyncApplied(e)
       if (e.type === 'sync-ended') {
         get().toast('info', `${e.profileName} is no longer synced`)
-        return void reloadIfCurrent(e.game)
+        return void afterSyncChange(e.game, e.profileId)
       }
-      if (e.type === 'sync-state') return void reloadIfCurrent(e.game)
+      if (e.type === 'sync-state') return void afterSyncChange(e.game, e.profileId)
       if (e.type === 'sync-error') return get().toast('error', e.message)
       if (progressIdle(get())) return
       set({ progress: progressLabel(e) })

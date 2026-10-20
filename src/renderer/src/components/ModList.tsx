@@ -243,7 +243,7 @@ export function ModList(): React.JSX.Element | null {
         unreadable = true
       }
     }
-    if (locked) return
+    if (locked) return toast('info', SYNC_LOCKED_NOTE)
     if (unreadable) toast('error', "Couldn't read a dropped file. Use Install from file instead.")
     void installFromPaths(paths)
   }
@@ -257,7 +257,8 @@ export function ModList(): React.JSX.Element | null {
         setDragging(true)
       }}
       onDragOver={(e) => {
-        if (!hasFiles(e) || locked) return
+        // Allowed on a follower too, so the drop can say why nothing installs.
+        if (!hasFiles(e)) return
         e.preventDefault()
         e.dataTransfer.dropEffect = 'copy'
       }}
@@ -403,7 +404,7 @@ export function ModList(): React.JSX.Element | null {
               <Button
                 variant="primary"
                 disabled={!game.supported || updatingAny || locked}
-                title={game.supported ? undefined : UNSUPPORTED_LOADER}
+                title={locked ? SYNC_LOCKED_NOTE : game.supported ? undefined : UNSUPPORTED_LOADER}
                 onClick={() => void updateAll()}
               >
                 <Icon name="download" />

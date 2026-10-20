@@ -32,6 +32,7 @@ const api = vi.hoisted(() => ({
   createProfile: vi.fn(),
   deleteProfile: vi.fn(),
   createSyncCode: vi.fn(),
+  nxStatus: vi.fn(),
   stopSync: vi.fn(),
   detachSync: vi.fn()
 }))
@@ -41,7 +42,8 @@ vi.mock('../../src/renderer/src/api', () => ({
 }))
 
 const { useStore } = await import('../../src/renderer/src/store')
-const { NX_MAX_UPDATE_TABS, NX_NO_KEY } = await import('../../src/renderer/src/nxView')
+const { NX_MAX_UPDATE_TABS, NX_NO_KEY, openWebsiteToast } =
+  await import('../../src/renderer/src/nxView')
 
 const status: DeploymentStatus = {
   profileId: 'p',
@@ -641,6 +643,10 @@ describe('store sync events', () => {
   beforeEach(() => {
     api.listProfiles.mockReset().mockResolvedValue(reloaded)
     api.openExternal.mockReset().mockResolvedValue(undefined)
+    api.nxStatus.mockReset().mockResolvedValue({ handler: 'registered' })
+    api.getLaunchWarnings.mockReset().mockResolvedValue([])
+    api.ghCheckUpdates.mockReset().mockResolvedValue([])
+    api.detachSync.mockReset().mockResolvedValue(undefined)
     useStore.setState({
       currentGame: repo as unknown as GameSummary,
       currentProfile: 'p',
@@ -696,11 +702,42 @@ describe('store sync events', () => {
     const info = useStore.getState().toasts.find((t) => t.kind === 'info')
     expect(info?.message).toBe('7 mods need a manual download')
     expect(info?.action?.label).toBe('Open')
+    useStore.setState({ toasts: [] })
     info?.action?.run()
     await settle()
-    expect(api.openExternal.mock.calls.map((c) => (c as unknown[])[0])).toEqual(
-      manual.slice(0, NX_MAX_UPDATE_TABS).map((m) => m.url)
-    )
+    const opened = (): unknown[] => api.openExternal.mock.calls.map((c) => (c as unknown[])[0])
+    expect(opened()).toEqual(manual.slice(0, NX_MAX_UPDATE_TABS).map((m) => m.url))
+    // The same download guidance as Nexus updates, then the rest behind another Open.
+    expect(shown()).toEqual([
+      ['info', openWebsiteToast('registered')],
+      ['info', '2 more mods need a manual download']
+    ])
+    const more = useStore.getState().toasts[1]
+    expect(more.action?.label).toBe('Open')
+    more.action?.run()
+    await settle()
+    expect(opened()).toEqual(manual.map((m) => m.url))
+  })
+
+  test('a sync change to the open profile refreshes its warnings and updates', async () => {
+    useStore.getState().handleEvent({ type: 'sync-state', game: 'repo', profileId: 'p' })
+    await settle()
+    expect(api.getLaunchWarnings).toHaveBeenCalled()
+    expect(api.ghCheckUpdates).toHaveBeenCalledWith('repo', 'p')
+    api.getLaunchWarnings.mockClear()
+    api.ghCheckUpdates.mockClear()
+    useStore.getState().handleEvent({ type: 'sync-state', game: 'repo', profileId: 'q' })
+    await settle()
+    expect(api.listProfiles).toHaveBeenCalledTimes(2)
+    expect(api.getLaunchWarnings).not.toHaveBeenCalled()
+    expect(api.ghCheckUpdates).not.toHaveBeenCalled()
+  })
+
+  test('detachSync reloads and refreshes the open profile', async () => {
+    await useStore.getState().detachSync('p')
+    expect(api.detachSync).toHaveBeenCalledWith('repo', 'p')
+    expect(api.listProfiles).toHaveBeenCalledWith('repo')
+    expect(api.ghCheckUpdates).toHaveBeenCalledWith('repo', 'p')
   })
 
   test('sync-ended toasts and reloads', async () => {
@@ -779,6 +816,15 @@ describe('store deleting a synced owner profile', () => {
     expect(useStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([
       ['error', 'HML is offline.']
     ])
+  })
+
+  test('a stop that worked is shown even when the delete then fails', async () => {
+    const plain = { ...owner, sync: undefined } as unknown as ProfileManifest
+    api.listProfiles.mockResolvedValue([plain, other])
+    api.deleteProfile.mockRejectedValue(new Error('The folder is in use.'))
+    expect(await useStore.getState().deleteProfile('o', { stopSync: true })).toBe(false)
+    expect(useStore.getState().profiles).toEqual([plain, other])
+    expect(useStore.getState().toasts.map((t) => t.message)).toEqual(['The folder is in use.'])
   })
 
   test('without the option it deletes without stopping', async () => {

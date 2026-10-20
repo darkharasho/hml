@@ -29,6 +29,11 @@ export function manualDownloadToast(n: number): string {
   return n === 1 ? '1 mod needs a manual download' : `${n} mods need a manual download`
 }
 
+/** A follower's manual downloads left after Open showed the first batch of pages. */
+export function moreManualToast(n: number): string {
+  return n === 1 ? '1 more mod needs a manual download' : `${n} more mods need a manual download`
+}
+
 export type SyncTone = 'teal' | 'warn' | 'muted'
 
 /** The sidebar badge for a profile's sync role; null for a plain profile. */

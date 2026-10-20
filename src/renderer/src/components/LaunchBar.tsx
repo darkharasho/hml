@@ -3,7 +3,8 @@ import type { LaunchWarning } from '../../../shared/types'
 import { api, errorMessage } from '../api'
 import { installedLoaderLabel, shortLoaderLabel } from '../customView'
 import { deploymentLabel } from '../nxView'
-import { useCurrentProfile, useStore } from '../store'
+import { useCurrentProfile, useStore, useSyncLocked } from '../store'
+import { SYNC_LOCKED_NOTE } from '../syncView'
 import { useFallbackSrc } from '../useFallbackSrc'
 import { EditGameDialog } from './AddGameDialog'
 import { Button, Icon, Modal, Spinner } from './ui'
@@ -103,6 +104,8 @@ export function LaunchBar(): React.JSX.Element | null {
   const deployment = useStore((s) => s.deployment)
   const deploy = useStore((s) => s.deploy)
   const installLoader = useStore((s) => s.installLoader)
+  // A followed profile's mods, its loader included, change only through its sync code.
+  const locked = useSyncLocked()
   const removeDeployment = useStore((s) => s.removeDeployment)
   const openSettings = useStore((s) => s.setSettingsOpen)
   const [flatpakOpen, setFlatpakOpen] = useState(false)
@@ -119,19 +122,20 @@ export function LaunchBar(): React.JSX.Element | null {
   /** Warning copy and button that depend on the custom game; null keeps the stock warning. */
   function customWarning(
     code: LaunchWarning
-  ): { detail: string; button?: { label: string; onClick(): void } } | null {
+  ): { detail: string; button?: { label: string; onClick(): void; locked?: boolean } } | null {
     if (!game?.custom) return null
     if (code === 'no-bepinex' && customBepinex)
       return {
         detail: 'Install BepInEx into this profile so mods can load.',
-        button: { label: 'Install BepInEx', onClick: () => void installLoader() }
+        button: { label: 'Install BepInEx', onClick: () => void installLoader(), locked: true }
       }
     if (code === 'loader-mismatch' && chosen)
       return {
         detail: `This profile has ${installedLoaderLabel(profile?.mods ?? [])}; ${game.displayName} is set to ${shortLoaderLabel(chosen)}.`,
         button: {
           label: `Switch to ${shortLoaderLabel(chosen)}`,
-          onClick: () => void installLoader()
+          onClick: () => void installLoader(),
+          locked: true
         }
       }
     if (code === 'no-runner')
@@ -162,7 +166,8 @@ export function LaunchBar(): React.JSX.Element | null {
               <span>{w.detail}</span>
               <Button
                 variant="quiet"
-                disabled={busy}
+                disabled={busy || (locked && extra.button.locked)}
+                title={locked && extra.button.locked ? SYNC_LOCKED_NOTE : undefined}
                 onClick={extra.button.onClick}
                 className="h-6 px-2 text-xs"
               >

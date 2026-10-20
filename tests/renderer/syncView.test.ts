@@ -4,6 +4,7 @@ import {
   SYNC_LOCKED_NOTE,
   isFollower,
   manualDownloadToast,
+  moreManualToast,
   syncBadge,
   syncUpdatedToast
 } from '../../src/renderer/src/syncView'
@@ -67,6 +68,13 @@ describe('manualDownloadToast', () => {
   it('is singular for one and plural otherwise', () => {
     expect(manualDownloadToast(1)).toBe('1 mod needs a manual download')
     expect(manualDownloadToast(3)).toBe('3 mods need a manual download')
+  })
+})
+
+describe('moreManualToast', () => {
+  it('counts the downloads still to open', () => {
+    expect(moreManualToast(1)).toBe('1 more mod needs a manual download')
+    expect(moreManualToast(2)).toBe('2 more mods need a manual download')
   })
 })
 
