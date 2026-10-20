@@ -168,6 +168,12 @@ export interface HmlApi {
   exportProfileFile(game: string, profileId: string): Promise<string | null>
   /** Uploads the profile and returns its share code plus how many local mods won't resolve for others. */
   shareProfile(game: string, profileId: string): Promise<{ code: string; localMods: number }>
+  /** Publishes the profile under a new sync code that followers keep up to date. */
+  createSyncCode(game: string, profileId: string): Promise<{ code: string; localMods: number }>
+  /** Ends the profile's sync code for its followers; the profile stays as a normal one. */
+  stopSync(game: string, profileId: string): Promise<void>
+  /** Turns a followed profile into a normal one that no longer receives updates. */
+  detachSync(game: string, profileId: string): Promise<void>
   /**
    * Reads a share code or a picked `.hml` file and holds it for importShare; null when the file
    * dialog is cancelled. r2modman codes and `.r2z` files import into `game`, the open game.
@@ -287,6 +293,9 @@ const METHOD_TABLE = {
   nxUpdate: true,
   exportProfileFile: true,
   shareProfile: true,
+  createSyncCode: true,
+  stopSync: true,
+  detachSync: true,
   previewShare: true,
   shareModDetails: true,
   importShare: true,

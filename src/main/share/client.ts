@@ -11,7 +11,7 @@ export interface ShareClientOptions {
 const UNAVAILABLE = 'Share codes are unavailable right now. Export a file instead.'
 const TIMEOUT_MS = 30_000
 
-type StatusMessages = Record<number, string>
+export type StatusMessages = Record<number, string>
 
 const UPLOAD_MESSAGES: StatusMessages = {
   400: "This profile file couldn't be shared.",
@@ -26,14 +26,15 @@ const DOWNLOAD_MESSAGES: StatusMessages = {
   429: 'Too many downloads. Try again in a minute.'
 }
 
-const baseOf = (o: ShareClientOptions): string => o.base.replace(/\/+$/, '')
+export const baseOf = (o: ShareClientOptions): string => o.base.replace(/\/+$/, '')
 
-async function request<T>(
+export async function request<T>(
   o: ShareClientOptions,
   messages: StatusMessages,
   url: string,
   init: RequestInit,
-  handle: (res: Response) => Promise<T>
+  handle: (res: Response) => Promise<T>,
+  unavailable = UNAVAILABLE
 ): Promise<T> {
   const ctl = new AbortController()
   const timer = setTimeout(() => ctl.abort(), o.timeoutMs ?? TIMEOUT_MS)
@@ -41,12 +42,12 @@ async function request<T>(
     const res = await o.fetch(url, { ...init, signal: ctl.signal })
     if (!res.ok) {
       void res.body?.cancel().catch(() => undefined)
-      throw new Error(messages[res.status] ?? UNAVAILABLE)
+      throw new Error(messages[res.status] ?? unavailable)
     }
     return await handle(res)
   } catch (e) {
     if (e instanceof Error && Object.values(messages).includes(e.message)) throw e
-    throw new Error(UNAVAILABLE, { cause: e })
+    throw new Error(unavailable, { cause: e })
   } finally {
     clearTimeout(timer)
   }
@@ -88,27 +89,36 @@ export async function downloadShare(o: ShareClientOptions, input: string): Promi
         void res.body?.cancel().catch(() => undefined)
         throw new Error(UNAVAILABLE)
       }
-      if (!res.body) throw new Error(UNAVAILABLE)
-      const reader = res.body.getReader()
-      const chunks: Uint8Array[] = []
-      let total = 0
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        total += value.length
-        if (total > MAX_HML_BYTES) {
-          await reader.cancel()
-          throw new Error(UNAVAILABLE)
-        }
-        chunks.push(value)
-      }
-      const out = new Uint8Array(total)
-      let at = 0
-      for (const c of chunks) {
-        out.set(c, at)
-        at += c.length
-      }
-      return out
+      return readBody(res, MAX_HML_BYTES)
     }
   )
+}
+
+/** Reads a response body, throwing the unavailable message if it exceeds `max` bytes. */
+export async function readBody(
+  res: Response,
+  max: number,
+  unavailable = UNAVAILABLE
+): Promise<Uint8Array> {
+  if (!res.body) throw new Error(unavailable)
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.length
+    if (total > max) {
+      await reader.cancel()
+      throw new Error(unavailable)
+    }
+    chunks.push(value)
+  }
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const c of chunks) {
+    out.set(c, at)
+    at += c.length
+  }
+  return out
 }

@@ -1468,6 +1468,15 @@ export function createServices(deps: ServiceDeps): HmlApi & {
     },
     ...nexusApi,
     ...shareApi,
+    createSyncCode: async () => {
+      throw new Error('not yet')
+    },
+    stopSync: async () => {
+      throw new Error('not yet')
+    },
+    detachSync: async () => {
+      throw new Error('not yet')
+    },
     ...customApi,
     handleNxm,
     serveArt: (url) => serveArt(url, artSources),

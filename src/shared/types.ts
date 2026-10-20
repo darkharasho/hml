@@ -165,6 +165,32 @@ export interface ConfigFile {
   modifiedAt: string
 }
 
+export type ProfileSync =
+  | {
+      role: 'owner'
+      code: string
+      revision: number
+      digest: string
+      pending?: true
+      orphaned?: true
+    }
+  | {
+      role: 'follower'
+      code: string
+      revision: number
+      behind?: true
+      manual?: { name: string; url: string }[]
+    }
+
+export interface SyncChangeSummary {
+  added: number
+  removed: number
+  updated: number
+  enabled: number
+  disabled: number
+  configs: number
+}
+
 export interface ProfileManifest {
   formatVersion: 1
   id: string
@@ -172,6 +198,7 @@ export interface ProfileManifest {
   game: string
   createdAt: string
   mods: InstalledMod[]
+  sync?: ProfileSync
 }
 
 export interface HmlExportMod {
@@ -205,6 +232,10 @@ export interface SharePreview {
   needsFolder?: boolean
   /** Set for an r2modman code or file, which doesn't say its game: it imports into `game`. */
   fromR2modman?: true
+  /** The code is a sync code: importing makes a follower profile. */
+  sync?: true
+  /** This sync code is already followed by this profile. */
+  existing?: { game: string; profileId: string }
 }
 
 /** What an import preview shows of a shared mod beyond its name: looked up from its source. */
@@ -447,6 +478,17 @@ export type HmlEvent =
       mod: { name: string; version: string }
     }
   | { type: 'nexus-failed'; message: string }
+  | {
+      type: 'sync-applied'
+      game: string
+      profileId: string
+      profileName: string
+      changes: SyncChangeSummary
+      manual: { name: string; url: string }[]
+    }
+  | { type: 'sync-ended'; game: string; profileId: string; profileName: string }
+  | { type: 'sync-state'; game: string; profileId: string }
+  | { type: 'sync-error'; game: string; profileId: string; message: string }
   /** Mod update counts from the background check (or a profile's own check). */
   | { type: 'update-summary'; summary: UpdateSummary }
   /** A notification was clicked: show this profile. */

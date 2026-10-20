@@ -1101,6 +1101,14 @@ export const useStore = create<State>()((set, get) => {
       if (e.type === 'github-updates-available') return void onGithubUpdatesAvailable(e)
       if (e.type === 'nexus-installed') return void onNexusInstalled(e)
       if (e.type === 'nexus-failed') return get().toast('error', e.message)
+      // Sync events are handled by the sync UI (later task); they are not progress.
+      if (
+        e.type === 'sync-applied' ||
+        e.type === 'sync-ended' ||
+        e.type === 'sync-state' ||
+        e.type === 'sync-error'
+      )
+        return
       if (progressIdle(get())) return
       set({ progress: progressLabel(e) })
     },

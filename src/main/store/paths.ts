@@ -9,6 +9,8 @@ export interface AppPaths {
   ghToken: string
   nxKey: string
   nxGames: string
+  /** Owner key of a sync code, encrypted. */
+  syncKey(code: string): string
   nxAddedGames: string
   customGames: string
   /** Steam store cover URLs by app id. */
@@ -39,6 +41,7 @@ export function makePaths(root: string): AppPaths {
     ghCache: path.join(root, 'cache', 'github.json'),
     ghToken: path.join(root, 'secrets', 'github-token.bin'),
     nxKey: path.join(root, 'secrets', 'nexus-key.bin'),
+    syncKey: (code) => path.join(root, 'secrets', `sync-${code}.bin`),
     nxGames: path.join(root, 'cache', 'nexus-games.json'),
     nxAddedGames: path.join(root, 'nexus-added-games.json'),
     customGames: path.join(root, 'custom-games.json'),
