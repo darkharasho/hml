@@ -1,71 +1,34 @@
 import { newCode, normalizeCode } from './code'
+import { err, isZip, MAX_BYTES, readCapped, startsWithExport, TTL_SECONDS } from './http'
+import { handleSync, type CacheLike } from './sync'
+
+export { MAX_BYTES, TTL_SECONDS }
+export type { CacheLike }
 
 export interface KvLike {
   get(key: string, type: 'arrayBuffer'): Promise<ArrayBuffer | null>
   put(
     key: string,
     value: ArrayBuffer | Uint8Array,
-    opts?: { expirationTtl?: number }
+    opts?: { expirationTtl?: number; metadata?: unknown }
   ): Promise<void>
+  getWithMetadata<M>(
+    key: string,
+    type: 'arrayBuffer'
+  ): Promise<{ value: ArrayBuffer | null; metadata: M | null }>
 }
 
 export interface Env {
   PROFILES: KvLike
   UPLOAD_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> }
   DOWNLOAD_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> }
+  SYNC_CHECK_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> }
+  SYNC_PUBLISH_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> }
 }
-
-export const MAX_BYTES = 10485760
-export const TTL_SECONDS = 31536000
 
 const MAX_ATTEMPTS = 3
 const PREFIX = '/v1/profiles'
-
-function err(status: number, error: string): Response {
-  return new Response(JSON.stringify({ error }), {
-    status,
-    headers: { 'content-type': 'application/json' }
-  })
-}
-
-/** Reads the body, aborting with null as soon as it exceeds MAX_BYTES. */
-async function readCapped(req: Request): Promise<Uint8Array | null> {
-  if (!req.body) return new Uint8Array(0)
-  const reader = req.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > MAX_BYTES) {
-      await reader.cancel()
-      return null
-    }
-    chunks.push(value)
-  }
-  const out = new Uint8Array(total)
-  let off = 0
-  for (const c of chunks) {
-    out.set(c, off)
-    off += c.byteLength
-  }
-  return out
-}
-
-function isZip(b: Uint8Array): boolean {
-  return b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04
-}
-
-const FIRST_ENTRY = 'export.json'
-
-/** True when the zip's first local file header names `export.json`, as every .hml does. */
-function startsWithExport(b: Uint8Array): boolean {
-  if (b.length < 30) return false
-  const nameLen = b[26] | (b[27] << 8)
-  if (nameLen !== FIRST_ENTRY.length || b.length < 30 + nameLen) return false
-  return new TextDecoder().decode(b.subarray(30, 30 + nameLen)) === FIRST_ENTRY
-}
+const SYNC_PREFIX = '/v1/sync'
 
 async function upload(req: Request, env: Env, rand?: (n: number) => Uint8Array): Promise<Response> {
   const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown'
@@ -115,12 +78,26 @@ async function download(req: Request, raw: string, env: Env): Promise<Response> 
   })
 }
 
-export function createHandler(rand?: (n: number) => Uint8Array): {
+export function createHandler(
+  rand?: (n: number) => Uint8Array,
+  cache?: CacheLike
+): {
   fetch(req: Request, env: Env): Promise<Response>
 } {
   return {
     async fetch(req: Request, env: Env): Promise<Response> {
       const path = new URL(req.url).pathname
+      if (path === SYNC_PREFIX || path.startsWith(`${SYNC_PREFIX}/`)) {
+        const raw = path.slice(SYNC_PREFIX.length + 1)
+        if (raw.includes('/')) return err(404, 'not-found')
+        return handleSync(
+          req,
+          env,
+          cache ?? (caches as unknown as { default: CacheLike }).default,
+          rand,
+          raw
+        )
+      }
       if (path === PREFIX) {
         return req.method === 'POST' ? upload(req, env, rand) : err(405, 'method-not-allowed')
       }

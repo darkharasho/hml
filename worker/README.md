@@ -22,3 +22,21 @@ npx wrangler@4 deploy
   `404 not-found`, `429 rate-limited`.
 
 Profiles expire after one year (KV `expirationTtl`).
+
+## Sync routes
+
+Synced profiles let an owner publish revisions of a profile under a 12-character code
+(`XXXX-XXXX-XXXX`); followers poll cheaply for newer revisions. Bodies are `.hml` zips, validated
+like share uploads. Every response carries `cache-control: no-store`.
+
+- `POST /v1/sync` (10 per minute per IP): returns `201 {"code", "ownerKey", "revision": 1}`.
+  The server stores only the SHA-256 of `ownerKey`.
+- `PUT /v1/sync/:code` with `authorization: Bearer <ownerKey>` (same limiter): publishes the next
+  revision, `200 {"revision": N}`. Errors: `401 bad-key`, `404 not-found`, `410 ended`.
+- `GET /v1/sync/:code?since=N` (30 per minute per IP): `304` with `x-hml-revision` when the latest
+  revision is at most N, otherwise `200` with the zip and `x-hml-revision`. Errors: `404`, `410 ended`.
+- `DELETE /v1/sync/:code` with bearer: stops syncing (`204`) by writing an `ended` tombstone.
+
+Free-tier budget: one KV write per publish or stop. Revision metadata is cached at the edge for
+60 seconds (`https://sync-meta.hml/<code>`, dropped on PUT and DELETE), so checks hit KV at most
+once per minute per code per colo. Entries expire after one year, refreshed on every publish.
