@@ -181,7 +181,7 @@ describe('applyRevision', () => {
     const r = await sync({
       export: exp([ts('a', '1.0.0', false), ts('b', '1.0.0', true), ts('c', '1.0.0', false)])
     })
-    expect(r).toMatchObject({ enabled: 1, disabled: 2, added: 1 })
+    expect(r).toMatchObject({ enabled: 1, disabled: 1, added: 1 })
     expect(mods.map((m) => [m.id, m.enabled])).toEqual([
       ['ts:o-a', false],
       ['ts:o-b', true],
@@ -218,7 +218,8 @@ describe('applyRevision', () => {
     const r = await sync({ export: exp([ts('a'), ts('b', '1.0.0', false)]) })
     expect(r.failed).toHaveLength(1)
     expect(r.failed[0].reason).toBe('HTTP 500')
-    expect(r).toMatchObject({ added: 1, disabled: 1 })
+    expect(r).toMatchObject({ added: 1, disabled: 0 })
+    expect(mods[0].enabled).toBe(false)
     expect(mods.map((m) => m.id)).toEqual(['ts:o-b'])
   })
 

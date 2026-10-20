@@ -42,6 +42,12 @@ describe('config files', () => {
     ])
   })
 
+  test("ignores HML's synced-profile base copies", async () => {
+    await put('BepInEx/config/com.a.cfg')
+    await put('.hml-sync/base/BepInEx/config/com.a.cfg')
+    expect((await listConfigFiles(root)).map((f) => f.path)).toEqual(['BepInEx/config/com.a.cfg'])
+  })
+
   test('reads and writes a listed file', async () => {
     await put('BepInEx/config/com.a.cfg', 'A = 1')
     expect(await readConfigFile(root, 'BepInEx/config/com.a.cfg')).toBe('A = 1')

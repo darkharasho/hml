@@ -7,8 +7,8 @@ import type { ConfigFile } from '../../shared/types'
 const CONFIG_EXT = new Set(['.cfg', '.ini', '.toml', '.json', '.yaml', '.yml', '.xml'])
 /** Folders whose files are settings (BepInEx/config, MelonLoader's UserData, ...). */
 const CONFIG_DIRS = new Set(['config', 'configs', 'userdata'])
-/** Folders that hold no settings: caches and the loader's own internals. */
-const SKIP_DIRS = new Set(['cache', 'core', 'patchers', 'node_modules', '.git'])
+/** Folders that hold no settings: caches, the loader's own internals and HML's sync bookkeeping. */
+const SKIP_DIRS = new Set(['cache', 'core', 'patchers', 'node_modules', '.git', '.hml-sync'])
 const MAX_FILES = 2000
 const MAX_DEPTH = 8
 /** Bigger files are not settings someone edits by hand. */

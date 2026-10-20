@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { isSafeConfigPath } from '../share/hmlFile'
 
@@ -39,18 +40,29 @@ export async function readBases(profileDir: string): Promise<Map<string, Uint8Ar
   return out
 }
 
-/** Replaces the whole stored set with `configs`. */
+/**
+ * Replaces the whole stored set with `configs`. The new set is written beside the old one and
+ * swapped in, so a failed write leaves the old bases intact.
+ */
 export async function writeBases(
   profileDir: string,
   configs: Map<string, Uint8Array>
 ): Promise<void> {
-  const root = path.resolve(baseDir(profileDir))
-  await fs.rm(root, { recursive: true, force: true })
-  for (const [rel, data] of configs) {
-    const target = safeTarget(root, rel)
-    if (!target) continue
-    await fs.mkdir(path.dirname(target), { recursive: true })
-    await fs.writeFile(target, data)
+  const final = path.resolve(baseDir(profileDir))
+  const tmp = `${final}.tmp-${randomBytes(6).toString('hex')}`
+  try {
+    await fs.mkdir(tmp, { recursive: true })
+    for (const [rel, data] of configs) {
+      const target = safeTarget(tmp, rel)
+      if (!target) continue
+      await fs.mkdir(path.dirname(target), { recursive: true })
+      await fs.writeFile(target, data)
+    }
+    await fs.rm(final, { recursive: true, force: true })
+    await fs.rename(tmp, final)
+  } catch (e) {
+    await fs.rm(tmp, { recursive: true, force: true }).catch(() => undefined)
+    throw e
   }
 }
 

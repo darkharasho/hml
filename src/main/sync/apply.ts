@@ -92,6 +92,7 @@ export async function applyRevision(
   // 3. Install what's missing or at another version.
   const refreshOnce = entries.refresher(game)
   const installedIds: (string | null)[] = []
+  const addedKeys = new Set<string>()
   for (const entry of desired) {
     const key = modKey(entry.source)
     const have = before.get(key)
@@ -111,7 +112,10 @@ export async function applyRevision(
     }
     installedIds.push(r.modId)
     if (have) result.updated++
-    else result.added++
+    else {
+      result.added++
+      addedKeys.add(key)
+    }
   }
 
   // 4. A later install can move a listed Thunderstore mod through its dependencies.
@@ -123,6 +127,8 @@ export async function applyRevision(
     const mod = now.get(modKey(entry.source))
     if (!mod || mod.enabled === entry.enabled) continue
     await installers.setModEnabled(game, profileId, mod.id, entry.enabled)
+    // A new mod's state is part of arriving, not a separate change.
+    if (addedKeys.has(modKey(entry.source))) continue
     if (entry.enabled) result.enabled++
     else result.disabled++
   }
