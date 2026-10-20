@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { TsPackage, TsQuery, TsSearchResult, TsSort } from '../../../shared/types'
 import { api, errorMessage } from '../api'
 import { sourcesFor } from '../customView'
-import { useCurrentProfile, useStore, type OnlineSource } from '../store'
+import { useCurrentProfile, useStore, useSyncLocked, type OnlineSource } from '../store'
+import { SYNC_LOCKED_NOTE } from '../syncView'
 import {
   compactCount,
   displayName,
@@ -370,6 +371,7 @@ function ResultRow({ pkg, onOpen }: { pkg: TsPackage; onOpen(): void }): React.J
   const supported = useStore((s) => s.currentGame?.supported ?? false)
   const installing = useStore((s) => s.tsInstalling.includes(pkg.fullName))
   const tsInstall = useStore((s) => s.tsInstall)
+  const locked = useSyncLocked()
   const loaderIds = useStore((s) => s.currentGame?.loaderPackageIds)
   const state = installState(pkg, profile?.mods ?? [], loaderIds)
   const name = displayName(pkg.name)
@@ -425,13 +427,15 @@ function ResultRow({ pkg, onOpen }: { pkg: TsPackage; onOpen(): void }): React.J
         ) : (
           <Button
             variant={state.kind === 'update' ? 'primary' : 'ghost'}
-            disabled={!supported || installing}
+            disabled={!supported || installing || locked}
             title={
-              !supported
-                ? UNSUPPORTED_LOADER
-                : state.kind === 'update'
-                  ? `Update ${state.installed} to ${state.latest}`
-                  : undefined
+              locked
+                ? SYNC_LOCKED_NOTE
+                : !supported
+                  ? UNSUPPORTED_LOADER
+                  : state.kind === 'update'
+                    ? `Update ${state.installed} to ${state.latest}`
+                    : undefined
             }
             aria-label={`${state.kind === 'update' ? 'Update' : 'Install'} ${name}`}
             onClick={() => void tsInstall(pkg)}

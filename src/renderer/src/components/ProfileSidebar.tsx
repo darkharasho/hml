@@ -3,7 +3,9 @@ import type { ProfileManifest } from '../../../shared/types'
 import { api, errorMessage } from '../api'
 import { isLinux, isNexusOnly } from '../customView'
 import { useStore } from '../store'
+import { DETACH_CONFIRM, STOP_SYNC_CONFIRM, SYNC_TONE_CLASS, syncBadge } from '../syncView'
 import { EditGameDialog } from './AddGameDialog'
+import { DeleteProfileDialog } from './DeleteProfileDialog'
 import { GameCover } from './GameCover'
 import { ImportDialog } from './ImportDialog'
 import { ShareDialog } from './ShareDialog'
@@ -17,7 +19,8 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const createProfile = useStore((s) => s.createProfile)
   const renameProfile = useStore((s) => s.renameProfile)
   const duplicateProfile = useStore((s) => s.duplicateProfile)
-  const deleteProfile = useStore((s) => s.deleteProfile)
+  const stopSync = useStore((s) => s.stopSync)
+  const detachSync = useStore((s) => s.detachSync)
   const openProfileFolder = useStore((s) => s.openProfileFolder)
   const leaveGame = useStore((s) => s.leaveGame)
   const updateCounts = useStore((s) => (game ? s.updateSummary[game.label] : undefined))
@@ -30,6 +33,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const setCreating = useStore((s) => s.setCreatingProfile)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<ProfileManifest | null>(null)
+  const [unsyncing, setUnsyncing] = useState<ProfileManifest | null>(null)
   const [domainOpen, setDomainOpen] = useState(false)
   const [sharing, setSharing] = useState<ProfileManifest | null>(null)
   const [importOpen, setImportOpen] = useState(false)
@@ -181,6 +185,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
                   aria-hidden="true"
                 />
                 <span className="flex-1 truncate">{p.name}</span>
+                <SyncBadge profile={p} />
                 {(updateCounts?.[p.id] ?? 0) > 0 && (
                   <span
                     className="rounded-full bg-ember/15 px-1.5 text-[10px] font-semibold text-ember tabular-nums"
@@ -203,6 +208,14 @@ export function ProfileSidebar(): React.JSX.Element | null {
                     label: 'Open folder',
                     onSelect: () => void selectProfile(p.id).then(() => openProfileFolder())
                   },
+                  ...(p.sync
+                    ? [
+                        {
+                          label: p.sync.role === 'owner' ? 'Stop syncing…' : 'Detach from sync…',
+                          onSelect: () => setUnsyncing(p)
+                        }
+                      ]
+                    : []),
                   { label: 'Delete…', danger: true, onSelect: () => setDeleting(p) }
                 ]}
               />
@@ -240,19 +253,33 @@ export function ProfileSidebar(): React.JSX.Element | null {
         </Button>
       </div>
 
-      {deleting && (
+      {deleting && <DeleteProfileDialog profile={deleting} onClose={() => setDeleting(null)} />}
+      {unsyncing?.sync?.role === 'owner' && (
         <ConfirmDialog
-          title={`Delete ${deleting.name}?`}
-          body={
-            <>
-              This removes the profile and its {deleting.mods.length}{' '}
-              {deleting.mods.length === 1 ? 'mod' : 'mods'} from this PC. The game itself is not
-              touched.
-            </>
+          title={`Stop syncing ${unsyncing.name}?`}
+          body={STOP_SYNC_CONFIRM}
+          confirmLabel="Stop syncing"
+          onConfirm={() =>
+            void stopSync(unsyncing.id).then(
+              () => toast('success', `Stopped syncing ${unsyncing.name}`),
+              (e) => toast('error', errorMessage(e))
+            )
           }
-          confirmLabel="Delete profile"
-          onConfirm={() => void deleteProfile(deleting.id)}
-          onClose={() => setDeleting(null)}
+          onClose={() => setUnsyncing(null)}
+        />
+      )}
+      {unsyncing?.sync?.role === 'follower' && (
+        <ConfirmDialog
+          title={`Detach ${unsyncing.name} from sync?`}
+          body={DETACH_CONFIRM}
+          confirmLabel="Detach"
+          onConfirm={() =>
+            void detachSync(unsyncing.id).then(
+              () => toast('success', `Detached ${unsyncing.name} from sync`),
+              (e) => toast('error', errorMessage(e))
+            )
+          }
+          onClose={() => setUnsyncing(null)}
         />
       )}
       {sharing && (
@@ -288,6 +315,19 @@ export function ProfileSidebar(): React.JSX.Element | null {
       {importOpen && <ImportDialog onClose={() => setImportOpen(false)} />}
       {domainOpen && <NexusDomainDialog game={game.label} onClose={() => setDomainOpen(false)} />}
     </aside>
+  )
+}
+
+/** A profile's sync role, beside its name. */
+function SyncBadge({ profile }: { profile: ProfileManifest }): React.JSX.Element | null {
+  const badge = syncBadge(profile.sync)
+  if (!badge) return null
+  return (
+    <span
+      className={`shrink-0 rounded px-1.5 py-px text-[10px] font-medium ${SYNC_TONE_CLASS[badge.tone]}`}
+    >
+      {badge.label}
+    </span>
   )
 }
 

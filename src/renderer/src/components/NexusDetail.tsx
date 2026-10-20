@@ -10,7 +10,8 @@ import {
   NX_NO_KEY,
   relativeDate
 } from '../nxView'
-import { useCurrentProfile, useStore } from '../store'
+import { useCurrentProfile, useStore, useSyncLocked } from '../store'
+import { SYNC_LOCKED_NOTE } from '../syncView'
 import { relativeTime, UNSUPPORTED_LOADER } from '../tsView'
 import { AdultBadge, NexusThumb } from './NexusBrowse'
 import { Button, Icon, Modal } from './ui'
@@ -32,6 +33,7 @@ export function NexusDetail({
   const supported = useStore((s) => s.currentGame?.supported ?? false)
   const installing = useStore((s) => s.nxInstalling.includes(initial.modId))
   const nxInstall = useStore((s) => s.nxInstall)
+  const locked = useSyncLocked()
   const toast = useStore((s) => s.toast)
   const openSettings = useStore((s) => s.setSettingsOpen)
   const [needsKey, setNeedsKey] = useState(false)
@@ -191,8 +193,8 @@ export function NexusDetail({
                 ) : (
                   <Button
                     variant="ghost"
-                    disabled={!supported || installing}
-                    title={supported ? undefined : UNSUPPORTED_LOADER}
+                    disabled={!supported || installing || locked}
+                    title={locked ? SYNC_LOCKED_NOTE : supported ? undefined : UNSUPPORTED_LOADER}
                     aria-label={`Install ${f.name}`}
                     onClick={() =>
                       void nxInstall(mod, f.fileId, { inlineNoKey: true }).then((r) =>

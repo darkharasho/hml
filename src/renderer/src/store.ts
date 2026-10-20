@@ -24,6 +24,7 @@ import { isGhAccessError } from '../../shared/messages'
 import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
+import { isFollower, manualDownloadToast, syncUpdatedToast } from './syncView'
 import { displayName, installToast, progressLabel } from './tsView'
 
 export type ToastKind = 'error' | 'success' | 'info'
@@ -101,7 +102,17 @@ interface State {
   createProfile(name: string): Promise<void>
   renameProfile(id: string, name: string): Promise<void>
   duplicateProfile(id: string): Promise<void>
-  deleteProfile(id: string): Promise<void>
+  /**
+   * Deletes a profile; true once it is gone. With `stopSync` the profile's sync code is ended
+   * first, and a failed stop (shown as a toast) keeps the profile so the code can still be ended.
+   */
+  deleteProfile(id: string, opts?: { stopSync?: boolean }): Promise<boolean>
+  /** Publishes the profile under a new sync code; errors propagate for the dialog to show. */
+  createSyncCode(id: string): Promise<{ code: string; localMods: number }>
+  /** Ends the profile's sync code for friends; errors propagate. */
+  stopSync(id: string): Promise<void>
+  /** Turns a followed profile into a normal one; errors propagate. */
+  detachSync(id: string): Promise<void>
   /** Switches to a game's profile (after an import) and reloads its list. */
   openImportedProfile(game: string, profileId: string): Promise<void>
   openProfileFolder(): Promise<void>
@@ -396,6 +407,26 @@ export const useStore = create<State>()((set, get) => {
     get().toast('success', `Installed ${e.mod.name} ${e.mod.version} from Nexus Mods`)
   }
 
+  /** Reloads the profile list when a sync event is about the open game. */
+  async function reloadIfCurrent(game: string): Promise<void> {
+    if (get().currentGame?.label === game) await reloadProfiles().catch(fail)
+  }
+
+  async function onSyncApplied(e: Extract<HmlEvent, { type: 'sync-applied' }>): Promise<void> {
+    get().toast('success', syncUpdatedToast(e.profileName, e.changes))
+    if (e.manual.length > 0) {
+      const urls = e.manual.map((m) => m.url)
+      get().toast('info', manualDownloadToast(e.manual.length), {
+        label: 'Open',
+        run: () => {
+          for (const url of urls.slice(0, NX_MAX_UPDATE_TABS))
+            void api.openExternal(url).catch(fail)
+        }
+      })
+    }
+    await reloadIfCurrent(e.game)
+  }
+
   /** Toasts a Nexus error, with a Settings action when the API key is missing. */
   function nexusFail(e: unknown, inlineNoKey = false): 'needs-key' | 'done' {
     const message = errorMessage(e)
@@ -606,9 +637,13 @@ export const useStore = create<State>()((set, get) => {
       }
     },
 
-    async deleteProfile(id) {
+    async deleteProfile(id, opts) {
       const game = get().currentGame
-      if (!game) return
+      if (!game) return false
+      // Once the profile is gone its owner key is forgotten and the code can't be ended, so a
+      // stop that fails keeps the profile.
+      if (opts?.stopSync && (await busy(() => api.stopSync(game.label, id))) === failed)
+        return false
       const ok = await busy(async () => {
         await api.deleteProfile(game.label, id)
         const profiles = await loadProfilesEnsuringOne(game.label)
@@ -616,6 +651,29 @@ export const useStore = create<State>()((set, get) => {
       })
       if (ok !== failed && get().currentGame?.label === game.label && get().currentProfile === id)
         await get().selectProfile(get().profiles[0].id)
+      return ok !== failed
+    },
+
+    async createSyncCode(id) {
+      const game = get().currentGame
+      if (!game) throw new Error('Pick a game first.')
+      const result = await tracked(() => api.createSyncCode(game.label, id))
+      await reloadProfiles().catch(fail)
+      return result
+    },
+
+    async stopSync(id) {
+      const game = get().currentGame
+      if (!game) return
+      await tracked(() => api.stopSync(game.label, id))
+      await reloadProfiles().catch(fail)
+    },
+
+    async detachSync(id) {
+      const game = get().currentGame
+      if (!game) return
+      await tracked(() => api.detachSync(game.label, id))
+      await reloadProfiles().catch(fail)
     },
 
     async openImportedProfile(game, profileId) {
@@ -1101,14 +1159,13 @@ export const useStore = create<State>()((set, get) => {
       if (e.type === 'github-updates-available') return void onGithubUpdatesAvailable(e)
       if (e.type === 'nexus-installed') return void onNexusInstalled(e)
       if (e.type === 'nexus-failed') return get().toast('error', e.message)
-      // Sync events are handled by the sync UI (later task); they are not progress.
-      if (
-        e.type === 'sync-applied' ||
-        e.type === 'sync-ended' ||
-        e.type === 'sync-state' ||
-        e.type === 'sync-error'
-      )
-        return
+      if (e.type === 'sync-applied') return void onSyncApplied(e)
+      if (e.type === 'sync-ended') {
+        get().toast('info', `${e.profileName} is no longer synced`)
+        return void reloadIfCurrent(e.game)
+      }
+      if (e.type === 'sync-state') return void reloadIfCurrent(e.game)
+      if (e.type === 'sync-error') return get().toast('error', e.message)
       if (progressIdle(get())) return
       set({ progress: progressLabel(e) })
     },
@@ -1212,4 +1269,9 @@ export const useStore = create<State>()((set, get) => {
 /** The selected profile's manifest, or null. */
 export function useCurrentProfile(): ProfileManifest | null {
   return useStore((s) => s.profiles.find((p) => p.id === s.currentProfile) ?? null)
+}
+
+/** The current profile follows a sync code, so its mods can't be installed or changed here. */
+export function useSyncLocked(): boolean {
+  return useStore((s) => isFollower(s.profiles.find((p) => p.id === s.currentProfile)))
 }

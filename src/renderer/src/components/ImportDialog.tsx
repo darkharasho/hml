@@ -3,6 +3,7 @@ import type { ImportResult, ShareModDetail, SharePreview } from '../../../shared
 import { api, errorMessage } from '../api'
 import { SHARE_SOURCE_BADGE, gameMismatchNote, importProgress, importSummary } from '../shareView'
 import { useStore } from '../store'
+import { ALREADY_FOLLOWING } from '../syncView'
 import { initials } from '../tsView'
 import { useFallbackSrc } from '../useFallbackSrc'
 import { Button, Icon, Modal } from './ui'
@@ -16,6 +17,7 @@ const FIELD =
 export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Element {
   const currentGame = useStore((s) => s.currentGame?.label ?? null)
   const openImported = useStore((s) => s.openImportedProfile)
+  const toast = useStore((s) => s.toast)
   const [code, setCode] = useState('')
   const [opening, setOpening] = useState<'code' | 'file' | null>(null)
   const [preview, setPreview] = useState<SharePreview | null>(null)
@@ -85,6 +87,14 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
     try {
       const p = await api.previewShare({ ...input, game: currentGame ?? undefined })
       if (!mounted.current || !p) return
+      // A sync code this HML already follows opens that profile instead of making a second one.
+      if (p.existing) {
+        const { game, profileId } = p.existing
+        onClose()
+        toast('info', ALREADY_FOLLOWING)
+        void openImported(game, profileId)
+        return
+      }
       setPreview(p)
       setName(p.profileName)
       setFolder(null)
@@ -155,7 +165,7 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
           onClick={() => void runImport()}
         >
           <Icon name="download" />
-          {importing ? 'Importing…' : 'Import'}
+          {importing ? 'Importing…' : preview.sync ? 'Import and follow' : 'Import'}
         </Button>
       </div>
     </div>
@@ -166,7 +176,12 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   )
 
   return (
-    <Modal title="Import profile" onClose={close} width="w-[560px]" footer={footer}>
+    <Modal
+      title={preview?.sync && !result ? 'Synced profile' : 'Import profile'}
+      onClose={close}
+      width="w-[560px]"
+      footer={footer}
+    >
       {result ? (
         <ImportResultView result={result} />
       ) : preview ? (
@@ -177,6 +192,12 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
               {preview.mods.length} {preview.mods.length === 1 ? 'mod' : 'mods'}
             </span>
           </div>
+          {preview.sync && (
+            <p className="mt-1.5 text-xs">
+              Your copy gets its owner&apos;s changes automatically. Detach it any time to make it
+              your own.
+            </p>
+          )}
           {preview.fromR2modman && (
             <p className="mt-1.5 text-xs">
               From r2modman. Its codes don&apos;t say which game they&apos;re for, so it imports

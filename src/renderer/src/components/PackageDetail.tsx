@@ -3,7 +3,8 @@ import type { TsDocKind, TsPackage } from '../../../shared/types'
 import { findInstalledMod } from '../../../shared/modIdentity'
 import { compareVersions } from '../../../shared/version'
 import { api, errorMessage } from '../api'
-import { useCurrentProfile, useStore } from '../store'
+import { useCurrentProfile, useStore, useSyncLocked } from '../store'
+import { SYNC_LOCKED_NOTE } from '../syncView'
 import {
   compactCount,
   displayName,
@@ -132,6 +133,7 @@ export function PackageDetail({
   const supported = useStore((s) => s.currentGame?.supported ?? false)
   const installing = useStore((s) => s.tsInstalling.includes(pkg.fullName))
   const tsInstall = useStore((s) => s.tsInstall)
+  const locked = useSyncLocked()
   const toast = useStore((s) => s.toast)
   const loaderIds = useStore((s) => s.currentGame?.loaderPackageIds) ?? NO_LOADERS
   const [version, setVersion] = useState(() => newestVersion(pkg)?.version ?? '')
@@ -172,8 +174,8 @@ export function PackageDetail({
             </Button>
             <Button
               variant="primary"
-              disabled={!supported || installing || isInstalled || !selected}
-              title={supported ? undefined : UNSUPPORTED_LOADER}
+              disabled={!supported || installing || isInstalled || !selected || locked}
+              title={locked ? SYNC_LOCKED_NOTE : supported ? undefined : UNSUPPORTED_LOADER}
               onClick={() => void tsInstall(pkg, version)}
             >
               <Icon name="download" />

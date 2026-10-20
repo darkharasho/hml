@@ -27,7 +27,13 @@ const api = vi.hoisted(() => ({
   uninstallMod: vi.fn(),
   getModDeps: vi.fn(),
   reportUpdateCount: vi.fn(async () => undefined),
-  getUpdateSummary: vi.fn(async () => ({}))
+  getUpdateSummary: vi.fn(async () => ({})),
+  openExternal: vi.fn(async () => undefined),
+  createProfile: vi.fn(),
+  deleteProfile: vi.fn(),
+  createSyncCode: vi.fn(),
+  stopSync: vi.fn(),
+  detachSync: vi.fn()
 }))
 vi.mock('../../src/renderer/src/api', () => ({
   api,
@@ -35,7 +41,7 @@ vi.mock('../../src/renderer/src/api', () => ({
 }))
 
 const { useStore } = await import('../../src/renderer/src/store')
-const { NX_NO_KEY } = await import('../../src/renderer/src/nxView')
+const { NX_MAX_UPDATE_TABS, NX_NO_KEY } = await import('../../src/renderer/src/nxView')
 
 const status: DeploymentStatus = {
   profileId: 'p',
@@ -622,5 +628,162 @@ describe('store init', () => {
     expect(useStore.getState().currentGame).toBeNull()
     // The last game stays known, so the picker can offer a way back to it.
     expect(useStore.getState().settings?.lastGame).toBe('nexus-x')
+  })
+})
+
+describe('store sync events', () => {
+  const repo = { label: 'repo', displayName: 'R.E.P.O.', loader: 'bepinex', packageIndex: null }
+  const changes = { added: 2, removed: 0, updated: 1, enabled: 0, disabled: 0, configs: 1 }
+  const reloaded = [{ id: 'p', name: 'Friends', mods: [] }] as unknown as ProfileManifest[]
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+  const shown = (): [string, string][] => useStore.getState().toasts.map((t) => [t.kind, t.message])
+
+  beforeEach(() => {
+    api.listProfiles.mockReset().mockResolvedValue(reloaded)
+    api.openExternal.mockReset().mockResolvedValue(undefined)
+    useStore.setState({
+      currentGame: repo as unknown as GameSummary,
+      currentProfile: 'p',
+      profiles: [],
+      toasts: [],
+      progress: null
+    })
+  })
+
+  test("sync-applied toasts and reloads the current game's profiles", async () => {
+    useStore.getState().handleEvent({
+      type: 'sync-applied',
+      game: 'repo',
+      profileId: 'p',
+      profileName: 'Friends',
+      changes,
+      manual: []
+    })
+    await settle()
+    expect(shown()).toEqual([['success', 'Friends updated: +2 mods, 1 updated, configs changed']])
+    expect(api.listProfiles).toHaveBeenCalledWith('repo')
+    expect(useStore.getState().profiles).toEqual(reloaded)
+  })
+
+  test("sync-applied for another game toasts without reloading this game's profiles", async () => {
+    useStore.getState().handleEvent({
+      type: 'sync-applied',
+      game: 'other',
+      profileId: 'q',
+      profileName: 'Elsewhere',
+      changes,
+      manual: []
+    })
+    await settle()
+    expect(shown()).toEqual([['success', 'Elsewhere updated: +2 mods, 1 updated, configs changed']])
+    expect(api.listProfiles).not.toHaveBeenCalled()
+  })
+
+  test('sync-applied with manual adds an Open action', async () => {
+    const manual = Array.from({ length: 7 }, (_, i) => ({
+      name: `M${i}`,
+      url: `https://www.nexusmods.com/repo/mods/${i}`
+    }))
+    useStore.getState().handleEvent({
+      type: 'sync-applied',
+      game: 'repo',
+      profileId: 'p',
+      profileName: 'Friends',
+      changes,
+      manual
+    })
+    await settle()
+    const info = useStore.getState().toasts.find((t) => t.kind === 'info')
+    expect(info?.message).toBe('7 mods need a manual download')
+    expect(info?.action?.label).toBe('Open')
+    info?.action?.run()
+    await settle()
+    expect(api.openExternal.mock.calls.map((c) => (c as unknown[])[0])).toEqual(
+      manual.slice(0, NX_MAX_UPDATE_TABS).map((m) => m.url)
+    )
+  })
+
+  test('sync-ended toasts and reloads', async () => {
+    useStore
+      .getState()
+      .handleEvent({ type: 'sync-ended', game: 'repo', profileId: 'p', profileName: 'Friends' })
+    await settle()
+    expect(shown()).toEqual([['info', 'Friends is no longer synced']])
+    expect(api.listProfiles).toHaveBeenCalledWith('repo')
+  })
+
+  test('sync-state reloads only for the current game and shows nothing', async () => {
+    useStore.getState().handleEvent({ type: 'sync-state', game: 'other', profileId: 'q' })
+    await settle()
+    expect(api.listProfiles).not.toHaveBeenCalled()
+    useStore.getState().handleEvent({ type: 'sync-state', game: 'repo', profileId: 'p' })
+    await settle()
+    expect(api.listProfiles).toHaveBeenCalledWith('repo')
+    expect(shown()).toEqual([])
+    expect(useStore.getState().progress).toBeNull()
+  })
+
+  test('sync-error toasts its message', async () => {
+    useStore.getState().handleEvent({
+      type: 'sync-error',
+      game: 'repo',
+      profileId: 'p',
+      message: 'Update HML to keep following Friends.'
+    })
+    await settle()
+    expect(shown()).toEqual([['error', 'Update HML to keep following Friends.']])
+  })
+})
+
+describe('store deleting a synced owner profile', () => {
+  const repo = { label: 'repo', displayName: 'R.E.P.O.', loader: 'bepinex', packageIndex: null }
+  const owner = {
+    id: 'o',
+    name: 'Mine',
+    mods: [],
+    sync: { role: 'owner', code: 'ABCDEFGHJKMN', revision: 1, digest: 'd' }
+  } as unknown as ProfileManifest
+  const other = { id: 'x', name: 'Other', mods: [] } as unknown as ProfileManifest
+
+  beforeEach(() => {
+    api.stopSync.mockReset().mockResolvedValue(undefined)
+    api.deleteProfile.mockReset().mockResolvedValue(undefined)
+    api.listProfiles.mockReset().mockResolvedValue([other])
+    api.getSettings.mockReset().mockResolvedValue({ lastProfile: {} })
+    api.saveSettings.mockReset().mockImplementation(async (s: unknown) => s)
+    api.getLaunchWarnings.mockReset().mockResolvedValue([])
+    api.ghCheckUpdates.mockReset().mockResolvedValue([])
+    useStore.setState({
+      currentGame: repo as unknown as GameSummary,
+      currentProfile: 'x',
+      profiles: [owner, other],
+      toasts: []
+    })
+  })
+
+  test('stops syncing before deleting when asked', async () => {
+    const order: string[] = []
+    api.stopSync.mockImplementation(async () => void order.push('stop'))
+    api.deleteProfile.mockImplementation(async () => void order.push('delete'))
+    expect(await useStore.getState().deleteProfile('o', { stopSync: true })).toBe(true)
+    expect(api.stopSync).toHaveBeenCalledWith('repo', 'o')
+    expect(order).toEqual(['stop', 'delete'])
+    expect(useStore.getState().profiles).toEqual([other])
+  })
+
+  test('a failed stop keeps the profile and shows the error', async () => {
+    api.stopSync.mockRejectedValue(new Error('HML is offline.'))
+    expect(await useStore.getState().deleteProfile('o', { stopSync: true })).toBe(false)
+    expect(api.deleteProfile).not.toHaveBeenCalled()
+    expect(useStore.getState().profiles).toEqual([owner, other])
+    expect(useStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([
+      ['error', 'HML is offline.']
+    ])
+  })
+
+  test('without the option it deletes without stopping', async () => {
+    expect(await useStore.getState().deleteProfile('o')).toBe(true)
+    expect(api.stopSync).not.toHaveBeenCalled()
+    expect(api.deleteProfile).toHaveBeenCalledWith('repo', 'o')
   })
 })

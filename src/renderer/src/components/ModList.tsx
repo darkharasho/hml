@@ -21,6 +21,7 @@ import {
 } from '../ghView'
 import { nexusModUrl } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
+import { LOCAL_WONT_SYNC, SYNC_LOCKED_NOTE, isFollower, isOwner } from '../syncView'
 import { initials, UNSUPPORTED_LOADER } from '../tsView'
 import { useFallbackSrc } from '../useFallbackSrc'
 import { Browse } from './Browse'
@@ -141,6 +142,9 @@ export function ModList(): React.JSX.Element | null {
   const [detail, setDetail] = useState<Detail | null>(null)
 
   if (!profile || !game) return null
+  // A followed profile's mods change only through its sync code; configs stay editable.
+  const locked = isFollower(profile)
+  const owner = isOwner(profile)
   const updateById = new Map(updates.map((u) => [u.modId, u]))
   const ghUpdateById = new Map(ghUpdates.map((u) => [u.modId, u]))
   const nxUpdateById = new Map(nxUpdates.map((u) => [u.modId, u]))
@@ -169,7 +173,7 @@ export function ModList(): React.JSX.Element | null {
   const fileButton = (
     <Button
       variant={githubPrimary ? 'quiet' : 'ghost'}
-      disabled={busy}
+      disabled={busy || locked}
       onClick={() => void installFromFile()}
     >
       <Icon name="upload" />
@@ -179,8 +183,8 @@ export function ModList(): React.JSX.Element | null {
   const githubButton = (
     <Button
       variant={githubPrimary ? 'primary' : 'ghost'}
-      disabled={busy || !game.supported}
-      title={game.supported ? undefined : UNSUPPORTED_LOADER}
+      disabled={busy || locked || !game.supported}
+      title={locked ? SYNC_LOCKED_NOTE : game.supported ? undefined : UNSUPPORTED_LOADER}
       onClick={openGithub}
     >
       <Icon name="github" />
@@ -239,6 +243,7 @@ export function ModList(): React.JSX.Element | null {
         unreadable = true
       }
     }
+    if (locked) return
     if (unreadable) toast('error', "Couldn't read a dropped file. Use Install from file instead.")
     void installFromPaths(paths)
   }
@@ -247,12 +252,12 @@ export function ModList(): React.JSX.Element | null {
     <section
       className="relative flex min-h-0 flex-1 flex-col"
       onDragEnter={(e) => {
-        if (!hasFiles(e)) return
+        if (!hasFiles(e) || locked) return
         depth.current += 1
         setDragging(true)
       }}
       onDragOver={(e) => {
-        if (!hasFiles(e)) return
+        if (!hasFiles(e) || locked) return
         e.preventDefault()
         e.dataTransfer.dropEffect = 'copy'
       }}
@@ -314,6 +319,16 @@ export function ModList(): React.JSX.Element | null {
         </div>
       </div>
 
+      {locked && (
+        <p
+          role="note"
+          className="mx-6 mt-3 flex items-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-sm text-muted"
+        >
+          <Icon name="refresh" className="size-4 shrink-0 text-teal" />
+          {SYNC_LOCKED_NOTE}
+        </p>
+      )}
+
       {onlineOpened && (
         <div className={activeTab === 'online' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
           <Browse key={game.label} game={game.label} />
@@ -342,7 +357,8 @@ export function ModList(): React.JSX.Element | null {
           onGithub={openGithub}
           onBrowse={hasOnline ? browseOnline : undefined}
           supported={game.supported}
-          busy={busy}
+          busy={busy || locked}
+          locked={locked}
           custom={custom}
           githubPrimary={githubPrimary}
         />
@@ -386,7 +402,7 @@ export function ModList(): React.JSX.Element | null {
             {updateCount > 0 && (
               <Button
                 variant="primary"
-                disabled={!game.supported || updatingAny}
+                disabled={!game.supported || updatingAny || locked}
                 title={game.supported ? undefined : UNSUPPORTED_LOADER}
                 onClick={() => void updateAll()}
               >
@@ -420,6 +436,8 @@ export function ModList(): React.JSX.Element | null {
                   ghUpdate={ghUpdateById.get(m.id)}
                   nxUpdate={nxUpdateById.get(m.id)}
                   supported={game.supported}
+                  locked={locked}
+                  wontSync={owner && m.source.kind === 'local'}
                   onOpen={
                     m.source.kind === 'thunderstore' || m.source.kind === 'nexus'
                       ? () => void openDetail(m)
@@ -544,11 +562,17 @@ function ModRow({
   ghUpdate,
   nxUpdate,
   supported,
+  locked,
+  wontSync,
   onOpen,
   config,
   onEditConfig
 }: {
   mod: InstalledMod
+  /** The profile follows a sync code: its mods can't be changed here. */
+  locked: boolean
+  /** A local mod on a profile that publishes a sync code. */
+  wontSync: boolean
   icons: string[]
   /** The mod's config file, when one is found. */
   config?: string
@@ -617,6 +641,7 @@ function ModRow({
   const uninstall: MenuItem = {
     label: 'Uninstall…',
     danger: true,
+    disabled: locked,
     onSelect: () => void askUninstall()
   }
   const hold: MenuItem = {
@@ -624,6 +649,7 @@ function ModRow({
     checked: mod.held === true,
     toggle: true,
     divider: true,
+    disabled: locked,
     onSelect: () => void setModHeld(mod.id, mod.held !== true)
   }
   let menu: MenuItem[] = [uninstall]
@@ -645,11 +671,16 @@ function ModRow({
         onSelect: () =>
           void api.openExternal(githubRepoUrl(source)).catch((e) => toast('error', errorMessage(e)))
       },
-      { label: 'Change version…', onSelect: () => setDialog({ kind: 'version' }) },
+      {
+        label: 'Change version…',
+        disabled: locked,
+        onSelect: () => setDialog({ kind: 'version' })
+      },
       ...UPDATE_MODES.map((m, i): MenuItem => ({
         label: updateModeLabel(m),
         checked: m === mode,
         divider: i === 0,
+        disabled: locked,
         onSelect: () => void (m !== mode && setUpdateMode(mod.id, m))
       })),
       ...(canFollowPrereleases(mod)
@@ -659,6 +690,7 @@ function ModRow({
               checked: mod.github?.prereleases === true,
               toggle: true,
               divider: true,
+              disabled: locked,
               onSelect: () => void setPrereleases(mod.id, mod.github?.prereleases !== true)
             }
           ]
@@ -745,6 +777,8 @@ function ModRow({
       {canToggle ? (
         <Toggle
           checked={mod.enabled}
+          disabled={locked}
+          title={locked ? SYNC_LOCKED_NOTE : undefined}
           label={`${mod.enabled ? 'Disable' : 'Enable'} ${mod.name}`}
           onChange={(v) => void toggle(v)}
         />
@@ -771,12 +805,20 @@ function ModRow({
       {latest && (
         <Button
           className="h-7 px-2.5 text-xs"
-          disabled={!supported || updating}
-          title={supported ? undefined : UNSUPPORTED_LOADER}
+          disabled={!supported || updating || locked}
+          title={locked ? SYNC_LOCKED_NOTE : supported ? undefined : UNSUPPORTED_LOADER}
           onClick={runUpdate}
         >
           {updating ? 'Updating…' : `Update to ${latest}`}
         </Button>
+      )}
+      {wontSync && (
+        <span
+          className="shrink-0 rounded bg-warn/10 px-1.5 py-0.5 text-[11px] font-medium text-warn"
+          title="Local files can't travel with a sync code, so friends won't get this mod"
+        >
+          {LOCAL_WONT_SYNC}
+        </span>
       )}
       {badge && (
         <span
@@ -820,6 +862,7 @@ function EmptyState({
   onBrowse,
   supported,
   busy,
+  locked,
   custom,
   githubPrimary
 }: {
@@ -829,6 +872,7 @@ function EmptyState({
   onBrowse?(): void
   supported: boolean
   busy: boolean
+  locked: boolean
   custom: boolean
   githubPrimary: boolean
 }): React.JSX.Element {
@@ -847,6 +891,7 @@ function EmptyState({
   const fileButton = (
     <Button
       variant={onBrowse || githubPrimary ? 'quiet' : custom ? 'ghost' : 'primary'}
+      disabled={locked}
       onClick={onPick}
     >
       Install from file

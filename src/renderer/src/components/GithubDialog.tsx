@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { GhInstallResult } from '../../../shared/types'
 import { errorMessage } from '../api'
 import { formatBytes } from '../ghView'
-import { useStore } from '../store'
+import { useStore, useSyncLocked } from '../store'
+import { SYNC_LOCKED_NOTE } from '../syncView'
 import { ProgressLine } from './PackageDetail'
 import { Button, Icon, Modal } from './ui'
 
@@ -12,6 +13,8 @@ type PreOnly = Extract<GhInstallResult, { kind: 'prerelease-only' }>
 /** Paste a GitHub link and install its release; asks which file when the release has several. */
 export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Element {
   const ghInstall = useStore((s) => s.ghInstall)
+  // The dialog can stay open while a sync makes the profile a follower.
+  const locked = useSyncLocked()
   const [url, setUrl] = useState('')
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -48,7 +51,7 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   }
 
   const link = url.trim()
-  const canSubmit = !running && link !== '' && (!choice || picked !== null)
+  const canSubmit = !running && !locked && link !== '' && (!choice || picked !== null)
 
   async function submit(withPrereleases = prereleases): Promise<void> {
     if (!canSubmit) return
@@ -203,6 +206,12 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
         </fieldset>
       )}
 
+      {locked && (
+        <p className="mt-4 flex items-start gap-2 text-warn">
+          <Icon name="warn" className="mt-0.5 size-4 shrink-0" />
+          <span>{SYNC_LOCKED_NOTE}</span>
+        </p>
+      )}
       {error && (
         <p role="alert" className="mt-4 flex items-start gap-2 text-danger">
           <Icon name="warn" className="mt-0.5 size-4 shrink-0" />

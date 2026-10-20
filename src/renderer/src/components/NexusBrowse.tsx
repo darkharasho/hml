@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { NxMod, NxQuery, NxSort } from '../../../shared/types'
 import { api, errorMessage } from '../api'
 import { formatCount, installedNexusMod } from '../nxView'
-import { useCurrentProfile, useStore } from '../store'
+import { useCurrentProfile, useStore, useSyncLocked } from '../store'
+import { SYNC_LOCKED_NOTE } from '../syncView'
 import { initials, UNSUPPORTED_LOADER } from '../tsView'
 import { NexusDetail } from './NexusDetail'
 import { Button, Icon } from './ui'
@@ -253,6 +254,7 @@ function ResultRow({ mod, onOpen }: { mod: NxMod; onOpen(): void }): React.JSX.E
   const supported = useStore((s) => s.currentGame?.supported ?? false)
   const installing = useStore((s) => s.nxInstalling.includes(mod.modId))
   const nxInstall = useStore((s) => s.nxInstall)
+  const locked = useSyncLocked()
   const installed = installedNexusMod(profile?.mods ?? [], mod.modId)
 
   return (
@@ -297,8 +299,14 @@ function ResultRow({ mod, onOpen }: { mod: NxMod; onOpen(): void }): React.JSX.E
         ) : (
           <Button
             variant="ghost"
-            disabled={!supported || installing}
-            title={supported ? 'Install the newest main file' : UNSUPPORTED_LOADER}
+            disabled={!supported || installing || locked}
+            title={
+              locked
+                ? SYNC_LOCKED_NOTE
+                : supported
+                  ? 'Install the newest main file'
+                  : UNSUPPORTED_LOADER
+            }
             aria-label={`Install ${mod.name}`}
             onClick={() => void nxInstall(mod)}
           >

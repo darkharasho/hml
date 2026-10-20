@@ -250,6 +250,8 @@ export interface MenuItem {
   label: string
   onSelect(): void
   danger?: boolean
+  /** Shown but can't be chosen. */
+  disabled?: boolean
   /** Set (true or false) to make this a radio-style item; true shows a check mark. */
   checked?: boolean
   /** With `checked`, an on/off item (a checkbox) instead of one of a radio group. */
@@ -349,11 +351,12 @@ export function Menu({
                     : 'menuitemradio'
               }
               aria-checked={item.checked}
+              disabled={item.disabled}
               onClick={() => {
                 if (ref.current) ref.current.open = false
                 item.onSelect()
               }}
-              className={`flex w-full items-center gap-2 py-1.5 pr-4 text-left text-sm hover:bg-line/60 ${
+              className={`flex w-full items-center gap-2 py-1.5 pr-4 text-left text-sm hover:bg-line/60 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent ${
                 hasChecks ? 'pl-2' : 'pl-3'
               } ${item.danger ? 'text-danger' : 'text-fg'}`}
             >
