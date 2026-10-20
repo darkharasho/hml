@@ -294,7 +294,11 @@ describe('/v1/sync', () => {
   it('unknown code is 404; a 10-char share code is 400 bad-code', async () => {
     const { env, cache } = makeEnv()
     const h = createHandler(undefined, cache)
-    expect((await h.fetch(get('ABCDEFGHJKMN'), env)).status).toBe(404)
+    const missing = await h.fetch(get('ABCDEFGHJKMN'), env)
+    expect(missing.status).toBe(404)
+    // The app treats only this exact answer as "the code is gone" (src/main/sync/client.ts).
+    expect(missing.headers.get('cache-control')).toBe('no-store')
+    expect(await missing.json()).toEqual({ error: 'not-found' })
     const res = await h.fetch(get('ABCDEFGHJK'), env)
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'bad-code' })

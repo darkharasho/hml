@@ -37,6 +37,9 @@ like share uploads. Every response carries `cache-control: no-store`.
   revision is at most N, otherwise `200` with the zip and `x-hml-revision`. Errors: `404`, `410 ended`.
 - `DELETE /v1/sync/:code` with bearer: stops syncing (`204`) by writing an `ended` tombstone.
 
-Free-tier budget: one KV write per publish or stop. Revision metadata is cached at the edge for
-60 seconds (`https://sync-meta.hml/<code>`, dropped on PUT and DELETE), so checks hit KV at most
-once per minute per code per colo. Entries expire after one year, refreshed on every publish.
+Free-tier budget: one KV write per publish or stop. Each check is one KV metadata read: the
+revision lives in the entry's metadata and the body is streamed and cancelled unless the check
+returns the zip, so a `304` or `410` never reads the body. The Worker also caches the revision
+metadata for 60 seconds (`https://sync-meta.hml/<code>`, dropped on PUT and DELETE), but the Cache
+API only works on a custom domain; on `workers.dev` it does nothing and every check reads KV.
+Entries expire after one year, refreshed on every publish.

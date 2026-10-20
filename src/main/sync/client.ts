@@ -28,9 +28,32 @@ export class SyncGoneError extends Error {
 
 const STATUS_HEADER = 'x-hml-status'
 
+/** Longest 404 body read when telling the Worker's own not-found from anything else. */
+const MAX_NOT_FOUND_BYTES = 1024
+
+/**
+ * Whether a 404 is the Worker's sync route saying the code doesn't exist: its JSON
+ * `{"error":"not-found"}` with `cache-control: no-store`. Any other 404 (a proxy, an outage page,
+ * a Worker without sync routes) says nothing about the code, so it must not detach anyone.
+ */
+async function isSyncNotFound(res: Response): Promise<boolean> {
+  if (!/\bno-store\b/i.test(res.headers.get('cache-control') ?? '')) {
+    void res.body?.cancel().catch(() => undefined)
+    return false
+  }
+  try {
+    const body = await readBody(res, MAX_NOT_FOUND_BYTES, UNAVAILABLE)
+    const json = JSON.parse(new TextDecoder().decode(body)) as { error?: unknown }
+    return json?.error === 'not-found'
+  } catch {
+    return false
+  }
+}
+
 /**
  * Wraps fetch so the given non-2xx statuses reach the handler as a 200 carrying the original
- * status in a header, instead of being turned into errors by `request`.
+ * status in a header, instead of being turned into errors by `request`. A 404 passes only when
+ * it is the Worker's own sync-route not-found; any other 404 stays an error.
  */
 function passing(o: SyncClientOptions, statuses: number[]): SyncClientOptions {
   return {
@@ -38,7 +61,11 @@ function passing(o: SyncClientOptions, statuses: number[]): SyncClientOptions {
     fetch: async (input, init) => {
       const res = await o.fetch(input, init)
       if (!statuses.includes(res.status)) return res
-      void res.body?.cancel().catch(() => undefined)
+      if (res.status === 404) {
+        if (!(await isSyncNotFound(res))) return new Response(null, { status: 404 })
+      } else {
+        void res.body?.cancel().catch(() => undefined)
+      }
       const headers = new Headers({ [STATUS_HEADER]: String(res.status) })
       const rev = res.headers.get('x-hml-revision')
       if (rev) headers.set('x-hml-revision', rev)
