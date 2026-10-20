@@ -276,6 +276,32 @@ describe('publishing', () => {
     expect(await readSync()).toMatchObject({ orphaned: true, revision: 1 })
   })
 
+  it('an orphaned profile makes no fetch on later publishes', async () => {
+    const s = await makeOwner()
+    await writeConfig('[General]\nA = 5\n')
+    putResponse = async () => new Response(null, { status: 410 })
+    await s.publishNow(GAME, ID)
+    expect(puts()).toBe(1)
+    await writeConfig('[General]\nA = 6\n')
+    await s.publishNow(GAME, ID)
+    expect(puts()).toBe(1)
+  })
+
+  it('a throwing debounced publish is logged, not rejected', async () => {
+    const s = await makeOwner()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await rm(profileDir(), { recursive: true, force: true })
+      s.touched(GAME, ID)
+      timers.fire(SYNC_DEBOUNCE_MS)
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1))
+      expect(String(warn.mock.calls[0][0])).toContain(`${GAME}/${ID}`)
+      expect(warn.mock.calls[0][1]).toBeInstanceOf(Error)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('secure storage unavailable at publish marks pending, not orphaned', async () => {
     const s = await makeOwner()
     available = false

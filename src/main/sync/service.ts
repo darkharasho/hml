@@ -147,7 +147,8 @@ export function createSyncServices(ctx: SyncContext): {
     const snap = await lock(game, profileId, async () => {
       const profile = await getProfile(deps.paths, game, profileId)
       const sync = profile.sync
-      if (sync?.role !== 'owner') return null
+      // An orphaned code can never publish again, so nothing is collected or sent.
+      if (sync?.role !== 'owner' || sync.orphaned) return null
       const parts = await collect(game, profileId, profile)
       return { sync, parts, digest: revisionDigest(parts) }
     })
@@ -303,8 +304,10 @@ export function createSyncServices(ctx: SyncContext): {
       if (st.timer !== undefined) timers.clearTimeout(st.timer)
       st.timer = timers.setTimeout(() => {
         st.timer = undefined
-        // Failures are already recorded as pending; nothing is left to report here.
-        publishNow(game, profileId).catch(() => undefined)
+        // Network failures are recorded as pending; anything else (disk, collect) is logged.
+        publishNow(game, profileId).catch((e: unknown) => {
+          console.warn(`Sync publish failed for ${game}/${profileId}:`, e)
+        })
       }, SYNC_DEBOUNCE_MS)
     },
 
