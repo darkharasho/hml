@@ -38,6 +38,8 @@ import {
   saveProfile
 } from './profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
+import { readFolderEntries } from './install/folder'
+import { installShim, shimStatus, type ShimTarget } from './cli/shim'
 import { buildModDeps } from './thunderstore/modDeps'
 import { listConfigFiles, readConfigFile, writeConfigFile } from './config/configFiles'
 import { readLogFrom } from './logs/logTail'
@@ -194,6 +196,8 @@ export interface ServiceDeps {
   notify?: (n: { title: string; body: string; game: string; profileId: string }) => void
   /** True while HML's window has focus; unset counts as unfocused. */
   isFocused?: () => boolean
+  /** Where the `hml` command goes and what it starts; unset means it can't be installed. */
+  cliShim?: ShimTarget
 }
 
 interface LoadedIndex extends TsIndex {
@@ -230,13 +234,15 @@ const ACCENT_MAX_BYTES = 8_000_000
 const INSTALLED_APPS_TTL_MS = 30_000
 const DEFAULT_PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll'
 
-async function assertZipFile(file: string): Promise<void> {
+/** A .zip file or a mod folder (installed as if zipped), by absolute path. */
+async function assertZipOrFolder(file: string): Promise<void> {
   const name = path.basename(file)
   if (!path.isAbsolute(file)) throw new Error(`${name}: expected an absolute file path.`)
-  if (!file.toLowerCase().endsWith('.zip')) {
-    throw new Error(`${name} is not a .zip file. HML installs mods from zip archives.`)
-  }
   const stat = await fs.stat(file).catch(() => null)
+  if (stat?.isDirectory()) return
+  if (!file.toLowerCase().endsWith('.zip')) {
+    throw new Error(`${name} is not a .zip file or a folder. HML installs mods from zip archives.`)
+  }
   if (!stat?.isFile()) throw new Error(`${name} was not found or is not a file.`)
 }
 
@@ -559,7 +565,7 @@ export function createServices(deps: ServiceDeps): Services {
     invalidateSteamRoot()
   }
 
-  /** Installs zips sequentially on the profile's queue, with source kind 'local'. */
+  /** Installs zips or folders sequentially on the profile's queue, with source kind 'local'. */
   async function installLocalFiles(
     def: GameDef,
     profileId: string,
@@ -571,8 +577,13 @@ export function createServices(deps: ServiceDeps): Services {
       for (const file of files) {
         const fileName = path.basename(file)
         try {
-          const data = await fs.readFile(file)
-          const sha256 = createHash('sha256').update(data).digest('hex')
+          const isDir = (await fs.stat(file)).isDirectory()
+          const { data, sha256 } = isDir
+            ? await readFolderEntries(file).then((f) => ({ data: f.entries, sha256: f.sha256 }))
+            : await fs.readFile(file).then((d) => ({
+                data: new Uint8Array(d),
+                sha256: createHash('sha256').update(d).digest('hex')
+              }))
           installed.push(
             await installZip(paths, def, catalog, profileId, data, {
               kind: 'local',
@@ -1565,6 +1576,14 @@ export function createServices(deps: ServiceDeps): Services {
       return nexusApi.nxUpdate(game, profileId, modIds)
     },
     nxRegisterHandler: () => deps.nxmHandler.register(),
+    async cliStatus() {
+      if (!deps.cliShim) return { file: null, installed: false, stale: false, onPath: false }
+      return shimStatus(deps.cliShim)
+    },
+    async installCli() {
+      if (!deps.cliShim) throw new Error("This build of HML can't install the hml command.")
+      return installShim(deps.cliShim)
+    },
     async searchGames(query: string): Promise<GameSummary[]> {
       const catalog = await getCatalog()
       const settings = await loadSettings(paths)
@@ -1711,7 +1730,7 @@ export function createServices(deps: ServiceDeps): Services {
         throw new Error('Expected a list of file paths.')
       }
       // Validate every path before installing any, so a bad drop installs nothing.
-      for (const file of files) await assertZipFile(file)
+      for (const file of files) await assertZipOrFolder(file)
       return installLocalFiles(def, profileId, files)
     },
 

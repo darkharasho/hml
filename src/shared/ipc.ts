@@ -66,7 +66,7 @@ export interface HmlApi {
   deleteProfile(game: string, id: string): Promise<void>
   /** Multi-select .zip dialog; installs with source kind 'local'. Cancel returns []. */
   installFromFile(game: string, profileId: string): Promise<InstalledMod[]>
-  /** Installs dropped .zip files (absolute paths) with source kind 'local'. */
+  /** Installs dropped .zip files or mod folders (absolute paths) with source kind 'local'. */
   installFromPaths(game: string, profileId: string, paths: string[]): Promise<InstalledMod[]>
   setModEnabled(game: string, profileId: string, modId: string, enabled: boolean): Promise<void>
   uninstallMod(game: string, profileId: string, modId: string): Promise<void>
@@ -228,6 +228,20 @@ export interface HmlApi {
   pickCustomGameImage(): Promise<{ token: string; preview: string } | null>
   /** Icon URLs to try in order for each installed mod (by id); a mod without any is left out. */
   getModIcons(game: string, profileId: string): Promise<Record<string, string[]>>
+  /** Whether the `hml` command-line tool is installed on PATH. */
+  cliStatus(): Promise<CliShimStatus>
+  /** Installs (or repairs) the `hml` command-line tool. */
+  installCli(): Promise<CliShimStatus>
+}
+
+export interface CliShimStatus {
+  /** Where the command lives; null when HML can't install one here (a dev build on macOS). */
+  file: string | null
+  installed: boolean
+  /** The file exists but starts a different HML (moved, or another build). */
+  stale: boolean
+  /** The command's folder is on PATH, so `hml` works by name. */
+  onPath: boolean
 }
 
 // `satisfies` makes the compiler reject a missing or unknown method name.
@@ -314,7 +328,9 @@ const METHOD_TABLE = {
   removeManualLoader: true,
   keepManualLoader: true,
   pickCustomGameImage: true,
-  getModIcons: true
+  getModIcons: true,
+  cliStatus: true,
+  installCli: true
 } satisfies Record<keyof HmlApi, true>
 
 export const HML_METHODS = Object.keys(METHOD_TABLE) as (keyof HmlApi)[]

@@ -412,6 +412,17 @@ export const useStore = create<State>()((set, get) => {
     get().toast('success', `Installed ${e.mod.name} ${e.mod.version} from Nexus Mods`)
   }
 
+  /** A `hml` command changed a profile: refresh it if it's open, and say what happened. */
+  async function onCliChanged(e: Extract<HmlEvent, { type: 'cli-changed' }>): Promise<void> {
+    if (get().currentGame?.label === e.game) {
+      await reloadProfiles().catch(fail)
+      if (get().currentGame?.label === e.game && get().currentProfile === e.profileId) {
+        await refreshWarnings()
+      }
+    }
+    get().toast('info', `Command line: ${e.message}`)
+  }
+
   /**
    * After a sync change: reloads the profile list when it is about the open game, and the
    * warnings and updates too when it is about the open profile.
@@ -1198,6 +1209,7 @@ export const useStore = create<State>()((set, get) => {
       if (e.type === 'github-updates-available') return void onGithubUpdatesAvailable(e)
       if (e.type === 'nexus-installed') return void onNexusInstalled(e)
       if (e.type === 'nexus-failed') return get().toast('error', e.message)
+      if (e.type === 'cli-changed') return void onCliChanged(e)
       if (e.type === 'sync-applied') return void onSyncApplied(e)
       if (e.type === 'sync-ended') {
         get().toast('info', `${e.profileName} is no longer synced`)

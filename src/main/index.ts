@@ -9,7 +9,7 @@ import {
   safeStorage
 } from 'electron'
 import { execFile, spawn } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { homedir, release as osRelease, type as osType } from 'node:os'
 import { join } from 'path'
 import { pathToFileURL } from 'node:url'
@@ -19,7 +19,10 @@ import { isAllowedNavigation, parseAllowedExternalUrl } from './security'
 import { registerIpc } from './ipc'
 import { registerWindowIpc, reportMaximized, titlebarOptions } from './window'
 import { registerUpdates } from './updateIpc'
-import { createServices } from './services'
+import { createServices, type ServiceDeps, type Services } from './services'
+import { findCliArgs, runCli, type CliPort, type CliResult } from './cli/commands'
+import { cliEndpoint, sendCliRequest, startCliServer } from './cli/transport'
+import type { HmlEvent } from '../shared/types'
 import { findNxmArg, linuxDesktopEntry, type HandlerPort } from './nexus/nxm'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
 import { SYNC_POLL_MS } from './sync/service'
@@ -92,9 +95,192 @@ protocol.registerSchemesAsPrivileged([
   { scheme: ART_SCHEME, privileges: { standard: true, secure: true } }
 ])
 
+/** Everything HML's services need from Electron; shared by the app and the headless CLI. */
+function serviceDeps(): ServiceDeps {
+  return {
+    paths: makePaths(app.getPath('userData')),
+    fetch: globalThis.fetch,
+    appVersion: app.getVersion(),
+    os: { type: osType(), release: osRelease(), arch: process.arch },
+    snapshotPath: resolveSnapshotPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      devPath: devSnapshotPath
+    }),
+    platform: process.platform,
+    emit: serviceEmit,
+    secrets: {
+      isAvailable: () =>
+        safeStorage.isEncryptionAvailable() &&
+        (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+      encrypt: (plain) => safeStorage.encryptString(plain),
+      decrypt: (data) => safeStorage.decryptString(data)
+    },
+    home: homedir(),
+    dialog: {
+      async pickFiles({ title, filters }) {
+        const win = BrowserWindow.getFocusedWindow()
+        const opts = { title, filters, properties: ['openFile', 'multiSelections'] as const }
+        const r = win
+          ? await dialog.showOpenDialog(win, { ...opts, properties: [...opts.properties] })
+          : await dialog.showOpenDialog({ ...opts, properties: [...opts.properties] })
+        return r.canceled ? [] : r.filePaths
+      },
+      async pickFolder(title) {
+        const win = BrowserWindow.getFocusedWindow()
+        const opts = { title, properties: ['openDirectory' as const] }
+        const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+        return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+      },
+      async saveFile(opts) {
+        const win = BrowserWindow.getFocusedWindow()
+        const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+        return r.canceled || !r.filePath ? null : r.filePath
+      }
+    },
+    shell,
+    spawn,
+    execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false }),
+    nxmHandler,
+    decodeImage: (data) => {
+      const img = nativeImage.createFromBuffer(data)
+      if (img.isEmpty()) return null
+      // A small copy is plenty for picking a colour. toBitmap is BGRA; swap to RGBA.
+      const px = img.resize({ width: 64 }).toBitmap()
+      const out = new Uint8Array(px.length)
+      for (let i = 0; i + 3 < px.length; i += 4) {
+        out[i] = px[i + 2]
+        out[i + 1] = px[i + 1]
+        out[i + 2] = px[i]
+        out[i + 3] = px[i + 3]
+      }
+      return out
+    },
+    shareBaseUrl: process.env.HML_SHARE_URL ?? 'https://hml-share.project96.workers.dev',
+    isFocused: () => mainWindowRef?.isFocused() === true,
+    notify(n) {
+      if (!Notification.isSupported()) return
+      const note = new Notification({ title: n.title, body: n.body, icon })
+      notifications.add(note)
+      const forget = (): void => void notifications.delete(note)
+      note.on('click', () => {
+        forget()
+        showMainWindow()
+        services?.emitOpenProfile(n.game, n.profileId)
+      })
+      note.on('close', forget)
+      note.show()
+    },
+    cliShim: {
+      platform: process.platform,
+      home: homedir(),
+      localAppData: process.env['LOCALAPPDATA'],
+      // An AppImage's real path is APPIMAGE; a dev build runs electron with the app folder.
+      command: app.isPackaged
+        ? [process.env['APPIMAGE'] ?? process.execPath]
+        : [process.execPath, app.getAppPath()],
+      pathEnv: process.env['PATH'] ?? ''
+    }
+  }
+}
+
+/** The CLI's view of the services: game names from the data folder, events to the window. */
+function cliPort(svc: Services, emit: (e: HmlEvent) => void): CliPort {
+  return {
+    getGame: svc.getGame,
+    listProfiles: svc.listProfiles,
+    createProfile: svc.createProfile,
+    installFromPaths: svc.installFromPaths,
+    uninstallMod: svc.uninstallMod,
+    setModEnabled: svc.setModEnabled,
+    launch: svc.launch,
+    getSettings: svc.getSettings,
+    async knownGames() {
+      const dirs = await readdir(makePaths(app.getPath('userData')).gamesDir, {
+        withFileTypes: true
+      }).catch(() => [])
+      const out: { label: string; displayName: string }[] = []
+      for (const d of dirs) {
+        if (!d.isDirectory()) continue
+        const g = await svc.getGame(d.name).catch(() => null)
+        if (g) out.push({ label: g.label, displayName: g.displayName })
+      }
+      return out.sort((a, b) => a.displayName.localeCompare(b.displayName))
+    },
+    emit
+  }
+}
+
+let stopCliServer: (() => Promise<void>) | null = null
+
+/** Answers `hml` commands from other processes while this HML runs. */
+async function startCli(svc: Services): Promise<void> {
+  try {
+    const port = cliPort(svc, (e) => serviceEmit(e))
+    stopCliServer = await startCliServer(
+      cliEndpoint(app.getPath('userData'), process.platform),
+      (argv, cwd) => runCli(port, argv, cwd)
+    )
+  } catch (e) {
+    console.warn(`The hml command line is unavailable: ${e instanceof Error ? e.message : e}`)
+  }
+}
+
+/** Sends an event to the window, if there is one. */
+function serviceEmit(e: HmlEvent): void {
+  const win = mainWindowRef
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    try {
+      win.webContents.send('hml:event', e)
+    } catch {
+      // A closing window must never abort the operation that emitted.
+    }
+  }
+}
+
+/** Prints a CLI result and exits once the output is flushed. */
+function finishCli(r: CliResult): void {
+  const exit = (): void => app.exit(r.code)
+  process.stderr.write(r.stderr, () => process.stdout.write(r.stdout, exit))
+}
+
+/**
+ * `hml --cli <command>`: forwards the command to a running HML, or runs it here without a window
+ * when none is running.
+ */
+async function runCliProcess(argv: string[]): Promise<void> {
+  app.dock?.hide()
+  const endpoint = cliEndpoint(app.getPath('userData'), process.platform)
+  try {
+    const forwarded = await sendCliRequest(endpoint, argv, process.cwd())
+    if (forwarded) return finishCli(forwarded)
+    if (!app.requestSingleInstanceLock()) {
+      return finishCli({
+        code: 1,
+        stdout: '',
+        stderr: "hml: HML is running but isn't answering commands. Restart HML and try again.\n"
+      })
+    }
+    await app.whenReady()
+    const svc = createServices({ ...serviceDeps(), notify: undefined })
+    finishCli(
+      await runCli(
+        cliPort(svc, () => undefined),
+        argv,
+        process.cwd()
+      )
+    )
+  } catch (e) {
+    finishCli({ code: 1, stdout: '', stderr: `hml: ${e instanceof Error ? e.message : e}\n` })
+  }
+}
+
 // One running HML receives every nxm:// link; a second launch hands its argv over and exits.
-const hasLock = app.requestSingleInstanceLock()
-if (!hasLock) app.quit()
+// `hml --cli …` runs one command and exits; it never opens a window or takes the lock up front.
+const cliArgv = findCliArgs(process.argv)
+if (cliArgv) void runCliProcess(cliArgv)
+const hasLock = cliArgv ? false : app.requestSingleInstanceLock()
+if (!hasLock && !cliArgv) app.quit()
 
 let services: ReturnType<typeof createServices> | null = null
 let rendererLoaded = false
@@ -201,91 +387,8 @@ if (hasLock)
       optimizer.watchWindowShortcuts(window)
     })
 
-    services = createServices({
-      paths: makePaths(app.getPath('userData')),
-      fetch: globalThis.fetch,
-      appVersion: app.getVersion(),
-      os: { type: osType(), release: osRelease(), arch: process.arch },
-      snapshotPath: resolveSnapshotPath({
-        isPackaged: app.isPackaged,
-        resourcesPath: process.resourcesPath,
-        devPath: devSnapshotPath
-      }),
-      platform: process.platform,
-      emit: (e) => {
-        const win = mainWindowRef
-        if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-          try {
-            win.webContents.send('hml:event', e)
-          } catch {
-            // A closing window must never abort the operation that emitted.
-          }
-        }
-      },
-      secrets: {
-        isAvailable: () =>
-          safeStorage.isEncryptionAvailable() &&
-          (process.platform !== 'linux' ||
-            safeStorage.getSelectedStorageBackend() !== 'basic_text'),
-        encrypt: (plain) => safeStorage.encryptString(plain),
-        decrypt: (data) => safeStorage.decryptString(data)
-      },
-      home: homedir(),
-      dialog: {
-        async pickFiles({ title, filters }) {
-          const win = BrowserWindow.getFocusedWindow()
-          const opts = { title, filters, properties: ['openFile', 'multiSelections'] as const }
-          const r = win
-            ? await dialog.showOpenDialog(win, { ...opts, properties: [...opts.properties] })
-            : await dialog.showOpenDialog({ ...opts, properties: [...opts.properties] })
-          return r.canceled ? [] : r.filePaths
-        },
-        async pickFolder(title) {
-          const win = BrowserWindow.getFocusedWindow()
-          const opts = { title, properties: ['openDirectory' as const] }
-          const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-          return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
-        },
-        async saveFile(opts) {
-          const win = BrowserWindow.getFocusedWindow()
-          const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
-          return r.canceled || !r.filePath ? null : r.filePath
-        }
-      },
-      shell,
-      spawn,
-      execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false }),
-      nxmHandler,
-      decodeImage: (data) => {
-        const img = nativeImage.createFromBuffer(data)
-        if (img.isEmpty()) return null
-        // A small copy is plenty for picking a colour. toBitmap is BGRA; swap to RGBA.
-        const px = img.resize({ width: 64 }).toBitmap()
-        const out = new Uint8Array(px.length)
-        for (let i = 0; i + 3 < px.length; i += 4) {
-          out[i] = px[i + 2]
-          out[i + 1] = px[i + 1]
-          out[i + 2] = px[i]
-          out[i + 3] = px[i + 3]
-        }
-        return out
-      },
-      shareBaseUrl: process.env.HML_SHARE_URL ?? 'https://hml-share.project96.workers.dev',
-      isFocused: () => mainWindowRef?.isFocused() === true,
-      notify(n) {
-        if (!Notification.isSupported()) return
-        const note = new Notification({ title: n.title, body: n.body, icon })
-        notifications.add(note)
-        const forget = (): void => void notifications.delete(note)
-        note.on('click', () => {
-          forget()
-          showMainWindow()
-          services?.emitOpenProfile(n.game, n.profileId)
-        })
-        note.on('close', forget)
-        note.show()
-      }
-    })
+    services = createServices(serviceDeps())
+    void startCli(services)
     const ready = services
     registerIpc(ready)
     registerWindowIpc()
@@ -334,7 +437,10 @@ if (hasLock)
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
+app.on('will-quit', () => void stopCliServer?.())
+
 app.on('window-all-closed', () => {
+  if (cliArgv) return
   if (process.platform !== 'darwin') {
     app.quit()
   }

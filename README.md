@@ -121,6 +121,29 @@ After it's installed, HML updates itself. On Linux, the AppImage is the only for
 
 To use Nexus Mods, open **Settings** and paste your [personal API key](https://www.nexusmods.com/users/myaccount?tab=api).
 
+## Command line (for mod authors and AI agents)
+
+Install the `hml` command from **Settings → Command line**. It lets you, or an AI agent writing a
+mod, put a build into a profile the same way HML installs any mod, instead of copying files into
+the game by hand:
+
+```sh
+hml games                                  # game ids, e.g. repo
+hml new-profile repo "Dev"                 # a clean profile to test in
+hml install repo ./build/MyMod --profile dev   # a folder or .zip with a manifest.json
+hml mods repo --profile dev --json
+hml launch repo --profile dev
+hml uninstall repo MyMod --profile dev
+```
+
+Installing the same mod again replaces the previous build. If HML is open, commands run inside it
+and its window refreshes; otherwise they run without a window. `hml help` lists everything. Without
+the installed command, run HML's own executable with `--cli` in front of the command (for example
+`HML.AppImage --cli help`).
+
+To get an agent to use it, click **Copy agent instructions** in the same section and paste the
+text into the agent's `CLAUDE.md` or `AGENTS.md`.
+
 ## Linux and Proton
 
 On Linux, Windows games run through Proton. **Start modded** sets up the game's Proton prefix so BepInEx loads. You don't need to set Steam launch options or close Steam. HML keeps a backup of the prefix file it changes (`user.reg.hml-backup`).

@@ -493,6 +493,8 @@ export type HmlEvent =
   | { type: 'sync-error'; game: string; profileId: string; message: string }
   /** Mod update counts from the background check (or a profile's own check). */
   | { type: 'update-summary'; summary: UpdateSummary }
+  /** The `hml` command line changed a profile (installed, removed or toggled a mod). */
+  | { type: 'cli-changed'; game: string; profileId: string; message: string }
   /** A notification was clicked: show this profile. */
   | { type: 'open-profile'; game: string; profileId: string }
   /** Notify-mode GitHub mods with a release not announced before this session. */

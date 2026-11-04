@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { UpdateCheckResult } from '../../../shared/ipc'
+import type { CliShimStatus, UpdateCheckResult } from '../../../shared/ipc'
 import type { NxStatus } from '../../../shared/types'
 import { noSecureStorage } from '../../../shared/messages'
 import { api, errorMessage } from '../api'
+import { CLI_AGENT_INSTRUCTIONS } from '../cliAgentText'
 import { NX_API_KEY_PAGE } from '../nxView'
 import { useStore } from '../store'
 import { updateStatusText } from '../updateView'
@@ -56,6 +57,8 @@ function SettingsForm({ onClose }: { onClose(): void }): React.JSX.Element {
 
         <GameColorsRow />
         <UpdateNotificationsRow />
+
+        <CliSection />
 
         <UpdateSection />
       </div>
@@ -355,6 +358,84 @@ function NexusSection(): React.JSX.Element {
           onClick={() => void register()}
         >
           Use HML for Nexus downloads
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/** What the `hml` command's status line says. */
+function cliStatusLine(s: CliShimStatus | null): string {
+  if (!s) return 'Checking…'
+  if (!s.file) return "This build of HML can't install the hml command."
+  if (s.stale) return `${s.file} starts a different copy of HML. Reinstall to point it here.`
+  if (!s.installed) {
+    return 'Lets you and AI agents install mods you build with `hml install <game> <folder>`.'
+  }
+  if (!s.onPath) return `Installed at ${s.file}, but that folder isn't on your PATH.`
+  return 'Installed. Run `hml help` in a terminal to see the commands.'
+}
+
+function CliSection(): React.JSX.Element {
+  const toast = useStore((s) => s.toast)
+  const [status, setStatus] = useState<CliShimStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    api.cliStatus().then(
+      (s) => live && setStatus(s),
+      () => live && setStatus({ file: null, installed: false, stale: false, onPath: false })
+    )
+    return () => {
+      live = false
+    }
+  }, [])
+
+  async function install(): Promise<void> {
+    setBusy(true)
+    try {
+      const s = await api.installCli()
+      setStatus(s)
+      toast('success', s.onPath ? 'Installed the hml command' : `Installed ${s.file}`)
+    } catch (e) {
+      toast('error', errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function copyAgentText(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(CLI_AGENT_INSTRUCTIONS)
+      toast('success', "Copied. Paste it into your agent's CLAUDE.md or AGENTS.md")
+    } catch (e) {
+      toast('error', errorMessage(e))
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-4 border-t border-line pt-5">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-fg">Command line</p>
+        <p className="mt-0.5 text-xs [overflow-wrap:anywhere] text-muted">
+          {cliStatusLine(status)}
+        </p>
+      </div>
+      <div className="flex shrink-0 flex-col items-stretch gap-2">
+        <Button
+          disabled={!status?.file || busy || (status.installed && !status.stale)}
+          onClick={() => void install()}
+        >
+          {busy && <Spinner className="size-3.5" />}
+          {status?.stale ? 'Reinstall hml command' : 'Install hml command'}
+        </Button>
+        <Button
+          variant="ghost"
+          title="Instructions that tell an AI agent to install the mods it builds with hml"
+          onClick={() => void copyAgentText()}
+        >
+          Copy agent instructions
         </Button>
       </div>
     </div>
