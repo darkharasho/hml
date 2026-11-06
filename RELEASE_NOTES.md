@@ -1,15 +1,18 @@
 # Release Notes
 
-Version v1.5.0 — November 4, 2026
+Version v1.6.0 — November 5, 2026
 
-## The hml command
-HML now has a command line, so you or an AI agent writing a mod can put a build into a profile the same way HML installs any other mod, instead of copying files into the game folder. Install it from **Settings → Command line**, then try `hml help`.
+## See how far along a synced profile is
+If you follow someone's synced profile, its badge now shows how many of their mods you have, like **Synced 24/24**. It turns amber when you're short (**Synced 23/24**), and hovering over it names the mods you're missing. The owner's local mods can't sync, so the tooltip lists them separately.
 
-- `hml install <game> <folder or zip> --profile Dev` installs a build. Installing it again replaces the previous one, and your config files stay.
-- `hml mods`, `enable`, `disable`, `uninstall`, `new-profile` and `launch` cover the rest. Add `--json` for output a script can read.
-- If HML is open, commands run inside it and the window refreshes with a toast. If it's closed, they run without opening a window.
+While an update installs, the badge counts up (**Syncing 7/24**) and shows which mod it's on. If the game is running, it shows **Waiting for game** until you close it, because HML doesn't change mods under a running game.
 
-## Getting an agent to use it
-Click **Copy agent instructions** in the same Settings section and paste the text into your agent's `CLAUDE.md` or `AGENTS.md`. It tells the agent to install each build into a Dev profile with `hml` rather than touching the game folder.
+## Sync now
+The profile's ⋯ menu has a new **Sync now** item for followers. It fetches the owner's latest list right away and installs anything you're missing, even if nothing changed. Afterwards it tells you the result, for example "Up to date: 24/24 mods" or which mods are still missing.
 
-NOTE: On Linux the command points at the AppImage, so reinstall it from Settings if you move the AppImage. On Windows it goes in `%LOCALAPPDATA%\Microsoft\WindowsApps`, which is on your PATH by default.
+If you own the profile, the menu item is **Publish now**. It sends your changes right away and tells you how many mods your friends will get.
+
+## Fixes
+- A follower who ends up missing a synced mod now retries automatically. Before, it only retried when an install reported an error.
+
+NOTE: The counts appear after the owner's next change or after you press Sync now. Everyone following a profile needs v1.6.0 to see them.
