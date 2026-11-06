@@ -9,6 +9,7 @@ import type { SyncApplyResult } from '../../../src/main/sync/apply'
 import {
   SYNC_BEHIND_RETRY_MS,
   SYNC_HOLD_RETRY_MS,
+  SYNC_FOCUS_MIN_MS,
   SYNC_LAUNCH_CHECK_MS,
   createSyncServices,
   type SyncContext,
@@ -761,6 +762,47 @@ describe('attach, lookup and tick', () => {
     })
     expect(requests).toHaveLength(1)
     expect(ofType('sync-state')).toHaveLength(1)
+  })
+
+  it('focusCheck checks followers at most once per SYNC_FOCUS_MIN_MS and applies a new revision', async () => {
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      serve = async (since) => (since >= 4 ? unchanged(4) : updated(4))
+      const s = createSyncServices(makeCtx())
+      await s.focusCheck()
+      expect(requests).toEqual([`https://share.test/v1/sync/${CODE}?since=3`])
+      expect(applyCalls).toBe(1)
+      expect((await readSync())?.revision).toBe(4)
+
+      // Alt-tabbing back within the window doesn't ask again.
+      now += SYNC_FOCUS_MIN_MS - 1
+      await s.focusCheck()
+      expect(requests).toHaveLength(1)
+
+      now += 1
+      await s.focusCheck()
+      expect(requests).toEqual([
+        `https://share.test/v1/sync/${CODE}?since=3`,
+        `https://share.test/v1/sync/${CODE}?since=4`
+      ])
+      expect(applyCalls).toBe(1)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('focusCheck leaves owners alone and skips while a tick runs', async () => {
+    const s = createSyncServices(makeCtx())
+    const ticking = s.tick()
+    await s.focusCheck()
+    await ticking
+    expect(requests).toHaveLength(1)
+
+    await writeManifest({ sync: { role: 'owner', code: CODE, revision: 3 } as never })
+    requests = []
+    await createSyncServices(makeCtx()).focusCheck()
+    expect(requests).toEqual([])
   })
 
   it('pruneManual keeps an entry for a newer file of a mod already installed', async () => {

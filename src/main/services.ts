@@ -261,6 +261,8 @@ export type Services = HmlApi & {
   cancelLaunchWatches(): void
   /** Synced profiles: checks followers and publishes owners (startup, then every SYNC_POLL_MS). */
   syncTick(): Promise<void>
+  /** HML's window gained focus: followers check for a newer revision (throttled). */
+  syncFocusCheck(): Promise<void>
 }
 
 export function createServices(deps: ServiceDeps): Services {
@@ -1551,6 +1553,7 @@ export function createServices(deps: ServiceDeps): Services {
     detachSync: syncApi.detachSync,
     syncNow: syncApi.syncNow,
     syncTick: () => syncApi.tick(),
+    syncFocusCheck: () => syncApi.focusCheck(),
     ...customApi,
     handleNxm,
     serveArt: (url) => serveArt(url, artSources),

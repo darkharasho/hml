@@ -1763,7 +1763,8 @@ describe('services', () => {
       'handleNxm',
       'serveArt',
       'cancelLaunchWatches',
-      'syncTick'
+      'syncTick',
+      'syncFocusCheck'
     ]
     const keys = Object.keys(createServices(deps)).filter((k) => !mainOnly.includes(k))
     expect([...HML_METHODS].sort()).toEqual(keys.sort())

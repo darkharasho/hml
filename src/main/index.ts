@@ -422,6 +422,8 @@ if (hasLock)
     setTimeout(() => {
       void ready.syncTick()
       setInterval(() => void ready.syncTick(), SYNC_POLL_MS)
+      // Coming back to HML checks right away, so a friend's count is current when they look.
+      app.on('browser-window-focus', () => void ready.syncFocusCheck())
     }, 10_000)
 
     // HML's own updates: on launch and every 6 hours, installed builds only.

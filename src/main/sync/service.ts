@@ -35,6 +35,8 @@ export const SYNC_HOLD_RETRY_MS = 30_000
 export const SYNC_LAUNCH_CHECK_MS = 10_000
 /** A behind follower re-applies its revision at most this often (startup and launch excepted). */
 export const SYNC_BEHIND_RETRY_MS = 3_600_000
+/** Focusing HML checks followers at most this often (alt-tabbing fires focus constantly). */
+export const SYNC_FOCUS_MIN_MS = 30_000
 
 export interface SyncTimers {
   setTimeout(fn: () => void, ms: number): unknown
@@ -179,6 +181,11 @@ export function createSyncServices(ctx: SyncContext): {
   beforeLaunch(game: string, profileId: string): Promise<void>
   /** Startup and every SYNC_POLL_MS: check followers, publishNow owners, prune manual lists. */
   tick(): Promise<void>
+  /**
+   * HML's window gained focus: check every follower, at most once per SYNC_FOCUS_MIN_MS and not
+   * while a tick runs (it checks them too). Owners are left to their debounce. Never throws.
+   */
+  focusCheck(): Promise<void>
   /** Import: make a fresh profile follow `code` at `revision`, with `configs` as its bases. */
   attachFollower(
     game: string,
@@ -788,6 +795,19 @@ export function createSyncServices(ctx: SyncContext): {
     }
   }
 
+  let lastFocusCheck = -Infinity
+  async function checkAllFollowers(): Promise<void> {
+    for await (const { game, profile } of allProfiles()) {
+      if (profile.sync?.role !== 'follower') continue
+      try {
+        const label = await labelOf(game)
+        if (label) await checkFollower(label, profile.id)
+      } catch (e) {
+        console.warn(`Sync focus check failed for ${game}/${profile.id}:`, e)
+      }
+    }
+  }
+
   return {
     async createSyncCode(game, profileId) {
       const label = (await ctx.requireGame(game)).label
@@ -915,6 +935,17 @@ export function createSyncServices(ctx: SyncContext): {
         ticking = null
       })
       return ticking
+    },
+
+    async focusCheck() {
+      const now = Date.now()
+      if (ticking || now - lastFocusCheck < SYNC_FOCUS_MIN_MS) return
+      lastFocusCheck = now
+      try {
+        await checkAllFollowers()
+      } catch (e) {
+        console.warn('Sync focus check failed:', e)
+      }
     },
 
     async attachFollower(game, profileId, code, revision, configs, opts) {
