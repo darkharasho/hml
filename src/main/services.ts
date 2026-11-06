@@ -41,6 +41,7 @@ import { installZip, setModEnabled, uninstallMod } from './install/installer'
 import { readFolderEntries } from './install/folder'
 import { installShim, shimStatus, type ShimTarget } from './cli/shim'
 import { buildModDeps } from './thunderstore/modDeps'
+import { copyMods } from './profiles/copyMods'
 import { listConfigFiles, readConfigFile, writeConfigFile } from './config/configFiles'
 import { readLogFrom } from './logs/logTail'
 import { createBackgroundChecks } from './updates/backgroundChecks'
@@ -1765,6 +1766,14 @@ export function createServices(deps: ServiceDeps): Services {
       await getProfile(paths, game, profileId)
       return serialize(game, profileId, () =>
         writeConfigFile(paths.profileDir(game, profileId), file, text)
+      )
+    },
+
+    async copyModsToProfile(game, profileId, fromProfileId, modIds) {
+      const def = await requireGame(game)
+      await assertGameClosed(def)
+      return serialize(game, profileId, () =>
+        copyMods(paths, game, fromProfileId, profileId, modIds)
       )
     },
 

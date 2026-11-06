@@ -143,6 +143,8 @@ interface State {
   setModEnabled(modId: string, enabled: boolean, also?: string[]): Promise<void>
   /** Uninstalls a mod, then each of `also` (dependencies only it needed). */
   uninstallMod(mod: InstalledMod, also?: InstalledMod[]): Promise<void>
+  /** Copies `mod`, and each of `also` (its dependencies), from this profile into `toProfileId`. */
+  copyModToProfile(mod: InstalledMod, toProfileId: string, also?: string[]): Promise<void>
   tsInstall(pkg: { fullName: string; name: string }, version?: string): Promise<void>
   tsUpdate(updates: ModUpdate[]): Promise<void>
   /** Throws on failure so the GitHub dialog can show the error inline. */
@@ -853,6 +855,28 @@ export const useStore = create<State>()((set, get) => {
         )
       await refreshWarnings()
       await get().checkUpdates()
+    },
+
+    async copyModToProfile(mod, toProfileId, also = []) {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile) return
+      const result = await busy(async () => {
+        try {
+          return await api.copyModsToProfile(currentGame.label, toProfileId, currentProfile, [
+            mod.id,
+            ...also
+          ])
+        } finally {
+          await reloadProfiles()
+        }
+      })
+      if (result === failed) return
+      const to = get().profiles.find((p) => p.id === toProfileId)?.name ?? 'the profile'
+      const deps = result.copied.length - 1
+      get().toast(
+        'success',
+        `Copied ${displayName(mod.name)}${deps > 0 ? ` and ${deps} ${deps === 1 ? 'dependency' : 'dependencies'}` : ''} to ${to}`
+      )
     },
 
     async tsInstall(pkg, version) {

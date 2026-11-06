@@ -39,6 +39,11 @@ export function dependentsOf(graph: ModDeps, mods: InstalledMod[], id: string): 
   return [...reach(id, (n) => needers.get(n) ?? [])].filter((n) => enabled.has(n))
 }
 
+/** Installed mods that `id` needs, directly or through other mods. */
+export function dependenciesOf(graph: ModDeps, mods: InstalledMod[], id: string): string[] {
+  return [...reach(id, installedDeps(graph, mods))]
+}
+
 /** Disabled mods that `id` needs, directly or through other mods. */
 export function disabledDependencies(graph: ModDeps, mods: InstalledMod[], id: string): string[] {
   const disabled = new Set(mods.filter((m) => !m.enabled).map((m) => m.id))

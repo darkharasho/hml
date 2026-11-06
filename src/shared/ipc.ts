@@ -1,6 +1,7 @@
 import type {
   AddCustomGameInput,
   ConfigFile,
+  CopyModsResult,
   CustomGameUpdate,
   GameDef,
   GameDetection,
@@ -85,6 +86,16 @@ export interface HmlApi {
   writeConfig(game: string, profileId: string, path: string, text: string): Promise<void>
   /** Holds a Thunderstore or Nexus mod at its version (update checks skip it), or frees it. */
   setModHeld(game: string, profileId: string, modId: string, held: boolean): Promise<void>
+  /**
+   * Copies mods of `fromProfileId` into `profileId` (same game) at the same version, files and
+   * config included. The target comes first so the follower lock applies to it.
+   */
+  copyModsToProfile(
+    game: string,
+    profileId: string,
+    fromProfileId: string,
+    modIds: string[]
+  ): Promise<CopyModsResult>
   /** How the profile's mods depend on each other (Thunderstore metadata). */
   getModDeps(game: string, profileId: string): Promise<ModDeps>
   getLaunchWarnings(game: string, profileId: string): Promise<LaunchWarning[]>
@@ -269,6 +280,7 @@ const METHOD_TABLE = {
   uninstallMod: true,
   getModDeps: true,
   setModHeld: true,
+  copyModsToProfile: true,
   listConfigs: true,
   readModLog: true,
   getUpdateSummary: true,

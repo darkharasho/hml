@@ -35,12 +35,12 @@ import { GithubDialog } from './GithubDialog'
 import { NexusDetail } from './NexusDetail'
 import { PackageDetail, ProgressLine } from './PackageDetail'
 import { Button, Icon, Menu, Toggle, type MenuItem } from './ui'
-import { DisableDialog, UninstallDialog } from './ModDepsDialogs'
+import { CopyToProfileDialog, DisableDialog, UninstallDialog } from './ModDepsDialogs'
 import { GhVersionDialog } from './GhVersionDialog'
 import { ConfigEditor } from './ConfigEditor'
 import { LogViewer } from './LogViewer'
 import { configsForMod } from '../configView'
-import { dependentsOf, orphanedBy } from '../../../shared/modDeps'
+import { dependenciesOf, dependentsOf, orphanedBy } from '../../../shared/modDeps'
 
 /** Thunderstore is where most mods come from, so only the other sources get a badge. */
 const SOURCE_BADGE: Record<
@@ -628,12 +628,16 @@ function ModRow({
         : s.ghUpdating.includes(mod.id)
   )
   const setModHeld = useStore((s) => s.setModHeld)
+  const copyModToProfile = useStore((s) => s.copyModToProfile)
+  const profiles = useStore((s) => s.profiles)
+  const currentProfileId = useStore((s) => s.currentProfile)
   const loadModDeps = useStore((s) => s.loadModDeps)
   const profileMods = useCurrentProfile()?.mods ?? []
   const [dialog, setDialog] = useState<
     | { kind: 'disable'; dependents: InstalledMod[] }
     | { kind: 'uninstall'; dependents: InstalledMod[]; orphans: InstalledMod[] }
     | { kind: 'version' }
+    | { kind: 'copy'; dependencies: InstalledMod[] }
     | null
   >(null)
   const byIds = (ids: string[]): InstalledMod[] => profileMods.filter((m) => ids.includes(m.id))
@@ -665,6 +669,18 @@ function ModRow({
         ? runGhUpdate([ghUpdate])
         : nxUpdate && runNxUpdate([nxUpdate]))
 
+  async function askCopy(): Promise<void> {
+    const graph = await loadModDeps()
+    setDialog({
+      kind: 'copy',
+      dependencies: graph ? byIds(dependenciesOf(graph, profileMods, mod.id)) : []
+    })
+  }
+  const copy: MenuItem = {
+    label: 'Copy to profile…',
+    divider: true,
+    onSelect: () => void askCopy()
+  }
   const uninstall: MenuItem = {
     label: 'Uninstall…',
     danger: true,
@@ -679,7 +695,10 @@ function ModRow({
     disabled: locked,
     onSelect: () => void setModHeld(mod.id, mod.held !== true)
   }
-  let menu: MenuItem[] = [uninstall]
+  let menu: MenuItem[] = [
+    { ...copy, divider: false },
+    { ...uninstall, divider: true }
+  ]
   if (source.kind === 'thunderstore') {
     menu = [
       ...(onOpen ? [{ label: 'Details…', onSelect: onOpen }] : []),
@@ -687,6 +706,7 @@ function ModRow({
         label: 'Open on Thunderstore',
         onSelect: () => void openOnThunderstore()
       },
+      copy,
       hold,
       { ...uninstall, divider: true }
     ]
@@ -703,6 +723,7 @@ function ModRow({
         disabled: locked,
         onSelect: () => setDialog({ kind: 'version' })
       },
+      copy,
       ...UPDATE_MODES.map((m, i): MenuItem => ({
         label: updateModeLabel(m),
         checked: m === mode,
@@ -733,6 +754,7 @@ function ModRow({
             .openExternal(nexusModUrl(source.domain, source.modId))
             .catch((e) => toast('error', errorMessage(e)))
       },
+      copy,
       hold,
       { ...uninstall, divider: true }
     ]
@@ -866,6 +888,15 @@ function ModRow({
               also.map((m) => m.id)
             )
           }
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'copy' && (
+        <CopyToProfileDialog
+          mod={mod}
+          profiles={profiles.filter((p) => p.id !== currentProfileId)}
+          dependencies={dialog.dependencies}
+          onCopy={(to, also) => void copyModToProfile(mod, to, also)}
           onClose={() => setDialog(null)}
         />
       )}

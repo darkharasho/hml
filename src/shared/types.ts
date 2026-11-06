@@ -143,6 +143,16 @@ export interface InstalledMod {
   held?: true
 }
 
+/** What copyModsToProfile did. */
+export interface CopyModsResult {
+  /** Ids copied, in the order asked. */
+  copied: string[]
+  /** Of those, the ones that replaced a copy the target already had. */
+  replaced: string[]
+  /** Config files copied because the target had none at that path. */
+  configs: number
+}
+
 /** Mod updates found by the background check: game label → profile id → count (no zeros). */
 export type UpdateSummary = Record<string, Record<string, number>>
 

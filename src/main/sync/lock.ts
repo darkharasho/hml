@@ -7,6 +7,7 @@ export const FOLLOWER_LOCKED = [
   'setModEnabled',
   'uninstallMod',
   'setModHeld',
+  'copyModsToProfile',
   'tsInstall',
   'tsUpdate',
   'ghInstall',

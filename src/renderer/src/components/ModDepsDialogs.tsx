@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { InstalledMod } from '../../../shared/types'
+import type { InstalledMod, ProfileManifest } from '../../../shared/types'
 import { displayName } from '../tsView'
 import { Button, Modal } from './ui'
 
@@ -130,6 +130,141 @@ export function UninstallDialog({
             ))}
           </ul>
         </div>
+      )}
+    </Modal>
+  )
+}
+
+/**
+ * Copying a mod to another profile of the game: pick the profile, and which of the mod's
+ * dependencies that profile lacks go along (all, by default). Followed profiles can't be picked.
+ */
+export function CopyToProfileDialog({
+  mod,
+  profiles,
+  dependencies,
+  onCopy,
+  onClose
+}: {
+  mod: InstalledMod
+  /** The game's other profiles. */
+  profiles: ProfileManifest[]
+  /** The mod's dependencies installed in this profile. */
+  dependencies: InstalledMod[]
+  onCopy(toProfileId: string, also: string[]): void
+  onClose(): void
+}): React.JSX.Element {
+  const name = displayName(mod.name)
+  const open = profiles.filter((p) => p.sync?.role !== 'follower')
+  const [to, setTo] = useState<string | null>(open.length === 1 ? open[0].id : null)
+  const [skipped, setSkipped] = useState<string[]>([])
+  const target = profiles.find((p) => p.id === to)
+  const has = new Set(target?.mods.map((m) => m.id) ?? [])
+  const existing = target?.mods.find((m) => m.id === mod.id)
+  const missing = target ? dependencies.filter((d) => !has.has(d.id)) : []
+  const also = missing.filter((d) => !skipped.includes(d.id))
+  return (
+    <Modal
+      title={`Copy ${name} to…`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="quiet" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!to}
+            onClick={() => {
+              if (!to) return
+              onCopy(
+                to,
+                also.map((d) => d.id)
+              )
+              onClose()
+            }}
+          >
+            {also.length > 0 ? `Copy ${also.length + 1} mods` : 'Copy'}
+          </Button>
+        </>
+      }
+    >
+      {profiles.length === 0 ? (
+        <p>This game has no other profiles. Create one first.</p>
+      ) : (
+        <>
+          <p>
+            The copy has the same version, files and settings. Settings the other profile already
+            has for it are kept.
+          </p>
+          <ul className="mt-3 max-h-60 overflow-y-auto rounded-md border border-line">
+            {profiles.map((p) => {
+              const followed = p.sync?.role === 'follower'
+              return (
+                <li key={p.id} className="border-b border-line last:border-b-0">
+                  <label
+                    className={`flex items-center gap-3 px-3 py-2 ${
+                      followed ? 'opacity-50' : 'cursor-pointer hover:bg-raised/60'
+                    }`}
+                    title={
+                      followed ? 'Synced from a friend: its mods come from their list' : undefined
+                    }
+                  >
+                    <input
+                      type="radio"
+                      name="copy-to-profile"
+                      checked={to === p.id}
+                      disabled={followed}
+                      onChange={() => setTo(p.id)}
+                      className="size-4 accent-ember"
+                    />
+                    <span className="flex-1 truncate font-medium text-fg">{p.name}</span>
+                    <span className="text-xs text-muted">
+                      {followed
+                        ? 'Synced from a friend'
+                        : `${p.mods.length} ${p.mods.length === 1 ? 'mod' : 'mods'}`}
+                    </span>
+                  </label>
+                </li>
+              )
+            })}
+          </ul>
+          {existing && (
+            <p className="mt-3 text-warn">
+              {target?.name} already has {name} {existing.version}. Copying replaces it with{' '}
+              {mod.version}.
+            </p>
+          )}
+          {missing.length > 0 && (
+            <div className="mt-4">
+              <p>
+                {target?.name} doesn&apos;t have{' '}
+                {missing.length === 1 ? 'this dependency' : 'these dependencies'}. Copy{' '}
+                {missing.length === 1 ? 'it' : 'them'} too:
+              </p>
+              <ul className="mt-2 max-h-48 overflow-y-auto">
+                {missing.map((m) => (
+                  <li key={m.id}>
+                    <label className="flex cursor-pointer items-center gap-2 py-1 text-fg">
+                      <input
+                        type="checkbox"
+                        checked={!skipped.includes(m.id)}
+                        onChange={(e) =>
+                          setSkipped((s) =>
+                            e.target.checked ? s.filter((id) => id !== m.id) : [...s, m.id]
+                          )
+                        }
+                        className="size-4 accent-ember"
+                      />
+                      {displayName(m.name)}
+                      <span className="text-xs text-muted tabular-nums">{m.version}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
       )}
     </Modal>
   )
