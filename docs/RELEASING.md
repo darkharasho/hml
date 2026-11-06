@@ -34,10 +34,11 @@ version and release again.
 
 ## Required secrets / variables (GitHub repo settings)
 
-The macOS signing secrets are **already set** on `darkharasho/hml` (loaded from
-1Password with `gh secret set`, see below). If they go missing, the `build-mac`
-job fails at "Verify macOS signing identity is visible" and the release stays a
-draft (the publish job needs every build).
+The macOS and Windows signing secrets are **already set** on `darkharasho/hml`
+(loaded from 1Password with `gh secret set`, see below). If they go missing, the
+`build-mac` job fails at "Verify macOS signing identity is visible" or the
+Windows build fails at "Check the Windows signing secrets are set", and the
+release stays a draft (the publish job needs every build).
 
 | Name | Type | Purpose |
 | --- | --- | --- |
@@ -46,6 +47,9 @@ draft (the publish job needs every build).
 | `APPLE_ID` | secret | Apple ID email (for notarization). |
 | `APPLE_APP_SPECIFIC_PASSWORD` | secret | app-specific password (for notarization). |
 | `APPLE_TEAM_ID` | secret | Apple Developer Team ID (`YMPSC6RQ4F`). |
+| `AZURE_TENANT_ID` | secret | Entra tenant of the Artifact Signing account. |
+| `AZURE_CLIENT_ID` | secret | app registration `github-actions-code-signing`. |
+| `AZURE_CLIENT_SECRET` | secret | that app's client secret (expires 2028-11-05). |
 
 `GITHUB_TOKEN` is provided automatically. Release notes are written by hand, so
 no AI API key is needed.
@@ -74,13 +78,35 @@ op read "$ITEM/juapwaxqpqluusuqhjaax6im2i"  | gh secret set APPLE_TEAM_ID -R dar
 > To ship unsigned mac builds, set `mac.notarize` to `false` and drop the
 > signing steps — but auto-update won't work on macOS for unsigned apps.
 
+## Windows signing
+
+The Windows installer and `hml.exe` are signed with **Azure Artifact Signing**
+(`win.azureSignOptions` in `electron-builder.yml`): account `darkharasho-signing`
+(East US), certificate profile `public-trust`, publisher `Michael Stephens`.
+electron-builder installs the `TrustedSigning` PowerShell module on the runner
+and signs through it, authenticating as the `github-actions-code-signing` app
+registration (it has the "Artifact Signing Certificate Profile Signer" role on
+the account). After the build, "Verify the Windows installer is signed" checks
+the Authenticode signature and fails the job if it isn't valid.
+
+The client secret is in 1Password (`Private/Azure Artifact Signing –
+github-actions-code-signing`). To set all three secrets on a repo without
+printing them:
+
+```bash
+~/.claude/templates/windows-signing/set-azure-signing-secrets.sh hml
+```
+
+When the secret expires, make a new one on the app registration, update the
+1Password item, and rerun the script for every repo that signs.
+
 ## What the workflow does
 
 - **test** — `npm ci`, typecheck, lint, unit tests.
 - **build** (matrix: linux AppImage, win nsis) and **build-mac** (dmg + zip,
   x64 and arm64) — `npm run build` then `electron-builder … --publish always`
-  uploads to a **draft** GitHub release for the tag. The mac job signs +
-  notarizes.
+  uploads to a **draft** GitHub release for the tag. The Windows build signs
+  with Artifact Signing; the mac job signs + notarizes.
 - **publish** — sets the release body from `RELEASE_NOTES.md` and flips the
   release out of draft.
 

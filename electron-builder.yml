@@ -27,6 +27,13 @@ publish:
     releaseType: draft
 win:
   executableName: hml
+  # Signed with Azure Artifact Signing so SmartScreen doesn't warn. Credentials come from
+  # AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET (see docs/RELEASING.md).
+  azureSignOptions:
+    publisherName: Michael Stephens
+    endpoint: https://eus.codesigning.azure.net/
+    codeSigningAccountName: darkharasho-signing
+    certificateProfileName: public-trust
   target:
     - nsis
 mac:

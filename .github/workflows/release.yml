@@ -51,7 +51,9 @@ jobs:
           tag="${GITHUB_REF#refs/tags/}"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --draft --title "$tag" --notes ""
 
-  # Linux + Windows need no code-signing.
+  # Linux needs no code-signing. Windows is signed with Azure Artifact Signing
+  # (win.azureSignOptions in electron-builder.yml); electron-builder reads the
+  # AZURE_* credentials from the environment.
   build:
     needs: [draft]
     strategy:
@@ -73,10 +75,38 @@ jobs:
       # resources/ecosystem-snapshot.json is committed, so nothing is generated before packaging.
       - name: Build app
         run: npm run build
+      # Without these electron-builder can't authenticate to Artifact Signing.
+      # Fail before the slow build instead of after it.
+      - name: Check the Windows signing secrets are set
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          for v in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET; do
+            [ -n "${!v}" ] || { echo "::error::Secret $v is not set (see docs/RELEASING.md)."; exit 1; }
+          done
       - name: Build and publish distributables
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: npx electron-builder ${{ matrix.args }} --publish always
+      # The release stays a draft if this fails, since publish needs every build.
+      - name: Verify the Windows installer is signed
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem dist -Filter *.exe | Where-Object { $_.Name -like '*-setup.exe' }
+          if (-not $files) { Write-Error "No installer found in dist/"; exit 1 }
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            Write-Host "$($f.Name): $($sig.Status) — $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { Write-Error "$($f.Name) is not validly signed"; exit 1 }
+          }
 
   # macOS is signed + notarized with the Developer ID Application cert. The
   # signing secrets are loaded into the repo from 1Password via `gh secret set`
