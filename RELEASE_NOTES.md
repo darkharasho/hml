@@ -1,10 +1,11 @@
 # Release Notes
 
-Version v1.6.1 — November 5, 2026
+Version v1.7.0 — November 5, 2026
 
-## Synced profiles catch up when you open HML
-If you follow someone's synced profile, switching to HML now checks right away for their latest changes and installs them. Before, HML only checked every 5 minutes, so right after the owner added a mod you could show one fewer until you restarted HML.
+## Copy a mod to another profile
+Every mod's ⋯ menu now has **Copy to profile…**. Pick another profile of the same game and HML copies the mod there at the same version, with its files and settings. Nothing is downloaded again, so it works for local mods, Nexus mods and old versions too.
 
-If the game is running, the update still waits until you close it.
-
-NOTE: Only followers need v1.6.1 for this.
+- If the mod needs other mods the chosen profile doesn't have, HML lists them so you can copy them along.
+- If that profile already has the mod, it is replaced, but its own settings and on/off state stay as they were.
+- A newly copied mod is turned on.
+- Profiles synced from a friend can't be picked, since their mods come from the friend's list.
