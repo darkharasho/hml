@@ -3,7 +3,13 @@ import type { ProfileManifest } from '../../../shared/types'
 import { api, errorMessage } from '../api'
 import { isLinux, isNexusOnly } from '../customView'
 import { useStore } from '../store'
-import { DETACH_CONFIRM, STOP_SYNC_CONFIRM, SYNC_TONE_CLASS, syncBadge } from '../syncView'
+import {
+  DETACH_CONFIRM,
+  STOP_SYNC_CONFIRM,
+  SYNC_TONE_CLASS,
+  syncBadge,
+  syncProgressKey
+} from '../syncView'
 import { EditGameDialog } from './AddGameDialog'
 import { DeleteProfileDialog } from './DeleteProfileDialog'
 import { GameCover } from './GameCover'
@@ -21,6 +27,7 @@ export function ProfileSidebar(): React.JSX.Element | null {
   const duplicateProfile = useStore((s) => s.duplicateProfile)
   const stopSync = useStore((s) => s.stopSync)
   const detachSync = useStore((s) => s.detachSync)
+  const syncNow = useStore((s) => s.syncNow)
   const openProfileFolder = useStore((s) => s.openProfileFolder)
   const leaveGame = useStore((s) => s.leaveGame)
   const updateCounts = useStore((s) => (game ? s.updateSummary[game.label] : undefined))
@@ -211,6 +218,10 @@ export function ProfileSidebar(): React.JSX.Element | null {
                   ...(p.sync
                     ? [
                         {
+                          label: p.sync.role === 'owner' ? 'Publish now' : 'Sync now',
+                          onSelect: () => void syncNow(p.id)
+                        },
+                        {
                           label: p.sync.role === 'owner' ? 'Stop syncing…' : 'Detach from sync…',
                           onSelect: () => setUnsyncing(p)
                         }
@@ -320,12 +331,16 @@ export function ProfileSidebar(): React.JSX.Element | null {
 
 /** A profile's sync role, beside its name. */
 function SyncBadge({ profile }: { profile: ProfileManifest }): React.JSX.Element | null {
-  const badge = syncBadge(profile.sync)
+  const progress = useStore((s) => {
+    const game = s.currentGame?.label
+    return game ? s.syncProgress[syncProgressKey(game, profile.id)] : undefined
+  })
+  const badge = syncBadge(profile.sync, progress)
   if (!badge) return null
   return (
     <span
       title={badge.title}
-      className={`shrink-0 rounded px-1.5 py-px text-[10px] font-medium ${SYNC_TONE_CLASS[badge.tone]}`}
+      className={`shrink-0 rounded px-1.5 py-px text-[10px] font-medium tabular-nums whitespace-nowrap ${SYNC_TONE_CLASS[badge.tone]}`}
     >
       {badge.label}
     </span>

@@ -6,6 +6,7 @@ import type {
   GameDef,
   HmlCustomGame,
   HmlExport,
+  HmlExportMod,
   ImportResult,
   ModSource,
   ProfileManifest,
@@ -56,7 +57,7 @@ export interface ShareSync {
     code: string,
     revision: number,
     configs: Map<string, Uint8Array>,
-    opts?: { behind?: boolean; failed?: string[] }
+    opts?: { behind?: boolean; failed?: string[]; mods?: HmlExportMod[] }
   ): Promise<void>
 }
 
@@ -396,7 +397,8 @@ export function createShareServices(ctx: ShareContext): ShareApi {
               behind: unresolved.some((u) => u.kind !== 'local'),
               failed: unresolved
                 .filter((u) => u.kind !== 'local' && u.url === undefined)
-                .map((u) => u.name)
+                .map((u) => u.name),
+              mods: exp.mods
             }
           )
         } catch (e) {

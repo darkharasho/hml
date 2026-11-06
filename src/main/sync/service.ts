@@ -3,8 +3,11 @@ import type {
   GameDef,
   HmlCustomGame,
   HmlExport,
+  HmlExportMod,
   ProfileManifest,
-  ProfileSync
+  ProfileSync,
+  SyncNowResult,
+  SyncProgress
 } from '../../shared/types'
 import { noSecureStorage } from '../../shared/messages'
 import { normalizeSyncCode } from '../../shared/shareCode'
@@ -12,7 +15,7 @@ import { getProfile, listProfiles, saveProfile } from '../profiles/profiles'
 import { loadSecret, saveSecret } from '../secrets'
 import type { ServiceDeps } from '../services'
 import { collectHmlParts, readHmlFile, zipHmlParts } from '../share/hmlFile'
-import type { SyncApplyResult } from './apply'
+import { followerCounts, type ApplyProgress, type SyncApplyResult } from './apply'
 import { clearBases, writeBases } from './bases'
 import {
   createSync,
@@ -23,6 +26,7 @@ import {
   type SyncClientOptions
 } from './client'
 import { matchesManualEntry } from './lock'
+import { modName } from '../share/entries'
 import { revisionDigest } from './revision'
 
 export const SYNC_DEBOUNCE_MS = 10_000
@@ -48,7 +52,8 @@ export interface SyncContext {
   apply(
     game: string,
     profileId: string,
-    rev: { export: HmlExport; configs: Map<string, Uint8Array> }
+    rev: { export: HmlExport; configs: Map<string, Uint8Array> },
+    onProgress?: ApplyProgress
   ): Promise<SyncApplyResult>
   timers?: SyncTimers
 }
@@ -64,7 +69,7 @@ interface ProfileState {
   /** A publish was asked for while one ran: run once more when it ends. */
   dirty?: boolean
   /** Follower: the check under way. */
-  checking?: Promise<void>
+  checking?: Promise<CheckOutcome>
   /** Follower: true while a revision is being applied. */
   applying?: boolean
   /** Follower: the retry scheduled while the game runs. */
@@ -86,7 +91,24 @@ interface ProfileState {
   behindRetryAt?: number
   /** Follower: the revision and failed mods last reported, so a retry doesn't repeat it. */
   failedNotice?: string
+  /** Follower: what the sync is doing now, as last emitted. */
+  progress?: SyncProgress
 }
+
+/** What one follower check did. */
+type CheckOutcome =
+  'gone' | 'unchanged' | 'unreadable' | 'wrong-game' | 'held' | 'skipped' | 'applied' | 'error'
+
+/** The follower fields that describe how its mods compare with the owner's list. */
+const countFields = (
+  c: ReturnType<typeof followerCounts>
+): Pick<FollowerSync, 'total' | 'local' | 'missing'> => ({
+  total: c.total,
+  ...(c.local.length > 0 ? { local: c.local } : {}),
+  ...(c.missing.length > 0 ? { missing: c.missing } : {})
+})
+
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
 
 const DEPLOY_KEY = '__deploy__'
 const WHAT = 'sync codes'
@@ -94,6 +116,7 @@ const FOLLOWER_CREATE = 'Detach this profile from its sync before creating a syn
 const FOLLOWER_STOP = 'This profile follows a sync code. Detach it instead.'
 const NOT_FOLLOWER = "This profile isn't following a sync code."
 const NO_SUCH_SYNC = 'No synced profile has that code. It may have ended.'
+const ORPHANED = "This PC can't publish to this code anymore. Stop syncing and create a new code."
 
 /** Counted changes only: failed mods are reported on their own, once (see failedNotice). */
 const hasChanges = (r: SyncApplyResult): boolean =>
@@ -166,8 +189,9 @@ export function createSyncServices(ctx: SyncContext): {
     /**
      * `behind`: some mods didn't install, so the next check re-applies this revision.
      * `failed`: the names of those the import already reported, so that retry doesn't repeat them.
+     * `mods`: the owner's list, to count how many of them the profile has.
      */
-    opts?: { behind?: boolean; failed?: string[] }
+    opts?: { behind?: boolean; failed?: string[]; mods?: HmlExportMod[] }
   ): Promise<void>
   /** The profile that owns or follows this code. */
   findByCode(code: string): Promise<{ game: string; profileId: string } | null>
@@ -175,6 +199,8 @@ export function createSyncServices(ctx: SyncContext): {
   fetchLatest(code: string): Promise<{ revision: number; data: Uint8Array }>
   /** Follower: drops manual entries whose Nexus file is now installed. */
   pruneManual(game: string, profileId: string): Promise<void>
+  /** Follower: force a full re-apply. Owner: publish now. Never throws. */
+  syncNow(game: string, profileId: string): Promise<SyncNowResult>
   /** True while applyRevision runs for this profile (lets the follower lock pass). */
   isApplying(game: string, profileId: string): boolean
   isFollower(game: string, profileId: string): Promise<boolean>
@@ -207,6 +233,14 @@ export function createSyncServices(ctx: SyncContext): {
 
   const emitState = (game: string, profileId: string): void =>
     deps.emit({ type: 'sync-state', game, profileId })
+
+  /** Emits a follower's live progress; null when it's idle again. Repeats are dropped. */
+  const setProgress = (game: string, profileId: string, progress: SyncProgress | null): void => {
+    const st = stateOf(game, profileId)
+    if (JSON.stringify(st.progress ?? null) === JSON.stringify(progress)) return
+    st.progress = progress ?? undefined
+    deps.emit({ type: 'sync-progress', game, profileId, progress })
+  }
 
   /** The key file for a stored code; a code that isn't valid never names a path. */
   const keyFile = (code: string): string | null => {
@@ -442,17 +476,28 @@ export function createSyncServices(ctx: SyncContext): {
     fromHold?: boolean
     /** A behind profile re-applies its revision even within SYNC_BEHIND_RETRY_MS. */
     retryBehind?: boolean
+    /** Sync now: re-download the owner's revision and re-apply it even when it isn't newer. */
+    force?: boolean
   }
 
   /** One check. */
-  async function checkOnce(game: string, profileId: string, opts: CheckOptions): Promise<void> {
-    const { fromHold = false } = opts
+  async function checkOnce(
+    game: string,
+    profileId: string,
+    opts: CheckOptions
+  ): Promise<CheckOutcome> {
+    const { fromHold = false, force = false } = opts
     const st = stateOf(game, profileId)
     const profile = await readProfile(game, profileId)
     const sync = profile?.sync
-    if (!profile || sync?.role !== 'follower') return
+    if (!profile || sync?.role !== 'follower') return 'skipped'
     const { code } = sync
     if (st.held && st.held.code !== code) st.held = undefined
+    if (force) {
+      // A newer HML may read what this one couldn't; asking again costs one download.
+      st.lastErrorRevision = undefined
+      setProgress(game, profileId, { phase: 'checking' })
+    }
 
     let revision: number
     let rev: Parts
@@ -464,34 +509,34 @@ export function createSyncServices(ctx: SyncContext): {
       // Between retries it asks only for newer revisions, like any follower.
       const now = Date.now()
       const retry =
-        !!sync.behind &&
-        (opts.retryBehind ||
-          st.behindRetryAt === undefined ||
-          now - st.behindRetryAt >= SYNC_BEHIND_RETRY_MS)
+        force ||
+        (!!sync.behind &&
+          (opts.retryBehind ||
+            st.behindRetryAt === undefined ||
+            now - st.behindRetryAt >= SYNC_BEHIND_RETRY_MS))
       if (retry) st.behindRetryAt = now
       // A revision this HML can't read, or one already held, isn't downloaded again.
-      const since = Math.max(
-        retry ? 0 : sync.revision,
-        st.lastErrorRevision ?? 0,
-        st.held?.revision ?? 0
-      )
+      const since = force
+        ? 0
+        : Math.max(retry ? 0 : sync.revision, st.lastErrorRevision ?? 0, st.held?.revision ?? 0)
       const res = await fetchSync(client(), code, since)
       if (res.kind === 'ended' || res.kind === 'missing') {
         st.held = undefined
         const saved = await updateFollower(game, profileId, code, () => undefined)
-        if (!saved) return
+        if (!saved) return 'skipped'
         cancelHold(game, profileId)
+        setProgress(game, profileId, null)
         await clearBases(deps.paths.profileDir(game, profileId))
         deps.emit({ type: 'sync-ended', game, profileId, profileName: saved.name })
         emitState(game, profileId)
-        return
+        return 'gone'
       }
       if (res.kind === 'unchanged') {
-        if (!st.held || st.held.revision !== res.revision) return
+        if (!st.held || st.held.revision !== res.revision) return 'unchanged'
         ;({ revision, rev } = st.held)
       } else {
         revision = res.revision
-        if (st.lastErrorRevision === revision) return
+        if (st.lastErrorRevision === revision) return 'unreadable'
         try {
           rev = await readHmlFile(res.data, { forImport: true })
         } catch {
@@ -502,11 +547,11 @@ export function createSyncServices(ctx: SyncContext): {
             profileId,
             message: `Update HML to keep following ${profile.name}.`
           })
-          return
+          return 'unreadable'
         }
         if (rev.export.game !== game) {
           console.warn(`Sync ${code} is for ${rev.export.game}, not ${game}; ignored.`)
-          return
+          return 'wrong-game'
         }
       }
     }
@@ -520,29 +565,41 @@ export function createSyncServices(ctx: SyncContext): {
       if ((st.launchHoldUntil ?? 0) > Date.now() || (await ctx.isGameRunning(def))) {
         st.held = { code, revision, rev }
         scheduleHold(game, profileId)
-        return
+        setProgress(game, profileId, { phase: 'held', revision })
+        return 'held'
       }
       st.held = undefined
       cancelHold(game, profileId)
       // A detach since the manifest was read wins: its apply would merge against cleared bases.
-      if (st.detaching || !(await stillFollowing(game, profileId, code))) return
+      if (st.detaching || !(await stillFollowing(game, profileId, code))) return 'skipped'
       st.applying = true
       try {
-        result = await ctx.apply(game, profileId, rev)
+        result = await ctx.apply(game, profileId, rev, (p) =>
+          setProgress(game, profileId, { phase: 'applying', ...p })
+        )
       } finally {
         st.applying = false
       }
     } finally {
       st.committed = false
     }
+    // Anything still missing that isn't a manual download is retried, like a failed install.
+    const manualNames = new Set(result.manual.map((m) => m.name))
+    const behind = result.failed.length > 0 || result.missing.some((n) => !manualNames.has(n))
+    const local = rev.export.mods.filter((m) => m.source.kind === 'local')
     const saved = await updateFollower(game, profileId, code, () => ({
       role: 'follower',
       code,
       revision,
-      ...(result.failed.length > 0 ? { behind: true as const } : {}),
-      ...(result.manual.length > 0 ? { manual: result.manual } : {})
+      ...(behind ? { behind: true as const } : {}),
+      ...(result.manual.length > 0 ? { manual: result.manual } : {}),
+      ...countFields({
+        total: rev.export.mods.length,
+        local: local.map(modName),
+        missing: result.missing
+      })
     }))
-    if (!saved) return
+    if (!saved) return 'skipped'
     // Manual downloads are news on a new revision, or when the list changed; not on a retry.
     const manual =
       revision !== sync.revision || !sameManual(sync.manual, result.manual) ? result.manual : []
@@ -569,21 +626,91 @@ export function createSyncServices(ctx: SyncContext): {
     }
     st.failedNotice = failedKey
     emitState(game, profileId)
+    return 'applied'
   }
 
   /** Single-flight per profile; logs and swallows every failure. */
-  function checkFollower(game: string, profileId: string, opts: CheckOptions = {}): Promise<void> {
+  function checkFollower(
+    game: string,
+    profileId: string,
+    opts: CheckOptions = {}
+  ): Promise<CheckOutcome> {
     const st = stateOf(game, profileId)
     if (st.checking) return st.checking
     const run = checkOnce(game, profileId, opts)
-      .catch((e: unknown) => {
+      .catch((e: unknown): CheckOutcome => {
         console.warn(`Sync check failed for ${game}/${profileId}:`, e)
+        return 'error'
       })
       .finally(() => {
         st.checking = undefined
+        // A held revision stays shown until it applies; anything else is idle now.
+        if (st.progress?.phase !== 'held' || !st.held) setProgress(game, profileId, null)
       })
     st.checking = run
     return run
+  }
+
+  /** The toast for a follower's Sync now. */
+  async function followerSyncNow(game: string, profileId: string): Promise<SyncNowResult> {
+    const st = stateOf(game, profileId)
+    // A check under way may not be forced: let it end, then run one that is.
+    await st.checking
+    const outcome = await checkFollower(game, profileId, { force: true })
+    const p = await readProfile(game, profileId)
+    const s = p?.sync?.role === 'follower' ? p.sync : undefined
+    const warn = (message: string): SyncNowResult => ({ message, tone: 'warn' })
+    switch (outcome) {
+      case 'gone':
+        return warn('This sync code has ended. The profile is a normal one now.')
+      case 'held':
+        return warn('Close the game to finish syncing. HML applies it as soon as the game exits.')
+      case 'unreadable':
+        return warn('Update HML to read the latest version of this synced profile.')
+      case 'wrong-game':
+        return warn('This sync code is for another game.')
+      case 'error':
+        return warn("Couldn't reach the sync server. Try again in a minute.")
+      default:
+        break
+    }
+    if (!s) return warn(NOT_FOLLOWER)
+    const total = s.total ?? 0
+    const missing = s.missing ?? []
+    const have = total - (s.local?.length ?? 0) - missing.length
+    if (missing.length > 0) return warn(`${have}/${total} mods. Missing: ${missing.join(', ')}`)
+    const localNote = s.local?.length
+      ? ` (${plural(s.local.length, "local mod doesn't", "local mods don't")} sync: ${s.local.join(', ')})`
+      : ''
+    return {
+      message: `Up to date: ${have}/${total} mods${localNote}`,
+      tone: localNote ? 'warn' : 'ok'
+    }
+  }
+
+  /** The toast for an owner's Sync now. */
+  async function ownerSyncNow(game: string, profileId: string): Promise<SyncNowResult> {
+    try {
+      await publishNow(game, profileId)
+    } catch (e) {
+      return {
+        message: `Couldn't publish: ${e instanceof Error ? e.message : String(e)}`,
+        tone: 'warn'
+      }
+    }
+    const p = await readProfile(game, profileId)
+    const s = p?.sync
+    if (!p || s?.role !== 'owner') return { message: 'This profile no longer syncs.', tone: 'warn' }
+    if (s.orphaned) return { message: ORPHANED, tone: 'warn' }
+    if (s.pending) return { message: "Couldn't publish yet. HML keeps trying.", tone: 'warn' }
+    const local = localModCount(p)
+    const synced = p.mods.length - local
+    const localNote =
+      local > 0 ? ` (${plural(local, "local mod doesn't", "local mods don't")} sync)` : ''
+    return {
+      message: `Published: friends get ${synced}/${p.mods.length} mods${localNote}`,
+      tone: local > 0 ? 'warn' : 'ok'
+    }
   }
 
   /** The game label, or null (logged) when the game is no longer known. */
@@ -754,6 +881,7 @@ export function createSyncServices(ctx: SyncContext): {
       st.launchHoldUntil = undefined
       st.behindRetryAt = undefined
       st.failedNotice = undefined
+      setProgress(label, profileId, null)
       await clearBases(deps.paths.profileDir(label, profileId))
       emitState(label, profileId)
     },
@@ -798,7 +926,8 @@ export function createSyncServices(ctx: SyncContext): {
           role: 'follower',
           code: normalized,
           revision,
-          ...(opts?.behind ? { behind: true as const } : {})
+          ...(opts?.behind ? { behind: true as const } : {}),
+          ...(opts?.mods ? countFields(followerCounts(opts.mods, profile.mods)) : {})
         }
         // Bases first: a follower without bases would merge as if every owner value were new.
         await writeBases(deps.paths.profileDir(game, profileId), configs)
@@ -829,6 +958,15 @@ export function createSyncServices(ctx: SyncContext): {
     async pruneManual(game, profileId) {
       const label = await labelOf(game)
       if (label) await pruneManual(label, profileId)
+    },
+
+    async syncNow(game, profileId) {
+      const label = await labelOf(game)
+      if (!label) return { message: 'HML no longer knows this game.', tone: 'warn' }
+      const role = (await readProfile(label, profileId))?.sync?.role
+      if (role === 'follower') return followerSyncNow(label, profileId)
+      if (role === 'owner') return ownerSyncNow(label, profileId)
+      return { message: "This profile doesn't sync.", tone: 'warn' }
     },
 
     isApplying(game, profileId) {

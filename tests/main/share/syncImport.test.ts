@@ -136,7 +136,7 @@ describe('sync code import', () => {
     const p = await share.previewShare({ code: SYNC })
     const r = await share.importShare(p!.token, '')
     expect(r.warnings).toEqual([])
-    expect(r.profile.sync).toEqual({ role: 'follower', code: SYNC, revision: 6 })
+    expect(r.profile.sync).toEqual({ role: 'follower', code: SYNC, revision: 6, total: 0 })
     const dir = paths.profileDir('repo', r.profile.id)
     expect(await readFile(join(dir, '.hml-sync', 'base', ...CFG.split('/')), 'utf8')).toBe(
       '[G]\nA = 1\n'
@@ -174,7 +174,14 @@ describe('sync code import', () => {
     const share = make()
     const r = await share.importShare((await share.previewShare({ code: SYNC }))!.token, '')
     expect(r.unresolved).toHaveLength(1)
-    expect(r.profile.sync).toEqual({ role: 'follower', code: SYNC, revision: 6, behind: true })
+    expect(r.profile.sync).toEqual({
+      role: 'follower',
+      code: SYNC,
+      revision: 6,
+      behind: true,
+      total: 1,
+      missing: ['Gone-Mod']
+    })
     requests = []
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
@@ -200,7 +207,8 @@ describe('sync code import', () => {
     expect(r.unresolved).toHaveLength(2)
     expect(attach).toHaveBeenCalledWith('repo', r.profile.id, SYNC, 6, expect.any(Map), {
       behind: true,
-      failed: [r.unresolved.find((u) => u.kind === 'thunderstore')!.name]
+      failed: [r.unresolved.find((u) => u.kind === 'thunderstore')!.name],
+      mods: expect.any(Array)
     })
   })
 
@@ -214,7 +222,13 @@ describe('sync code import', () => {
     ]
     const share = make()
     const r = await share.importShare((await share.previewShare({ code: SYNC }))!.token, '')
-    expect(r.profile.sync).toEqual({ role: 'follower', code: SYNC, revision: 6 })
+    expect(r.profile.sync).toEqual({
+      role: 'follower',
+      code: SYNC,
+      revision: 6,
+      total: 1,
+      local: ['x.zip']
+    })
   })
 
   it('a followed profile deleted since it was found falls through to a normal preview', async () => {

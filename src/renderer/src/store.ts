@@ -16,6 +16,7 @@ import type {
   NxInstallResult,
   NxUpdate,
   ProfileManifest,
+  SyncProgress,
   Settings,
   UpdateSummary
 } from '../../shared/types'
@@ -24,7 +25,13 @@ import { isGhAccessError } from '../../shared/messages'
 import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
-import { isFollower, manualDownloadToast, moreManualToast, syncUpdatedToast } from './syncView'
+import {
+  isFollower,
+  manualDownloadToast,
+  moreManualToast,
+  syncProgressKey,
+  syncUpdatedToast
+} from './syncView'
 import { toggleFavorite } from './titleView'
 import { displayName, installToast, progressLabel } from './tsView'
 
@@ -78,6 +85,8 @@ interface State {
   onlineSource: Record<string, OnlineSource>
   /** Latest progress line from the main process while a Thunderstore or GitHub install runs. */
   progress: string | null
+  /** Live sync progress per profile (syncProgressKey), while checking, applying or held. */
+  syncProgress: Record<string, SyncProgress>
   toasts: Toast[]
   settingsOpen: boolean
   /** A hand-installed BepInEx found in the selected game's folder, awaiting Remove or Keep. */
@@ -116,6 +125,8 @@ interface State {
   stopSync(id: string): Promise<void>
   /** Turns a followed profile into a normal one; errors propagate. */
   detachSync(id: string): Promise<void>
+  /** Follower: re-applies the owner's mods now. Owner: publishes now. Toasts the result. */
+  syncNow(id: string): Promise<void>
   /** Opens a follower's manual Nexus downloads; pages past the tab limit wait behind a toast. */
   openManualDownloads(urls: string[]): Promise<void>
   /** Switches to a game's profile (after an import) and reloads its list. */
@@ -512,6 +523,7 @@ export const useStore = create<State>()((set, get) => {
     deployment: null,
     onlineSource: {},
     progress: null,
+    syncProgress: {},
     toasts: [],
     settingsOpen: false,
     manualLoader: null,
@@ -723,6 +735,17 @@ export const useStore = create<State>()((set, get) => {
       const game = get().currentGame
       if (!game) return
       await tracked(() => api.detachSync(game.label, id))
+      await afterSyncChange(game.label, id)
+    },
+
+    async syncNow(id) {
+      const game = get().currentGame
+      if (!game) return
+      const r = await api.syncNow(game.label, id).catch((e: unknown) => ({
+        message: errorMessage(e),
+        tone: 'warn' as const
+      }))
+      get().toast(r.tone === 'ok' ? 'success' : 'info', r.message)
       await afterSyncChange(game.label, id)
     },
 
@@ -1216,6 +1239,15 @@ export const useStore = create<State>()((set, get) => {
         return void afterSyncChange(e.game, e.profileId)
       }
       if (e.type === 'sync-state') return void afterSyncChange(e.game, e.profileId)
+      if (e.type === 'sync-progress') {
+        const key = syncProgressKey(e.game, e.profileId)
+        return set((s) => {
+          const next = { ...s.syncProgress }
+          if (e.progress) next[key] = e.progress
+          else delete next[key]
+          return { syncProgress: next }
+        })
+      }
       if (e.type === 'sync-error') return get().toast('error', e.message)
       if (progressIdle(get())) return
       set({ progress: progressLabel(e) })

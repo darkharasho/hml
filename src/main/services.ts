@@ -1333,7 +1333,8 @@ export function createServices(deps: ServiceDeps): Services {
       isGameProcessRunning(deps.platform, deps.execFile, def.exeNames, deps.procFs)
         .then((r) => r === true)
         .catch(() => false),
-    apply: (game, profileId, rev) => applyRevision(syncApplyCtx, game, profileId, rev)
+    apply: (game, profileId, rev, onProgress) =>
+      applyRevision(syncApplyCtx, game, profileId, rev, onProgress)
   })
   late.sync = syncApi
 
@@ -1548,6 +1549,7 @@ export function createServices(deps: ServiceDeps): Services {
     createSyncCode: syncApi.createSyncCode,
     stopSync: syncApi.stopSync,
     detachSync: syncApi.detachSync,
+    syncNow: syncApi.syncNow,
     syncTick: () => syncApi.tick(),
     ...customApi,
     handleNxm,

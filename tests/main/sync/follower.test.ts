@@ -91,6 +91,7 @@ const emptyResult = (o: Partial<SyncApplyResult> = {}): SyncApplyResult => ({
   configs: 0,
   manual: [],
   failed: [],
+  missing: [],
   ...o
 })
 
@@ -181,7 +182,7 @@ describe('checkFollower', () => {
     await s.checkFollower(GAME, ID)
     expect(requests).toEqual([`https://share.test/v1/sync/${CODE}?since=3`])
     expect(applyCalls).toBe(1)
-    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 4 })
+    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 4, total: 0 })
     expect(ofType('sync-applied')).toEqual([
       {
         type: 'sync-applied',
@@ -215,7 +216,8 @@ describe('checkFollower', () => {
       code: CODE,
       revision: 5,
       behind: true,
-      manual
+      manual,
+      total: 0
     })
     expect(ofType('sync-applied')).toHaveLength(1)
   })
@@ -274,7 +276,7 @@ describe('checkFollower', () => {
     await s.checkFollower(GAME, ID)
     expect(requests).toEqual([`https://share.test/v1/sync/${CODE}?since=0`])
     expect(applyCalls).toBe(1)
-    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 3 })
+    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 3, total: 0 })
     await s.checkFollower(GAME, ID)
     expect(requests.at(-1)).toBe(`https://share.test/v1/sync/${CODE}?since=3`)
   })
@@ -414,7 +416,13 @@ describe('behind followers', () => {
         message: "Friends: 2 mods couldn't be installed"
       }
     ])
-    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 4, behind: true })
+    expect(await readSync()).toEqual({
+      role: 'follower',
+      code: CODE,
+      revision: 4,
+      behind: true,
+      total: 0
+    })
   })
 
   it('says so once per revision and failed set, not on every retry', async () => {
@@ -487,7 +495,7 @@ describe('behind followers', () => {
     await s.checkFollower(GAME, ID)
     expect(requests.at(-1)).toBe(since3)
     expect(applyCalls).toBe(2)
-    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 4 })
+    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 4, total: 0 })
     expect(ofType('sync-applied')).toHaveLength(1)
   })
 
@@ -523,7 +531,8 @@ describe('behind followers', () => {
         code: CODE,
         revision: 4,
         behind: true,
-        manual
+        manual,
+        total: 0
       })
     } finally {
       clock.mockRestore()
@@ -803,5 +812,119 @@ describe('attach, lookup and tick', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+describe('sync status', () => {
+  const revWith = (mods: HmlExport['mods']): Uint8Array =>
+    zipHmlParts({ export: { ...exportOf(), mods }, configs: new Map() })
+  const tsMod = (fullName: string): HmlExport['mods'][number] => ({
+    source: { kind: 'thunderstore', fullName },
+    version: '1.0.0',
+    enabled: true,
+    name: fullName
+  })
+  const localMod: HmlExport['mods'][number] = {
+    source: { kind: 'local', fileName: 'mine.zip', sha256: 'a'.repeat(64) },
+    version: '1.0.0',
+    enabled: true,
+    name: 'Mine'
+  }
+
+  it('records the owner total, local mods and what is missing', async () => {
+    serve = async () => updated(4, revWith([tsMod('A-One'), tsMod('B-Two'), localMod]))
+    applyImpl = async () => emptyResult({ added: 1, missing: ['B-Two'] })
+    await createSyncServices(makeCtx()).checkFollower(GAME, ID)
+    expect(await readSync()).toEqual({
+      role: 'follower',
+      code: CODE,
+      revision: 4,
+      // A mod still missing that isn't a manual download is retried like a failed one.
+      behind: true,
+      total: 3,
+      local: ['Mine'],
+      missing: ['B-Two']
+    })
+  })
+
+  it('a missing manual download alone does not mark the profile behind', async () => {
+    serve = async () => updated(4, revWith([tsMod('A-One')]))
+    const manual = [{ name: 'A-One', url: 'https://www.nexusmods.com/repo/mods/1' }]
+    applyImpl = async () => emptyResult({ manual, missing: ['A-One'] })
+    await createSyncServices(makeCtx()).checkFollower(GAME, ID)
+    expect(await readSync()).toEqual({
+      role: 'follower',
+      code: CODE,
+      revision: 4,
+      manual,
+      total: 1,
+      missing: ['A-One']
+    })
+  })
+
+  it('emits apply progress, then idle', async () => {
+    serve = async () => updated(4)
+    const ctx = makeCtx()
+    ctx.apply = async (_g, _p, _rev, onProgress) => {
+      onProgress?.({ done: 0, total: 2 })
+      onProgress?.({ done: 0, total: 2, current: 'A-One' })
+      onProgress?.({ done: 2, total: 2 })
+      return emptyResult()
+    }
+    await createSyncServices(ctx).checkFollower(GAME, ID)
+    expect(ofType('sync-progress').map((e) => e.progress)).toEqual([
+      { phase: 'applying', done: 0, total: 2 },
+      { phase: 'applying', done: 0, total: 2, current: 'A-One' },
+      { phase: 'applying', done: 2, total: 2 },
+      null
+    ])
+  })
+
+  it('shows a revision held while the game runs until it applies', async () => {
+    running = true
+    serve = async () => updated(4)
+    const s = createSyncServices(makeCtx())
+    await s.checkFollower(GAME, ID)
+    expect(ofType('sync-progress').map((e) => e.progress)).toEqual([{ phase: 'held', revision: 4 }])
+    running = false
+    timers.fire(SYNC_HOLD_RETRY_MS)
+    await vi.waitFor(() => expect(applyCalls).toBe(1))
+    await vi.waitFor(() => expect(ofType('sync-progress').at(-1)?.progress).toBeNull())
+  })
+
+  it('Sync now re-downloads and re-applies the current revision', async () => {
+    await follow({ total: 2, missing: ['B-Two'] })
+    serve = async (since) =>
+      since >= 3 ? unchanged(3) : updated(3, revWith([tsMod('A-One'), tsMod('B-Two')]))
+    applyImpl = async () => emptyResult({ added: 1 })
+    const r = await createSyncServices(makeCtx()).syncNow(GAME, ID)
+    expect(requests).toEqual([`https://share.test/v1/sync/${CODE}?since=0`])
+    expect(applyCalls).toBe(1)
+    expect(r).toEqual({ message: 'Up to date: 2/2 mods', tone: 'ok' })
+    expect(await readSync()).toEqual({ role: 'follower', code: CODE, revision: 3, total: 2 })
+    expect(ofType('sync-progress')[0].progress).toEqual({ phase: 'checking' })
+  })
+
+  it('Sync now names what is still missing and the local mods', async () => {
+    serve = async () => updated(3, revWith([tsMod('A-One'), tsMod('B-Two'), localMod]))
+    applyImpl = async () => emptyResult({ missing: ['B-Two'] })
+    const s = createSyncServices(makeCtx())
+    expect(await s.syncNow(GAME, ID)).toEqual({
+      message: '1/3 mods. Missing: B-Two',
+      tone: 'warn'
+    })
+    applyImpl = async () => emptyResult()
+    expect(await s.syncNow(GAME, ID)).toEqual({
+      message: "Up to date: 2/3 mods (1 local mod doesn't sync: Mine)",
+      tone: 'warn'
+    })
+  })
+
+  it('Sync now while the game runs says to close it', async () => {
+    running = true
+    serve = async () => updated(4)
+    const r = await createSyncServices(makeCtx()).syncNow(GAME, ID)
+    expect(r.tone).toBe('warn')
+    expect(r.message).toMatch(/Close the game/)
   })
 })

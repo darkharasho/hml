@@ -182,7 +182,26 @@ export type ProfileSync =
       revision: number
       behind?: true
       manual?: { name: string; url: string }[]
+      /** How many mods the owner's revision lists, local ones included. */
+      total?: number
+      /** The owner's local mods: listed in the revision but never synced. */
+      local?: string[]
+      /** The owner's synced mods this profile doesn't have at the owner's version. */
+      missing?: string[]
     }
+
+/** What a sync is doing right now; not saved. */
+export type SyncProgress =
+  | { phase: 'checking' }
+  | { phase: 'applying'; done: number; total: number; current?: string }
+  /** A newer revision is downloaded but waits for the game to close. */
+  | { phase: 'held'; revision: number }
+
+/** The result of a Sync now, for a toast. */
+export interface SyncNowResult {
+  message: string
+  tone: 'ok' | 'warn'
+}
 
 export interface SyncChangeSummary {
   added: number
@@ -490,6 +509,8 @@ export type HmlEvent =
     }
   | { type: 'sync-ended'; game: string; profileId: string; profileName: string }
   | { type: 'sync-state'; game: string; profileId: string }
+  /** A sync's live progress; null when it's idle again. */
+  | { type: 'sync-progress'; game: string; profileId: string; progress: SyncProgress | null }
   | { type: 'sync-error'; game: string; profileId: string; message: string }
   /** Mod update counts from the background check (or a profile's own check). */
   | { type: 'update-summary'; summary: UpdateSummary }

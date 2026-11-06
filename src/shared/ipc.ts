@@ -26,6 +26,7 @@ import type {
   NxUpdate,
   NxUser,
   ProfileManifest,
+  SyncNowResult,
   Runner,
   Settings,
   ShareModDetail,
@@ -175,6 +176,11 @@ export interface HmlApi {
   /** Turns a followed profile into a normal one that no longer receives updates. */
   detachSync(game: string, profileId: string): Promise<void>
   /**
+   * Follower: re-downloads the owner's revision and re-applies it, installing anything missing.
+   * Owner: publishes now. Never throws; the result says what happened.
+   */
+  syncNow(game: string, profileId: string): Promise<SyncNowResult>
+  /**
    * Reads a share code or a picked `.hml` file and holds it for importShare; null when the file
    * dialog is cancelled. r2modman codes and `.r2z` files import into `game`, the open game.
    */
@@ -310,6 +316,7 @@ const METHOD_TABLE = {
   createSyncCode: true,
   stopSync: true,
   detachSync: true,
+  syncNow: true,
   previewShare: true,
   shareModDetails: true,
   importShare: true,

@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { HmlApi } from '../../shared/ipc'
 import type {
   HmlExport,
+  HmlExportMod,
   InstalledMod,
   ModSource,
   SyncChangeSummary,
@@ -10,7 +11,7 @@ import type {
 } from '../../shared/types'
 import { compareVersions } from '../../shared/version'
 import { isSafeConfigPath } from '../share/hmlFile'
-import type { createEntryInstaller, ShareInstallers } from '../share/entries'
+import { modName, type createEntryInstaller, type ShareInstallers } from '../share/entries'
 import { getProfile } from '../profiles/profiles'
 import type { ServiceDeps } from '../services'
 import { readBases, writeBases } from './bases'
@@ -32,7 +33,34 @@ export function modKey(s: ModSource): string {
 export interface SyncApplyResult extends SyncChangeSummary {
   manual: { name: string; url: string }[]
   failed: UnresolvedMod[]
+  /** Names of the owner's synced mods the profile still lacks (at the owner's version). */
+  missing: string[]
 }
+
+/**
+ * How a follower's mods compare with the owner's list: the owner's total, its local mods (never
+ * synced) and the synced mods this profile lacks at the owner's version.
+ */
+export function followerCounts(
+  owner: readonly HmlExportMod[],
+  have: readonly InstalledMod[]
+): { total: number; local: string[]; missing: string[] } {
+  const installed = new Map(have.map((m) => [modKey(m.source), m]))
+  const local: string[] = []
+  const missing: string[] = []
+  for (const entry of owner) {
+    if (entry.source.kind === 'local') {
+      local.push(modName(entry))
+      continue
+    }
+    const mod = installed.get(modKey(entry.source))
+    if (!mod || compareVersions(mod.version, entry.version) !== 0) missing.push(modName(entry))
+  }
+  return { total: owner.length, local, missing }
+}
+
+/** Progress of one apply: `done` of `total` owner mods handled, `current` the one being installed. */
+export type ApplyProgress = (p: { done: number; total: number; current?: string }) => void
 
 export interface ApplyContext {
   deps: ServiceDeps
@@ -62,7 +90,8 @@ export async function applyRevision(
   ctx: ApplyContext,
   game: string,
   profileId: string,
-  rev: { export: HmlExport; configs: Map<string, Uint8Array> }
+  rev: { export: HmlExport; configs: Map<string, Uint8Array> },
+  onProgress: ApplyProgress = () => undefined
 ): Promise<SyncApplyResult> {
   const { deps, installers, entries } = ctx
   const result: SyncApplyResult = {
@@ -73,7 +102,8 @@ export async function applyRevision(
     disabled: 0,
     configs: 0,
     manual: [],
-    failed: []
+    failed: [],
+    missing: []
   }
   const readMods = async (): Promise<Map<string, InstalledMod>> =>
     new Map((await getProfile(deps.paths, game, profileId)).mods.map((m) => [modKey(m.source), m]))
@@ -93,14 +123,19 @@ export async function applyRevision(
   const refreshOnce = entries.refresher(game)
   const installedIds: (string | null)[] = []
   const addedKeys = new Set<string>()
-  for (const entry of desired) {
+  const total = desired.length
+  onProgress({ done: 0, total })
+  for (const [i, entry] of desired.entries()) {
     const key = modKey(entry.source)
     const have = before.get(key)
     if (have && compareVersions(have.version, entry.version) === 0) {
       installedIds.push(have.id)
+      onProgress({ done: i + 1, total })
       continue
     }
+    onProgress({ done: i, total, current: modName(entry) })
     const r = await entries.installEntry(game, profileId, entry, refreshOnce)
+    onProgress({ done: i + 1, total })
     if ('unresolved' in r) {
       installedIds.push(null)
       if (r.unresolved.url !== undefined) {
@@ -153,5 +188,6 @@ export async function applyRevision(
     await writeBases(profileDir, rev.configs)
   })
 
+  result.missing = followerCounts(desired, [...(await readMods()).values()]).missing
   return result
 }

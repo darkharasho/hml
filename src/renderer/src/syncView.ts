@@ -1,4 +1,9 @@
-import type { ProfileManifest, ProfileSync, SyncChangeSummary } from '../../shared/types'
+import type {
+  ProfileManifest,
+  ProfileSync,
+  SyncChangeSummary,
+  SyncProgress
+} from '../../shared/types'
 
 /** Shown on a followed profile, whose mods only change through its sync code. */
 export const SYNC_LOCKED_NOTE = 'Synced from a friend. Detach to change mods.'
@@ -44,18 +49,66 @@ export function moreManualToast(n: number): string {
 
 export type SyncTone = 'teal' | 'warn' | 'muted'
 
-/** The sidebar badge for a profile's sync role; null for a plain profile. */
-export function syncBadge(sync: ProfileSync | undefined): {
-  label: 'Syncing' | 'Sync pending' | "Can't sync" | 'Synced' | 'Missing mods'
+/** The store key of a profile's live sync progress. */
+export const syncProgressKey = (game: string, profileId: string): string => `${game}\0${profileId}`
+
+/** How many of the owner's mods a follower has, out of the owner's total; null before it's known. */
+export function followerTally(
+  sync: Extract<ProfileSync, { role: 'follower' }>
+): { have: number; total: number } | null {
+  if (sync.total === undefined) return null
+  const have = sync.total - (sync.local?.length ?? 0) - (sync.missing?.length ?? 0)
+  return { have: Math.max(0, have), total: sync.total }
+}
+
+/** The tooltip for a follower's tally: what's missing and why. */
+function tallyTitle(sync: Extract<ProfileSync, { role: 'follower' }>): string | undefined {
+  const lines: string[] = []
+  if (sync.missing?.length) lines.push(`Missing: ${sync.missing.join(', ')}`)
+  if (sync.local?.length)
+    lines.push(`Only on the owner's PC (local files never sync): ${sync.local.join(', ')}`)
+  if (sync.behind) lines.push(BEHIND_NOTE)
+  return lines.length > 0 ? lines.join('\n') : undefined
+}
+
+/** The sidebar badge for a profile's sync role, or its live progress; null for a plain profile. */
+export function syncBadge(
+  sync: ProfileSync | undefined,
+  progress?: SyncProgress | null
+): {
+  label: string
   tone: SyncTone
   /** Tooltip explaining a warning. */
   title?: string
 } | null {
   if (!sync) return null
-  if (sync.role === 'follower')
-    return sync.behind
-      ? { label: 'Missing mods', tone: 'warn', title: BEHIND_NOTE }
-      : { label: 'Synced', tone: 'muted' }
+  if (progress?.phase === 'checking') return { label: 'Checking…', tone: 'teal' }
+  if (progress?.phase === 'applying')
+    return {
+      label: `Syncing ${progress.done}/${progress.total}`,
+      tone: 'teal',
+      ...(progress.current ? { title: `Installing ${progress.current}` } : {})
+    }
+  if (progress?.phase === 'held')
+    return {
+      label: 'Waiting for game',
+      tone: 'warn',
+      title: "The owner's latest changes are downloaded. HML applies them when the game closes."
+    }
+  if (sync.role === 'follower') {
+    const tally = followerTally(sync)
+    const title = tallyTitle(sync)
+    if (!tally)
+      return sync.behind
+        ? { label: 'Missing mods', tone: 'warn', title: BEHIND_NOTE }
+        : { label: 'Synced', tone: 'muted' }
+    const short = tally.have < tally.total
+    return {
+      label: `Synced ${tally.have}/${tally.total}`,
+      tone: short ? 'warn' : 'muted',
+      ...(title ? { title } : {})
+    }
+  }
   // An orphaned code can't be published at all, which matters more than a publish that's due.
   if (sync.orphaned) return { label: "Can't sync", tone: 'warn', title: ORPHANED_NOTE }
   if (sync.pending) return { label: 'Sync pending', tone: 'warn' }

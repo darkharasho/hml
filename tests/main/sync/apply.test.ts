@@ -4,8 +4,10 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   applyRevision,
+  followerCounts,
   modKey,
   type ApplyContext,
+  type ApplyProgress,
   type SyncApplyResult
 } from '../../../src/main/sync/apply'
 import { readBases, writeBases } from '../../../src/main/sync/bases'
@@ -108,10 +110,13 @@ const exp = (list: HmlExportMod[]): HmlExport => ({
   mods: list
 })
 // getProfile reads the manifest from disk, so keep it written.
-async function sync(rev: {
-  export: HmlExport
-  configs?: Map<string, Uint8Array>
-}): Promise<SyncApplyResult> {
+async function sync(
+  rev: {
+    export: HmlExport
+    configs?: Map<string, Uint8Array>
+  },
+  onProgress?: ApplyProgress
+): Promise<SyncApplyResult> {
   const ctx = makeCtx()
   const origInstall = ctx.entries.installEntry
   const write = async (): Promise<void> =>
@@ -135,7 +140,13 @@ async function sync(rev: {
     await se(...a)
     await write()
   }
-  return applyRevision(ctx, 'repo', 'p1', { export: rev.export, configs: rev.configs ?? new Map() })
+  return applyRevision(
+    ctx,
+    'repo',
+    'p1',
+    { export: rev.export, configs: rev.configs ?? new Map() },
+    onProgress
+  )
 }
 
 beforeEach(async () => {
@@ -270,5 +281,40 @@ describe('modKey', () => {
       modKey({ kind: 'github', owner: 'Foo', repo: 'Bar', tag: 't', asset: 'a', sha256: 's' })
     ).toBe('gh:foo/bar')
     expect(modKey({ kind: 'local', fileName: 'x.dll', sha256: 's' })).toBe('local:x.dll')
+  })
+})
+
+describe('sync status', () => {
+  it('reports progress per owner mod, naming the one being installed', async () => {
+    const a = ts('A')
+    mods = [installed(a)]
+    const seen: Parameters<ApplyProgress>[0][] = []
+    await sync({ export: exp([a, ts('B')]) }, (p) => seen.push(p))
+    expect(seen).toEqual([
+      { done: 0, total: 2 },
+      { done: 1, total: 2 },
+      { done: 1, total: 2, current: 'o-B' },
+      { done: 2, total: 2 }
+    ])
+  })
+
+  it('lists the owner mods still missing after the apply', async () => {
+    failKeys.add(modKey(ts('B').source))
+    const r = await sync({ export: exp([ts('A'), ts('B')]) })
+    expect(r.missing).toEqual(['o-B'])
+  })
+
+  it('followerCounts: a mod at another version is missing; local mods are counted apart', () => {
+    const local: HmlExportMod = {
+      source: { kind: 'local', fileName: 'x.zip', sha256: 'a'.repeat(64) },
+      version: '1.0.0',
+      enabled: true,
+      name: 'Mine'
+    }
+    const c = followerCounts(
+      [ts('A'), ts('B', '2.0.0'), ts('C'), local],
+      [installed(ts('A')), installed(ts('B', '1.0.0'))]
+    )
+    expect(c).toEqual({ total: 4, local: ['Mine'], missing: ['o-B', 'o-C'] })
   })
 })

@@ -4,6 +4,7 @@ import {
   BEHIND_NOTE,
   ORPHANED_NOTE,
   SYNC_LOCKED_NOTE,
+  followerTally,
   isFollower,
   manualDownloadToast,
   moreManualToast,
@@ -113,6 +114,42 @@ describe('syncBadge', () => {
       tone: 'warn',
       title: BEHIND_NOTE
     })
+  })
+
+  it("shows a follower's tally of the owner's mods", () => {
+    expect(syncBadge({ ...follower, total: 24 })).toEqual({ label: 'Synced 24/24', tone: 'muted' })
+    expect(
+      syncBadge({ ...follower, total: 24, behind: true, missing: ['nickklmao-MenuLib'] })
+    ).toEqual({
+      label: 'Synced 23/24',
+      tone: 'warn',
+      title: `Missing: nickklmao-MenuLib\n${BEHIND_NOTE}`
+    })
+    expect(syncBadge({ ...follower, total: 3, local: ['Mine'] })).toEqual({
+      label: 'Synced 2/3',
+      tone: 'warn',
+      title: "Only on the owner's PC (local files never sync): Mine"
+    })
+  })
+
+  it('live progress wins over the saved state', () => {
+    expect(syncBadge(follower, { phase: 'checking' })).toEqual({
+      label: 'Checking…',
+      tone: 'teal'
+    })
+    expect(
+      syncBadge(follower, { phase: 'applying', done: 3, total: 24, current: 'MenuLib' })
+    ).toEqual({ label: 'Syncing 3/24', tone: 'teal', title: 'Installing MenuLib' })
+    expect(syncBadge(follower, { phase: 'held', revision: 4 })).toMatchObject({
+      label: 'Waiting for game',
+      tone: 'warn'
+    })
+  })
+})
+
+describe('followerTally', () => {
+  it('is null before the owner total is known', () => {
+    expect(followerTally(follower as Extract<ProfileSync, { role: 'follower' }>)).toBeNull()
   })
 })
 
