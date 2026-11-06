@@ -1,11 +1,8 @@
 # Release Notes
 
-Version v1.7.0 — November 5, 2026
+Version v1.7.1 — November 6, 2026
 
-## Copy a mod to another profile
-Every mod's ⋯ menu now has **Copy to profile…**. Pick another profile of the same game and HML copies the mod there at the same version, with its files and settings. Nothing is downloaded again, so it works for local mods, Nexus mods and old versions too.
+## Signed Windows installer
+HML for Windows is now code-signed. The installer shows "Michael Stephens" as the publisher instead of "Unknown publisher", so Windows should stop blocking it with the "Windows protected your PC" warning.
 
-- If the mod needs other mods the chosen profile doesn't have, HML lists them so you can copy them along.
-- If that profile already has the mod, it is replaced, but its own settings and on/off state stay as they were.
-- A newly copied mod is turned on.
-- Profiles synced from a friend can't be picked, since their mods come from the friend's list.
+NOTE: SmartScreen trusts a new signature more as more people download it, so you might still see the warning for a little while.
