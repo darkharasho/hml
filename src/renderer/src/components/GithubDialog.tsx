@@ -9,6 +9,12 @@ import { Button, Icon, Modal } from './ui'
 
 type Choice = Extract<GhInstallResult, { kind: 'choose-asset' }>
 type PreOnly = Extract<GhInstallResult, { kind: 'prerelease-only' }>
+type ModChoice = Extract<GhInstallResult, { kind: 'choose-mod' }>
+
+const ROW =
+  'flex cursor-pointer items-center gap-3 rounded-md border border-line px-3 py-2 transition-colors hover:bg-raised has-[:checked]:border-ember/60 has-[:checked]:bg-ember/[0.07] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ember'
+const RADIO =
+  'grid size-4 shrink-0 place-items-center rounded-full border border-muted peer-checked:border-ember after:size-2 after:rounded-full after:bg-ember after:opacity-0 peer-checked:after:opacity-100'
 
 /** Paste a GitHub link and install its release; asks which file when the release has several. */
 export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Element {
@@ -21,6 +27,9 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   // The asset question belongs to the link it came from; editing the link drops it.
   const [choice, setChoice] = useState<Choice | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
+  // A repo publishing several mods asks which; the pick (a tag prefix) stays for the file question.
+  const [modChoice, setModChoice] = useState<ModChoice | null>(null)
+  const [pickedMod, setPickedMod] = useState<string | null>(null)
   const [prereleases, setPrereleases] = useState(false)
   // Set when the repo only publishes pre-releases and they weren't included.
   const [preOnly, setPreOnly] = useState<PreOnly | null>(null)
@@ -43,7 +52,14 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   // Move focus to the first file once the release asks for one.
   useEffect(() => {
     chooser.current?.querySelector('input')?.focus()
-  }, [choice])
+  }, [choice, modChoice])
+
+  const resetChoices = (): void => {
+    setChoice(null)
+    setPicked(null)
+    setModChoice(null)
+    setPickedMod(null)
+  }
 
   // An install can't be abandoned halfway, so the dialog stays open until it finishes.
   const close = (): void => {
@@ -51,7 +67,12 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   }
 
   const link = url.trim()
-  const canSubmit = !running && !locked && link !== '' && (!choice || picked !== null)
+  const canSubmit =
+    !running &&
+    !locked &&
+    link !== '' &&
+    (!choice || picked !== null) &&
+    (!modChoice || pickedMod !== null)
 
   async function submit(withPrereleases = prereleases): Promise<void> {
     if (!canSubmit) return
@@ -60,11 +81,17 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
     setRunning(true)
     try {
       const result = await ghInstall(link, choice ? (picked ?? undefined) : undefined, {
-        prereleases: withPrereleases
+        prereleases: withPrereleases,
+        ...(pickedMod !== null ? { tagPrefix: pickedMod } : {})
       })
       if (!mounted.current) return
       if (result.kind === 'installed') return onClose()
       if (result.kind === 'prerelease-only') return setPreOnly(result)
+      if (result.kind === 'choose-mod') {
+        setModChoice(result)
+        setPickedMod(null)
+        return
+      }
       setChoice(result)
       setPicked(null)
     } catch (e) {
@@ -88,7 +115,7 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
             </Button>
             <Button variant="primary" disabled={!canSubmit} onClick={() => void submit()}>
               <Icon name="download" />
-              {running ? 'Installing…' : choice ? 'Install selected' : 'Install'}
+              {running ? 'Installing…' : choice || modChoice ? 'Install selected' : 'Install'}
             </Button>
           </div>
         </div>
@@ -103,8 +130,7 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
           disabled={running}
           onChange={(e) => {
             setUrl(e.target.value)
-            setChoice(null)
-            setPicked(null)
+            resetChoices()
             setPreOnly(null)
             setError(null)
           }}
@@ -168,6 +194,40 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
         </div>
       )}
 
+      {modChoice && !choice && (
+        <fieldset ref={chooser} className="mt-5" disabled={running}>
+          <legend className="flex w-full items-baseline gap-2">
+            <Icon name="github" className="size-3.5 self-center text-fg" />
+            <span className="font-medium text-fg">
+              {modChoice.owner}/{modChoice.repo}
+            </span>
+          </legend>
+          <p className="mt-1.5 text-xs">
+            This repository publishes several mods. Pick the one to install. HML keeps it updated
+            from that mod&apos;s releases only.
+          </p>
+          <div className="mt-3 flex max-h-64 flex-col gap-1 overflow-y-auto pr-1">
+            {modChoice.mods.map((m) => (
+              <label key={m.prefix} className={ROW}>
+                <input
+                  type="radio"
+                  name="gh-mod"
+                  value={m.prefix}
+                  checked={pickedMod === m.prefix}
+                  onChange={() => setPickedMod(m.prefix)}
+                  className="peer sr-only"
+                />
+                <span className={RADIO} />
+                <span className="min-w-0 flex-1 truncate text-fg" title={m.name}>
+                  {m.name}
+                </span>
+                <span className="shrink-0 text-xs tabular-nums">{m.tag}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
       {choice && (
         <fieldset ref={chooser} className="mt-5" disabled={running}>
           <legend className="flex w-full items-baseline gap-2">
@@ -183,10 +243,7 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
           </p>
           <div className="mt-3 flex max-h-64 flex-col gap-1 overflow-y-auto pr-1">
             {choice.assets.map((a) => (
-              <label
-                key={a.name}
-                className="flex cursor-pointer items-center gap-3 rounded-md border border-line px-3 py-2 transition-colors hover:bg-raised has-[:checked]:border-ember/60 has-[:checked]:bg-ember/[0.07] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ember"
-              >
+              <label key={a.name} className={ROW}>
                 <input
                   type="radio"
                   name="gh-asset"
@@ -195,7 +252,7 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
                   onChange={() => setPicked(a.name)}
                   className="peer sr-only"
                 />
-                <span className="grid size-4 shrink-0 place-items-center rounded-full border border-muted peer-checked:border-ember after:size-2 after:rounded-full after:bg-ember after:opacity-0 peer-checked:after:opacity-100" />
+                <span className={RADIO} />
                 <span className="min-w-0 flex-1 truncate text-fg" title={a.name}>
                   {a.name}
                 </span>

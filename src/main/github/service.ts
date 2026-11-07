@@ -5,6 +5,7 @@ import type {
   GameDef,
   GhModConfig,
   GhPrereleaseResult,
+  GhModChoice,
   GhReleaseChoice,
   GhTrack,
   GhUpdate,
@@ -36,6 +37,7 @@ import {
 import { loadToken, NO_SECURE_STORAGE, saveToken } from './token'
 import { isGhAccessError } from '../../shared/messages'
 import { loaderModName } from '../custom/loaders'
+import { ghPackageId, samePrefix, tagPrefix, tagVersion } from '../../shared/ghTag'
 
 export const GH_CHECK_INTERVAL_MS = 21_600_000
 
@@ -54,10 +56,15 @@ export const unsupportedLoaderMessage = (def: GameDef): string =>
 const MODES: readonly GhUpdateMode[] = ['auto', 'notify', 'pinned']
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const sameRepo = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
-const stripV = (tag: string): string => tag.replace(/^v/i, '')
 
 type GhMod = InstalledMod & { source: Extract<InstalledMod['source'], { kind: 'github' }> }
 const isGhMod = (m: InstalledMod): m is GhMod => m.source.kind === 'github'
+/** True when `m` is the repo's mod whose tags carry `prefix` ('' for a repo of one mod). */
+const isRepoMod = (m: InstalledMod, owner: string, repo: string, prefix: string): m is GhMod =>
+  isGhMod(m) &&
+  sameRepo(m.source.owner, owner) &&
+  sameRepo(m.source.repo, repo) &&
+  samePrefix(tagPrefix(m.source.tag), prefix)
 const configOf = (m: InstalledMod): GhModConfig =>
   m.github ?? { updateMode: 'auto', assetPattern: null }
 /** The saved asset pattern, else one derived from the installed file's name. */
@@ -67,12 +74,19 @@ type LatestOf = (owner: string, repo: string, follow?: Follow) => Promise<GhRele
 type ModeCheck = (mode: GhUpdateMode) => boolean
 const manualAllows: ModeCheck = (mode) => mode !== 'pinned'
 const autoAllows: ModeCheck = (mode) => mode === 'auto'
-/** What a release lookup for the mod follows: its loader track, else stable or any release. */
-const followOf = (m: InstalledMod): Follow => {
+/**
+ * What a release lookup for the mod follows: its loader track, else stable or any release; in a
+ * monorepo only the releases tagged like the installed one.
+ */
+const followOf = (m: GhMod): Follow => {
   const { track, prereleases } = configOf(m)
-  return track ? { track } : { prereleases: prereleases === true }
+  const prefix = tagPrefix(m.source.tag)
+  return {
+    ...(track ? { track } : { prereleases: prereleases === true }),
+    ...(prefix ? { prefix } : {})
+  }
 }
-type Follow = { track?: GhTrack; prereleases?: boolean }
+type Follow = { track?: GhTrack; prereleases?: boolean; prefix?: string }
 
 /** The config with the installed release's pre-release fields set from `release`. */
 function withInstalled(config: GhModConfig, release: GhRelease): GhModConfig {
@@ -116,6 +130,13 @@ export interface GhInstallOptions {
   assetPattern?: string
   /** Follow pre-releases (saved in the config); a reinstall keeps a saved true. */
   prereleases?: boolean
+  /** The monorepo mod to install from a repo link: its tag prefix (a `choose-mod` answer). */
+  tagPrefix?: string
+  /**
+   * A tag link to the newest release of a monorepo mod follows that mod's releases instead of
+   * pinning it (links pasted into Add from GitHub; share imports keep their tag).
+   */
+  followNewestTag?: boolean
 }
 
 export function createGithubServices(ctx: GhContext): Pick<
@@ -146,7 +167,13 @@ export function createGithubServices(ctx: GhContext): Pick<
     token: string | null,
     owner: string,
     repo: string,
-    opts: { tag?: string; maxAgeMs?: number; track?: GhTrack; prereleases?: boolean } = {}
+    opts: {
+      tag?: string
+      maxAgeMs?: number
+      track?: GhTrack
+      prereleases?: boolean
+      prefix?: string
+    } = {}
   ): Promise<GhRelease> =>
     fetchRelease({
       fetch: deps.fetch,
@@ -164,16 +191,16 @@ export function createGithubServices(ctx: GhContext): Pick<
    */
   function memoLookup(token: string | null, maxAgeMs?: number): LatestOf {
     const seen = new Map<string, Promise<GhRelease>>()
-    return (owner, repo, { track, prereleases } = {}) => {
+    return (owner, repo, { track, prereleases, prefix } = {}) => {
       const follows = track
         ? `#${track.major}/${track.prerelease}`
         : prereleases
           ? '#prereleases'
           : ''
-      const key = `${owner}/${repo}${follows}`.toLowerCase()
+      const key = `${owner}/${repo}${follows}${prefix ? `@${prefix}` : ''}`.toLowerCase()
       let p = seen.get(key)
       if (!p) {
-        p = lookup(token, owner, repo, { maxAgeMs, track, prereleases })
+        p = lookup(token, owner, repo, { maxAgeMs, track, prereleases, prefix })
         seen.set(key, p)
       }
       return p
@@ -214,7 +241,8 @@ export function createGithubServices(ctx: GhContext): Pick<
 
   /**
    * The installed mods an install of `data` under `packageId` replaces besides the mod under that
-   * id: a local copy with its manifest name, the repo's mod under another id, and the one
+   * id: a local copy with its manifest name, the repo's mod (with `tag`'s prefix) under another
+   * id, and the one
    * Thunderstore mod with its manifest name (two or more are ambiguous and none is replaced).
    */
   function supersededBy(
@@ -222,16 +250,12 @@ export function createGithubServices(ctx: GhContext): Pick<
     name: string,
     owner: string,
     repo: string,
+    tag: string,
     packageId: string
   ): { local: InstalledMod[]; sameRepoMods: InstalledMod[]; tsCopy: InstalledMod | undefined } {
     const local = mods.filter((m) => m.source.kind === 'local' && m.id === name)
-    const sameRepoMods = mods.filter(
-      (m) =>
-        isGhMod(m) &&
-        sameRepo(m.source.owner, owner) &&
-        sameRepo(m.source.repo, repo) &&
-        m.id !== packageId
-    )
+    const prefix = tagPrefix(tag)
+    const sameRepoMods = mods.filter((m) => isRepoMod(m, owner, repo, prefix) && m.id !== packageId)
     const tsNamed = mods.filter((m) => m.source.kind === 'thunderstore' && m.name === name)
     const tsCopy = tsNamed.length === 1 ? tsNamed[0] : undefined
     return { local, sameRepoMods, tsCopy }
@@ -248,12 +272,12 @@ export function createGithubServices(ctx: GhContext): Pick<
     catalog: Catalog,
     profileId: string,
     chosen: Chosen,
-    o: { owner: string; repo: string; packageId: string }
+    o: { owner: string; repo: string; tag: string; packageId: string }
   ): Promise<boolean> {
     const zip = readZipEntries(zipData(chosen))
     const name = detectPackageMeta(zip, o.packageId)?.name ?? o.packageId
     const { mods } = await getProfile(paths, def.label, profileId)
-    const s = supersededBy(mods, name, o.owner, o.repo, o.packageId)
+    const s = supersededBy(mods, name, o.owner, o.repo, o.tag, o.packageId)
     const ids = installedModsReplaced(
       mods,
       def,
@@ -288,11 +312,11 @@ export function createGithubServices(ctx: GhContext): Pick<
     const data = zipData(chosen)
     const meta = detectPackageMeta(readZipEntries(data), packageId)
     const name = meta?.name ?? packageId
-    const version = meta && meta.version !== '0.0.0' ? meta.version : stripV(release.tag)
+    const version = meta && meta.version !== '0.0.0' ? meta.version : tagVersion(release.tag)
     o.onInstalling?.(name, version)
 
     const { mods } = await getProfile(paths, def.label, profileId)
-    const superseded = supersededBy(mods, name, owner, repo, packageId)
+    const superseded = supersededBy(mods, name, owner, repo, release.tag, packageId)
     const { sameRepoMods, tsCopy } = superseded
     const previous = mods.find((m) => m.id === packageId) ?? sameRepoMods[0]
     const provides = [
@@ -428,6 +452,33 @@ export function createGithubServices(ctx: GhContext): Pick<
     })
   }
 
+  /**
+   * The mods a monorepo publishes, one per tag prefix in its newest releases (newest first), each
+   * with its newest release. A repo of one mod gives at most one.
+   */
+  async function modChoices(
+    token: string | null,
+    owner: string,
+    repo: string
+  ): Promise<GhModChoice[]> {
+    const releases = await fetchReleaseList({
+      fetch: deps.fetch,
+      token,
+      cacheFile: paths.ghCache,
+      now: deps.now,
+      owner,
+      repo,
+      maxAgeMs: GH_RELEASE_MEMO_MS
+    })
+    const out: GhModChoice[] = []
+    for (const r of releases) {
+      const prefix = tagPrefix(r.tag)
+      if (!prefix || out.some((c) => samePrefix(c.prefix, prefix))) continue
+      out.push({ prefix, tag: r.tag, name: r.name || prefix })
+    }
+    return out
+  }
+
   async function install(
     game: string,
     profileId: string,
@@ -452,17 +503,41 @@ export function createGithubServices(ctx: GhContext): Pick<
     progress(`Checking ${owner}/${repo}`, 0)
     const token = await loadToken(paths, deps.secrets)
     const { mods } = await getProfile(paths, game, profileId)
-    const prior = mods
-      .filter(isGhMod)
-      .find((m) => sameRepo(m.source.owner, owner) && sameRepo(m.source.repo, repo))
-    const track = opts.track ?? prior?.github?.track
-    const prereleases = !track && (opts.prereleases === true || prior?.github?.prereleases === true)
+    // The monorepo mod asked for: the tag's prefix, else the one picked from a repo link. With
+    // neither, the repo's newest release decides (and a monorepo is asked about below).
+    const wanted = ref.tag !== undefined ? tagPrefix(ref.tag) : (opts.tagPrefix ?? null)
+    const priorOf = (prefix: string | null): GhMod | undefined =>
+      mods.find((m): m is GhMod =>
+        prefix === null
+          ? isGhMod(m) && sameRepo(m.source.owner, owner) && sameRepo(m.source.repo, repo)
+          : isRepoMod(m, owner, repo, prefix)
+      )
+    const asked = priorOf(wanted)
+    const track = opts.track ?? asked?.github?.track
+    const prereleases = !track && (opts.prereleases === true || asked?.github?.prereleases === true)
     let release: GhRelease
     try {
-      release = await lookup(token, owner, repo, { tag: ref.tag, track: opts.track, prereleases })
+      release = await lookup(token, owner, repo, {
+        tag: ref.tag,
+        track: opts.track,
+        prereleases,
+        prefix: ref.tag === undefined && wanted ? wanted : undefined
+      })
     } catch (e) {
       if (e instanceof GhPrereleaseOnlyError) return { kind: 'prerelease-only', owner, repo }
       throw e
+    }
+    if (wanted === null && tagPrefix(release.tag)) {
+      const choices = await modChoices(token, owner, repo)
+      if (choices.length > 1) return { kind: 'choose-mod', owner, repo, mods: choices }
+    }
+    const prefix = tagPrefix(release.tag)
+    const prior = priorOf(prefix)
+    // A tag link to a monorepo mod's newest release follows the mod; an older one is held there.
+    let pinned = ref.tag !== undefined
+    if (pinned && opts.followNewestTag && prefix) {
+      const newest = await lookup(token, owner, repo, { prefix, prereleases }).catch(() => null)
+      if (newest?.tag === release.tag) pinned = false
     }
 
     const named = assetArg ?? ref.asset
@@ -493,10 +568,15 @@ export function createGithubServices(ctx: GhContext): Pick<
       chosen = r
     }
 
-    const packageId = prior?.id ?? `${owner}-${repo}`
+    const packageId = prior?.id ?? ghPackageId(owner, repo, prefix)
     if (
       opts.beforeReplacing &&
-      (await replacesInstalled(def, catalog, profileId, chosen, { owner, repo, packageId }))
+      (await replacesInstalled(def, catalog, profileId, chosen, {
+        owner,
+        repo,
+        tag: release.tag,
+        packageId
+      }))
     ) {
       await opts.beforeReplacing(def)
     }
@@ -513,7 +593,11 @@ export function createGithubServices(ctx: GhContext): Pick<
           opts.assetPattern !== undefined
             ? { updateMode: 'auto', assetPattern: opts.assetPattern, track: opts.track }
             : {
-                updateMode: ref.tag ? 'pinned' : (previous?.github?.updateMode ?? 'auto'),
+                updateMode: pinned
+                  ? 'pinned'
+                  : previous?.github?.updateMode === 'pinned' && ref.tag !== undefined
+                    ? 'auto'
+                    : (previous?.github?.updateMode ?? 'auto'),
                 assetPattern:
                   named !== undefined
                     ? assetPattern(chosen.asset.name, release.tag)
@@ -657,7 +741,8 @@ export function createGithubServices(ctx: GhContext): Pick<
     const { owner, repo } = mod.source
     try {
       const token = await loadToken(paths, deps.secrets)
-      const latest = await lookup(token, owner, repo, { prereleases: on })
+      const prefix = tagPrefix(mod.source.tag) || undefined
+      const latest = await lookup(token, owner, repo, { prereleases: on, prefix })
       // Turning it off never downgrades: the mod waits for a newer stable release.
       if (!on || !needsUpdate(mod, latest)) return { update: null }
       // The caller announces a notify-mode update; the background check doesn't repeat it.
@@ -811,15 +896,19 @@ export function createGithubServices(ctx: GhContext): Pick<
       maxAgeMs: GH_RELEASE_MEMO_MS
     })
     const pattern = patternOf(mod)
-    return releases.map((r) => ({
-      tag: r.tag,
-      name: r.name,
-      prerelease: r.prerelease,
-      publishedAt: r.publishedAt,
-      installed: r.tag === mod.source.tag,
-      // A release without the file the mod uses can't be installed over it.
-      hasAsset: r.assets.some((a) => matchesAssetPattern(pattern, a.name))
-    }))
+    // In a monorepo only this mod's releases.
+    const prefix = tagPrefix(mod.source.tag)
+    return releases
+      .filter((r) => !prefix || samePrefix(tagPrefix(r.tag), prefix))
+      .map((r) => ({
+        tag: r.tag,
+        name: r.name,
+        prerelease: r.prerelease,
+        publishedAt: r.publishedAt,
+        installed: r.tag === mod.source.tag,
+        // A release without the file the mod uses can't be installed over it.
+        hasAsset: r.assets.some((a) => matchesAssetPattern(pattern, a.name))
+      }))
   }
 
   /**
@@ -875,7 +964,11 @@ export function createGithubServices(ctx: GhContext): Pick<
     ghSetToken: setToken,
     ghTokenStatus: tokenStatus,
     ghInstall: (game, profileId, url, asset, opts) =>
-      install(game, profileId, url, asset, { prereleases: opts?.prereleases === true }),
+      install(game, profileId, url, asset, {
+        prereleases: opts?.prereleases === true,
+        tagPrefix: typeof opts?.tagPrefix === 'string' ? opts.tagPrefix : undefined,
+        followNewestTag: true
+      }),
     ghInstallWith: install,
     ghCheckUpdates: checkUpdates,
     ghUpdate: update,

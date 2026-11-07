@@ -284,6 +284,39 @@ describe('modKey', () => {
   })
 })
 
+describe('monorepo GitHub mods', () => {
+  const gh = (tag: string, version: string): HmlExportMod => ({
+    source: { kind: 'github', owner: 'o', repo: 'mono', tag, asset: 'a.zip', sha256: 's' },
+    version,
+    enabled: true
+  })
+
+  it('keys each mod of a repo by its tag prefix', () => {
+    expect(modKey(gh('infinite-energy-v0.1.0', '0.1.0').source)).toBe('gh:o/mono#infinite-energy')
+    expect(modKey(gh('Faerie-Flight-v0.2.6', '0.2.6').source)).toBe('gh:o/mono#faerie-flight')
+    expect(modKey(gh('v1.0.0', '1.0.0').source)).toBe('gh:o/mono')
+  })
+
+  it('installs a second mod from the same repo without removing the first', async () => {
+    const energy = gh('infinite-energy-v0.1.0', '0.1.0')
+    const flight = gh('faerie-flight-v0.2.6', '0.2.6')
+    mods = [installed(energy)]
+    const r = await sync({ export: exp([energy, flight]) })
+    expect(calls).toEqual(['install gh:o/mono#faerie-flight@0.2.6', 'repin'])
+    expect(r.removed).toBe(0)
+    expect(r.added).toBe(1)
+  })
+
+  it('updates one mod of the repo when only its release changed', async () => {
+    const energy = gh('infinite-energy-v0.1.0', '0.1.0')
+    const flight = gh('faerie-flight-v0.2.6', '0.2.6')
+    mods = [installed(energy), installed(flight)]
+    const r = await sync({ export: exp([gh('infinite-energy-v0.2.0', '0.2.0'), flight]) })
+    expect(calls).toEqual(['install gh:o/mono#infinite-energy@0.2.0', 'repin'])
+    expect(r).toMatchObject({ added: 0, removed: 0, updated: 1 })
+  })
+})
+
 describe('sync status', () => {
   it('reports progress per owner mod, naming the one being installed', async () => {
     const a = ts('A')

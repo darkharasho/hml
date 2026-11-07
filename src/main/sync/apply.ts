@@ -16,13 +16,17 @@ import { getProfile } from '../profiles/profiles'
 import type { ServiceDeps } from '../services'
 import { readBases, writeBases } from './bases'
 import { mergeConfig } from './configMerge'
+import { tagPrefix } from '../../shared/ghTag'
 
 export function modKey(s: ModSource): string {
   switch (s.kind) {
     case 'thunderstore':
       return `ts:${s.fullName}`
-    case 'github':
-      return `gh:${s.owner}/${s.repo}`.toLowerCase()
+    case 'github': {
+      // A monorepo's mods share owner/repo and differ by tag prefix.
+      const prefix = tagPrefix(s.tag)
+      return `gh:${s.owner}/${s.repo}${prefix ? `#${prefix}` : ''}`.toLowerCase()
+    }
     case 'nexus':
       return `nx:${s.domain}:${s.modId}`
     case 'local':

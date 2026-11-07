@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { HmlApi } from '../../shared/ipc'
 import type { HmlExportMod, TsPackage, UnresolvedMod } from '../../shared/types'
 import { compareVersions } from '../../shared/version'
+import { tagPrefix } from '../../shared/ghTag'
 import { getProfile } from '../profiles/profiles'
 import type { ServiceDeps } from '../services'
 import type { GhInstallOptions } from '../github/service'
@@ -43,8 +44,10 @@ export function modName(m: HmlExportMod): string {
   switch (s.kind) {
     case 'thunderstore':
       return s.fullName
-    case 'github':
-      return `${s.owner}/${s.repo}`
+    case 'github': {
+      const prefix = tagPrefix(s.tag)
+      return `${s.owner}/${s.repo}${prefix ? ` (${prefix})` : ''}`
+    }
     case 'nexus':
       return `Nexus mod ${s.modId}`
     case 'local':

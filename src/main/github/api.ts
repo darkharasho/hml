@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { compareVersions } from '../../shared/version'
+import { samePrefix, tagPrefix, tagVersion } from '../../shared/ghTag'
 import { GH_RATE_LIMIT_PREFIX, GH_REJECTED_TOKEN_PREFIX } from '../../shared/messages'
 import { readJson, writeJsonAtomic } from '../store/json'
 import type { GhTrack } from '../../shared/types'
@@ -250,9 +251,11 @@ export async function fetchRelease(
     track?: GhTrack
     /** Newest release of any kind (not drafts) instead of the newest stable one. */
     prereleases?: boolean
+    /** A monorepo mod's tag prefix (see shared/ghTag): only its releases count. */
+    prefix?: string
   }
 ): Promise<GhRelease> {
-  const { owner, repo, tag, track, prereleases } = opts
+  const { owner, repo, tag, track, prereleases, prefix } = opts
   const slug = `${owner}/${repo}`
   const base = `${API_ROOT}/repos/${owner}/${repo}`
   const get = await cachedGet(opts, slug)
@@ -261,6 +264,36 @@ export async function fetchRelease(
     const got = await get(`${base}/releases/tags/${encodeURIComponent(tag)}`)
     if (got.status === 'notfound') throw new Error(`${slug} has no release ${tag}.`)
     return normalizeRelease(got.body as Record<string, unknown>)
+  }
+
+  /** Non-draft releases, newest first as GitHub lists them. */
+  const published = async (): Promise<Record<string, unknown>[]> => {
+    // GitHub's largest page, so a run of drafts at the top doesn't hide the published releases.
+    const list = await get(`${base}/releases?per_page=100`)
+    if (list.status === 'notfound') {
+      throw new Error(
+        `Couldn't find github.com/${slug}. Check the URL; private repositories need a GitHub token in Settings.`
+      )
+    }
+    const all = Array.isArray(list.body) ? (list.body as Record<string, unknown>[]) : []
+    const out = all.filter((r) => r.draft !== true)
+    if (out.length === 0) throw new Error(`${slug} has no releases yet.`)
+    return out
+  }
+
+  if (prefix) {
+    // GitHub's releases/latest is any mod's newest release, so the mod's own are picked from the list.
+    const own = (await published()).filter(
+      (r) =>
+        samePrefix(tagPrefix(String(r.tag_name)), prefix) &&
+        (!track || tagMajor(tagVersion(String(r.tag_name))) === track.major)
+    )
+    if (own.length === 0) throw new Error(`${slug} has no ${prefix} release.`)
+    const found = (track ? track.prerelease : prereleases)
+      ? own[0]
+      : own.find((r) => r.prerelease !== true)
+    if (!found) throw new GhPrereleaseOnlyError(slug)
+    return normalizeRelease(found)
   }
 
   if (track) {
@@ -279,21 +312,6 @@ export async function fetchRelease(
     )
     if (!found) throw new Error(`${slug} has no ${track.major}.x release.`)
     return normalizeRelease(found)
-  }
-
-  /** Non-draft releases, newest first as GitHub lists them. */
-  const published = async (): Promise<Record<string, unknown>[]> => {
-    // GitHub's largest page, so a run of drafts at the top doesn't hide the published releases.
-    const list = await get(`${base}/releases?per_page=100`)
-    if (list.status === 'notfound') {
-      throw new Error(
-        `Couldn't find github.com/${slug}. Check the URL; private repositories need a GitHub token in Settings.`
-      )
-    }
-    const all = Array.isArray(list.body) ? (list.body as Record<string, unknown>[]) : []
-    const out = all.filter((r) => r.draft !== true)
-    if (out.length === 0) throw new Error(`${slug} has no releases yet.`)
-    return out
   }
 
   if (prereleases) return normalizeRelease((await published())[0])
@@ -363,7 +381,14 @@ export async function fetchLogin(opts: { fetch: typeof fetch; token: string }): 
 
 const VERSION_LIKE = /^v?\d+(\.\d+)*$/i
 
-export function isNewerTag(latest: string, current: string): boolean {
+/** Two tags of one monorepo mod as their versions; other tags unchanged. */
+function versionsOf(a: string, b: string): [string, string] {
+  const pa = tagPrefix(a)
+  return pa && samePrefix(pa, tagPrefix(b)) ? [tagVersion(a), tagVersion(b)] : [a, b]
+}
+
+export function isNewerTag(latestTag: string, currentTag: string): boolean {
+  const [latest, current] = versionsOf(latestTag, currentTag)
   if (VERSION_LIKE.test(latest) && VERSION_LIKE.test(current)) {
     const strip = (t: string): string => t.replace(/^v/i, '')
     return compareVersions(strip(latest), strip(current)) > 0
@@ -417,7 +442,7 @@ export function isNewerRelease(
   latest: Pick<GhRelease, 'tag' | 'prerelease' | 'publishedAt'>,
   installed: { tag: string; prerelease?: boolean; publishedAt?: string }
 ): boolean {
-  const cmp = compareSemverTags(latest.tag, installed.tag)
+  const cmp = compareSemverTags(...versionsOf(latest.tag, installed.tag))
   if (cmp !== null) return cmp > 0
   if (latest.tag === installed.tag) return false
   const was = Date.parse(installed.publishedAt ?? '')

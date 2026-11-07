@@ -1567,7 +1567,9 @@ export function createServices(deps: ServiceDeps): Services {
     ghInstall: (game, profileId, url, asset, opts) =>
       ghInstallWith(game, profileId, url, asset, {
         beforeReplacing: assertGameClosed,
-        prereleases: opts?.prereleases === true
+        prereleases: opts?.prereleases === true,
+        tagPrefix: typeof opts?.tagPrefix === 'string' ? opts.tagPrefix : undefined,
+        followNewestTag: true
       }),
     async ghUpdate(game, profileId, modIds) {
       await assertGameClosed(await requireGame(game))

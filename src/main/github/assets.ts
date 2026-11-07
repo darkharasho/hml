@@ -1,3 +1,4 @@
+import { tagVersion } from '../../shared/ghTag'
 import { detectPackageMeta, readZipEntries } from '../install/installer'
 
 export interface GhReleaseAsset {
@@ -23,6 +24,7 @@ export function assetPattern(name: string, tag: string): string {
   }
   replaceLiteral(tag)
   replaceLiteral(tag.replace(/^v/i, ''))
+  replaceLiteral(tagVersion(tag))
   return out.replace(/(?<![A-Za-z0-9])v?\d+(?:\.\d+)+(?![A-Za-z0-9])/gi, '{version}')
 }
 

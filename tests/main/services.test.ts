@@ -1945,6 +1945,108 @@ describe('services', () => {
       expect(r.mod.github?.updateMode).toBe('pinned')
     })
 
+    describe('a repo that publishes several mods', () => {
+      const energy = (v: string): Uint8Array => zipOf('InfiniteEnergy', v)
+      const flight = (v: string): Uint8Array => zipOf('FaerieFlight', v)
+      const publishBoth = (): void => {
+        publish('owner', 'mono', 'infinite-energy-v0.1.0', {
+          'InfiniteEnergy-0.1.0.zip': energy('0.1.0')
+        })
+        publish('owner', 'mono', 'faerie-flight-v0.2.6', {
+          'FaerieFlight-0.2.6.zip': flight('0.2.6')
+        })
+      }
+
+      test('a repo link asks which mod, then installs the pick', async () => {
+        await setup()
+        publishBoth()
+        const first = await api.ghInstall('repo', pid, 'https://github.com/owner/mono')
+        expect(first).toEqual({
+          kind: 'choose-mod',
+          owner: 'owner',
+          repo: 'mono',
+          mods: [
+            { prefix: 'faerie-flight', tag: 'faerie-flight-v0.2.6', name: 'faerie-flight-v0.2.6' },
+            {
+              prefix: 'infinite-energy',
+              tag: 'infinite-energy-v0.1.0',
+              name: 'infinite-energy-v0.1.0'
+            }
+          ]
+        })
+        expect(await modsOf()).toEqual([])
+        const r = await api.ghInstall('repo', pid, 'https://github.com/owner/mono', undefined, {
+          tagPrefix: 'infinite-energy'
+        })
+        if (r.kind !== 'installed') throw new Error('expected install')
+        expect(r.mod.id).toBe('owner-mono-infinite-energy')
+        expect(r.mod.source).toMatchObject({ tag: 'infinite-energy-v0.1.0' })
+        expect(r.mod.github?.updateMode).toBe('auto')
+      })
+
+      test('two mods of the repo install side by side', async () => {
+        await setup()
+        publishBoth()
+        const opts = (tagPrefix: string): { tagPrefix: string } => ({ tagPrefix })
+        await api.ghInstall('repo', pid, 'owner/mono', undefined, opts('infinite-energy'))
+        const r = await api.ghInstall('repo', pid, 'owner/mono', undefined, opts('faerie-flight'))
+        if (r.kind !== 'installed') throw new Error('expected install')
+        expect(r.replaced).toEqual([])
+        expect((await modsOf()).map((m) => m.id).sort()).toEqual([
+          'owner-mono-faerie-flight',
+          'owner-mono-infinite-energy'
+        ])
+      })
+
+      test("a tag link to a mod's newest release follows it; an older one is pinned", async () => {
+        await setup()
+        publishBoth()
+        publish('owner', 'mono', 'infinite-energy-v0.2.0', {
+          'InfiniteEnergy-0.2.0.zip': energy('0.2.0')
+        })
+        const tagUrl = (tag: string): string => `https://github.com/owner/mono/releases/tag/${tag}`
+        const newest = await api.ghInstall('repo', pid, tagUrl('faerie-flight-v0.2.6'))
+        if (newest.kind !== 'installed') throw new Error('expected install')
+        expect(newest.mod.github?.updateMode).toBe('auto')
+        const old = await api.ghInstall('repo', pid, tagUrl('infinite-energy-v0.1.0'))
+        if (old.kind !== 'installed') throw new Error('expected install')
+        expect(old.mod.github?.updateMode).toBe('pinned')
+        expect((await modsOf()).length).toBe(2)
+      })
+
+      test("updates come only from the mod's own releases", async () => {
+        await setup()
+        publishBoth()
+        await api.ghInstall('repo', pid, 'owner/mono', undefined, { tagPrefix: 'infinite-energy' })
+        // Another mod's release is the repo's newest; it isn't an update.
+        publish('owner', 'mono', 'faerie-flight-v0.3.0', {
+          'FaerieFlight-0.3.0.zip': flight('0.3.0')
+        })
+        expect(await api.ghCheckUpdates('repo', pid)).toEqual([])
+        publish('owner', 'mono', 'infinite-energy-v0.1.1', {
+          'InfiniteEnergy-0.1.1.zip': energy('0.1.1')
+        })
+        clock += 3_600_000
+        expect(await api.ghCheckUpdates('repo', pid)).toMatchObject([
+          { modId: 'owner-mono-infinite-energy', latest: 'infinite-energy-v0.1.1' }
+        ])
+        const [updated] = await api.ghUpdate('repo', pid, ['owner-mono-infinite-energy'])
+        expect(updated).toMatchObject({ version: '0.1.1', id: 'owner-mono-infinite-energy' })
+        const list = await api.ghListReleases('repo', pid, 'owner-mono-infinite-energy')
+        expect(list.map((r) => r.tag)).toEqual(['infinite-energy-v0.1.1', 'infinite-energy-v0.1.0'])
+      })
+
+      test('a repo with one prefixed mod installs without asking', async () => {
+        await setup()
+        publish('owner', 'mono', 'infinite-energy-v0.1.0', {
+          'InfiniteEnergy-0.1.0.zip': energy('0.1.0')
+        })
+        const r = await api.ghInstall('repo', pid, 'owner/mono')
+        if (r.kind !== 'installed') throw new Error('expected install')
+        expect(r.mod.id).toBe('owner-mono-infinite-energy')
+      })
+    })
+
     test('a lone dll release installs the dll into the plugins folder', async () => {
       await setup()
       publish('owner', 'repo', '1.0', { 'Cool.dll': strToU8('dll') })
@@ -4018,7 +4120,10 @@ describe('share import', () => {
     'v1.0.0': { 'thing.zip': thing1 },
     'v2.0.0': { 'thing.zip': thing2 },
     // A GitHub build of Dep-Lib: its manifest name is Lib.
-    'v3.0.0': { 'thing.zip': zipOf('Lib', '1.5.0') }
+    'v3.0.0': { 'thing.zip': zipOf('Lib', '1.5.0') },
+    // Two mods of one repo, told apart by tag prefix.
+    'alpha-v1.0.0': { 'thing.zip': zipOf('Alpha', '1.0.0') },
+    'beta-v2.0.0': { 'thing.zip': zipOf('Beta', '2.0.0') }
   }
   const ghJson = (tag: string): unknown => ({
     tag_name: tag,
@@ -4241,6 +4346,32 @@ describe('share import', () => {
     const preview = await api.previewShare({ code: '01234-56789' })
     return api.importShare(preview!.token, name)
   }
+
+  test('two mods from one GitHub repo import side by side', async () => {
+    const mono = (tag: string, name: string, version: string): ExportMod => ({
+      name,
+      source: {
+        kind: 'github',
+        owner: 'owner',
+        repo: 'thing',
+        tag,
+        asset: 'thing.zip',
+        sha256: sha(ghReleases[tag]['thing.zip'])
+      },
+      version,
+      enabled: true
+    })
+    const r = await importCode([
+      mono('alpha-v1.0.0', 'Alpha', '1.0.0'),
+      mono('beta-v2.0.0', 'Beta', '2.0.0')
+    ])
+    expect(r.unresolved).toEqual([])
+    expect(r.installed).toBe(2)
+    expect(r.profile.mods.map((m) => [m.id, m.version]).sort()).toEqual([
+      ['owner-thing-alpha', '1.0.0'],
+      ['owner-thing-beta', '2.0.0']
+    ])
+  })
 
   test('a code preview names the game, profile and mods', async () => {
     hml = makeHml([ts('Own-Mod', '1.0.0'), gh('v1.0.0'), local], {

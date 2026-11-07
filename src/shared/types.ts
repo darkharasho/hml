@@ -398,6 +398,16 @@ export interface GhPrereleaseResult {
 export interface GhInstallRequest {
   /** Install and follow the newest release even when it is a pre-release. */
   prereleases?: boolean
+  /** In a repo that publishes several mods, the one to install: its tag prefix (a GhModChoice). */
+  tagPrefix?: string
+}
+/** One of the mods a monorepo publishes, told apart by the name before the version in its tags. */
+export interface GhModChoice {
+  /** The tag prefix, e.g. `infinite-energy` for `infinite-energy-v0.1.0`. */
+  prefix: string
+  /** Its newest release's tag and name. */
+  tag: string
+  name: string
 }
 /** A release offered by a GitHub mod's Change version dialog. */
 export interface GhReleaseChoice {
@@ -417,6 +427,8 @@ export interface GhAsset {
 export type GhInstallResult =
   | { kind: 'installed'; mod: InstalledMod; replaced: string[] }
   | { kind: 'choose-asset'; owner: string; repo: string; tag: string; assets: GhAsset[] }
+  /** The repo publishes several mods (by tag prefix); nothing was installed. */
+  | { kind: 'choose-mod'; owner: string; repo: string; mods: GhModChoice[] }
   /** Pre-releases were off and the repo publishes nothing else; nothing was installed. */
   | { kind: 'prerelease-only'; owner: string; repo: string }
 export interface GhUpdate {
