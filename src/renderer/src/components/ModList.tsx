@@ -6,6 +6,7 @@ import type {
   ModSource,
   ModUpdate,
   NxMod,
+  ProfileSync,
   NxUpdate,
   TsPackage
 } from '../../../shared/types'
@@ -24,9 +25,11 @@ import { useCurrentProfile, useStore } from '../store'
 import {
   LOCAL_WONT_SYNC,
   SYNC_LOCKED_NOTE,
+  followerStatus,
   isFollower,
   isOwner,
-  manualDownloadToast
+  manualDownloadToast,
+  syncProgressKey
 } from '../syncView'
 import { initials, UNSUPPORTED_LOADER } from '../tsView'
 import { useFallbackSrc } from '../useFallbackSrc'
@@ -34,7 +37,7 @@ import { Browse } from './Browse'
 import { GithubDialog } from './GithubDialog'
 import { NexusDetail } from './NexusDetail'
 import { PackageDetail, ProgressLine } from './PackageDetail'
-import { Button, Icon, Menu, Toggle, type MenuItem } from './ui'
+import { Button, Icon, Menu, Spinner, Toggle, type MenuItem } from './ui'
 import { CopyToProfileDialog, DisableDialog, UninstallDialog } from './ModDepsDialogs'
 import { GhVersionDialog } from './GhVersionDialog'
 import { ConfigEditor } from './ConfigEditor'
@@ -329,14 +332,8 @@ export function ModList(): React.JSX.Element | null {
         </div>
       </div>
 
-      {locked && (
-        <p
-          role="note"
-          className="mx-6 mt-3 flex items-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-sm text-muted"
-        >
-          <Icon name="refresh" className="size-4 shrink-0 text-teal" />
-          {SYNC_LOCKED_NOTE}
-        </p>
+      {profile.sync?.role === 'follower' && (
+        <FollowerBanner game={game.label} profileId={profile.id} sync={profile.sync} />
       )}
       {locked && manual.length > 0 && (
         <div
@@ -987,6 +984,66 @@ function EmptyState({
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/** Above a followed profile's mods: up to date, or loudly out of sync while it catches up. */
+function FollowerBanner({
+  game,
+  profileId,
+  sync
+}: {
+  game: string
+  profileId: string
+  sync: Extract<ProfileSync, { role: 'follower' }>
+}): React.JSX.Element {
+  const progress = useStore((s) => s.syncProgress[syncProgressKey(game, profileId)])
+  const syncNow = useStore((s) => s.syncNow)
+  const status = followerStatus(sync, progress)
+  const loud = status.tone !== 'muted'
+  const box = {
+    teal: 'border-teal/50 bg-teal/15 text-teal',
+    warn: 'border-warn/50 bg-warn/15 text-warn',
+    muted: 'border-line bg-panel text-muted'
+  }[status.tone]
+  return (
+    <div
+      role={loud ? 'status' : 'note'}
+      aria-live="polite"
+      className={`relative mx-6 mt-3 overflow-hidden rounded-md border text-sm ${box} ${loud ? 'py-2.5 font-medium' : 'py-2'}`}
+    >
+      <div className="flex items-center gap-2 pr-1.5 pl-3">
+        {status.busy ? (
+          <Spinner className="size-4 shrink-0" />
+        ) : (
+          <Icon
+            name={loud ? 'warn' : 'refresh'}
+            className={`size-4 shrink-0 ${loud ? '' : 'text-teal'}`}
+          />
+        )}
+        <span className="min-w-0 flex-1">
+          {status.text}
+          {status.detail && (
+            <span className="block truncate text-xs font-normal opacity-80" title={status.detail}>
+              {status.detail}
+            </span>
+          )}
+        </span>
+        {status.syncNow && (
+          <Button variant="ghost" className="h-7" onClick={() => void syncNow(profileId)}>
+            Sync now
+          </Button>
+        )}
+      </div>
+      {status.busy && (
+        <div className="absolute inset-x-0 bottom-0 h-0.5 bg-current/15">
+          <div
+            className={`h-full bg-current transition-[width] duration-300 ${status.bar === undefined ? 'w-1/3 animate-pulse' : ''}`}
+            style={status.bar === undefined ? undefined : { width: `${status.bar * 100}%` }}
+          />
+        </div>
+      )}
     </div>
   )
 }

@@ -37,6 +37,11 @@ export const SYNC_LAUNCH_CHECK_MS = 10_000
 export const SYNC_BEHIND_RETRY_MS = 3_600_000
 /** Focusing HML checks followers at most this often (alt-tabbing fires focus constantly). */
 export const SYNC_FOCUS_MIN_MS = 30_000
+/**
+ * Followers ask for a newer revision this often. Cheap: an up-to-date follower gets a 304 that the
+ * Worker answers from its edge cache (60 s), without reading the profile out of KV.
+ */
+export const SYNC_FOLLOW_POLL_MS = 60_000
 
 export interface SyncTimers {
   setTimeout(fn: () => void, ms: number): unknown
@@ -182,8 +187,9 @@ export function createSyncServices(ctx: SyncContext): {
   /** Startup and every SYNC_POLL_MS: check followers, publishNow owners, prune manual lists. */
   tick(): Promise<void>
   /**
-   * HML's window gained focus: check every follower, at most once per SYNC_FOCUS_MIN_MS and not
-   * while a tick runs (it checks them too). Owners are left to their debounce. Never throws.
+   * HML's window gained focus, or SYNC_FOLLOW_POLL_MS passed: check every follower, at most once
+   * per SYNC_FOCUS_MIN_MS and not while a tick runs (it checks them too). Owners are left to their
+   * debounce. Never throws.
    */
   focusCheck(): Promise<void>
   /** Import: make a fresh profile follow `code` at `revision`, with `configs` as its bases. */
@@ -544,6 +550,8 @@ export function createSyncServices(ctx: SyncContext): {
       } else {
         revision = res.revision
         if (st.lastErrorRevision === revision) return 'unreadable'
+        // The owner changed something: say so at once, before the read and the apply.
+        if (revision > sync.revision) setProgress(game, profileId, { phase: 'updating', revision })
         try {
           rev = await readHmlFile(res.data, { forImport: true })
         } catch {

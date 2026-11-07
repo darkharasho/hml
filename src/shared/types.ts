@@ -203,6 +203,8 @@ export type ProfileSync =
 /** What a sync is doing right now; not saved. */
 export type SyncProgress =
   | { phase: 'checking' }
+  /** The owner published a newer revision; HML is fetching it before applying. */
+  | { phase: 'updating'; revision: number }
   | { phase: 'applying'; done: number; total: number; current?: string }
   /** A newer revision is downloaded but waits for the game to close. */
   | { phase: 'held'; revision: number }

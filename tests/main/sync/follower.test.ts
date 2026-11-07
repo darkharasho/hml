@@ -194,7 +194,11 @@ describe('checkFollower', () => {
         manual: []
       }
     ])
-    expect(events.at(-1)).toEqual({ type: 'sync-state', game: GAME, profileId: ID })
+    // The saved state is sent before the banner goes back to idle.
+    expect(events.slice(-2)).toEqual([
+      { type: 'sync-state', game: GAME, profileId: ID },
+      { type: 'sync-progress', game: GAME, profileId: ID, progress: null }
+    ])
   })
 
   it('records manual and failed mods and skips sync-applied when nothing changed', async () => {
@@ -915,6 +919,7 @@ describe('sync status', () => {
     }
     await createSyncServices(ctx).checkFollower(GAME, ID)
     expect(ofType('sync-progress').map((e) => e.progress)).toEqual([
+      { phase: 'updating', revision: 4 },
       { phase: 'applying', done: 0, total: 2 },
       { phase: 'applying', done: 0, total: 2, current: 'A-One' },
       { phase: 'applying', done: 2, total: 2 },
@@ -922,12 +927,23 @@ describe('sync status', () => {
     ])
   })
 
+  it("doesn't say it's getting the latest when a behind profile re-fetches its own revision", async () => {
+    await follow({ behind: true, total: 1, missing: ['A-One'] })
+    serve = async () => updated(3)
+    await createSyncServices(makeCtx()).checkFollower(GAME, ID)
+    expect(requests).toEqual([`https://share.test/v1/sync/${CODE}?since=0`])
+    expect(ofType('sync-progress').map((e) => e.progress?.phase)).not.toContain('updating')
+  })
+
   it('shows a revision held while the game runs until it applies', async () => {
     running = true
     serve = async () => updated(4)
     const s = createSyncServices(makeCtx())
     await s.checkFollower(GAME, ID)
-    expect(ofType('sync-progress').map((e) => e.progress)).toEqual([{ phase: 'held', revision: 4 }])
+    expect(ofType('sync-progress').map((e) => e.progress)).toEqual([
+      { phase: 'updating', revision: 4 },
+      { phase: 'held', revision: 4 }
+    ])
     running = false
     timers.fire(SYNC_HOLD_RETRY_MS)
     await vi.waitFor(() => expect(applyCalls).toBe(1))

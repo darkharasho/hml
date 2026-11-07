@@ -80,21 +80,22 @@ export function syncBadge(
   tone: SyncTone
   /** Tooltip explaining a warning. */
   title?: string
+  /** The profile is behind its owner and catching up: draw attention to it. */
+  loud?: true
 } | null {
   if (!sync) return null
   if (progress?.phase === 'checking') return { label: 'Checking…', tone: 'teal' }
+  if (progress?.phase === 'updating')
+    return { label: 'Getting latest…', tone: 'teal', loud: true, title: UPDATING_NOTE }
   if (progress?.phase === 'applying')
     return {
       label: `Syncing ${progress.done}/${progress.total}`,
       tone: 'teal',
+      loud: true,
       ...(progress.current ? { title: `Installing ${progress.current}` } : {})
     }
   if (progress?.phase === 'held')
-    return {
-      label: 'Waiting for game',
-      tone: 'warn',
-      title: "The owner's latest changes are downloaded. HML applies them when the game closes."
-    }
+    return { label: 'Waiting for game', tone: 'warn', loud: true, title: HELD_NOTE }
   if (sync.role === 'follower') {
     const tally = followerTally(sync)
     const title = tallyTitle(sync)
@@ -113,6 +114,73 @@ export function syncBadge(
   if (sync.orphaned) return { label: "Can't sync", tone: 'warn', title: ORPHANED_NOTE }
   if (sync.pending) return { label: 'Sync pending', tone: 'warn' }
   return { label: 'Syncing', tone: 'teal' }
+}
+
+export const UPDATING_NOTE = 'The owner changed this profile. HML is getting their latest changes.'
+export const HELD_NOTE =
+  "The owner's latest changes are downloaded. HML applies them when the game closes."
+
+/** The banner above a followed profile's mods: whether it matches its owner, loudly when not. */
+export interface FollowerStatus {
+  tone: SyncTone
+  /** Spinning while HML works on catching up. */
+  busy: boolean
+  text: string
+  detail?: string
+  /** Apply progress, 0–1. */
+  bar?: number
+  /** Offer Sync now: the profile is out of sync and a retry may fix it. */
+  syncNow?: true
+}
+
+export function followerStatus(
+  sync: Extract<ProfileSync, { role: 'follower' }>,
+  progress?: SyncProgress | null
+): FollowerStatus {
+  if (progress?.phase === 'checking')
+    return { tone: 'teal', busy: true, text: "Checking for the owner's latest changes…" }
+  if (progress?.phase === 'updating')
+    return { tone: 'teal', busy: true, text: "Out of sync: getting the owner's latest changes…" }
+  if (progress?.phase === 'applying') {
+    const { done, total, current } = progress
+    return {
+      tone: 'teal',
+      busy: true,
+      text: `Out of sync: getting the owner's latest changes (${done}/${total})`,
+      ...(current ? { detail: `Installing ${current}` } : {}),
+      ...(total > 0 ? { bar: Math.min(1, done / total) } : {})
+    }
+  }
+  if (progress?.phase === 'held')
+    return {
+      tone: 'warn',
+      busy: false,
+      text: "Out of sync: close the game to apply the owner's latest changes."
+    }
+  const missing = sync.missing ?? []
+  if (missing.length > 0 || sync.behind) {
+    const tally = followerTally(sync)
+    return {
+      tone: 'warn',
+      busy: false,
+      text: tally
+        ? `Out of sync: ${tally.have}/${tally.total} of the owner's mods installed.`
+        : "Out of sync: some of the owner's mods aren't installed.",
+      detail: [missing.length > 0 ? `Missing: ${missing.join(', ')}` : '', BEHIND_NOTE]
+        .filter(Boolean)
+        .join(' '),
+      syncNow: true
+    }
+  }
+  const local = sync.local ?? []
+  return {
+    tone: 'muted',
+    busy: false,
+    text: `Up to date with the owner. ${SYNC_LOCKED_NOTE}`,
+    ...(local.length > 0
+      ? { detail: `Only on the owner's PC (local files never sync): ${local.join(', ')}` }
+      : {})
+  }
 }
 
 /** Badge classes per tone, matching the mod list's badges. */

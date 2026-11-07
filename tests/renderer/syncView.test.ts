@@ -4,6 +4,7 @@ import {
   BEHIND_NOTE,
   ORPHANED_NOTE,
   SYNC_LOCKED_NOTE,
+  followerStatus,
   followerTally,
   isFollower,
   manualDownloadToast,
@@ -139,11 +140,75 @@ describe('syncBadge', () => {
     })
     expect(
       syncBadge(follower, { phase: 'applying', done: 3, total: 24, current: 'MenuLib' })
-    ).toEqual({ label: 'Syncing 3/24', tone: 'teal', title: 'Installing MenuLib' })
+    ).toEqual({ label: 'Syncing 3/24', tone: 'teal', loud: true, title: 'Installing MenuLib' })
     expect(syncBadge(follower, { phase: 'held', revision: 4 })).toMatchObject({
       label: 'Waiting for game',
-      tone: 'warn'
+      tone: 'warn',
+      loud: true
     })
+    expect(syncBadge(follower, { phase: 'updating', revision: 5 })).toMatchObject({
+      label: 'Getting latest…',
+      tone: 'teal',
+      loud: true
+    })
+  })
+
+  it('stays quiet while up to date or only checking', () => {
+    expect(syncBadge({ ...follower, total: 24 })?.loud).toBeUndefined()
+    expect(syncBadge(follower, { phase: 'checking' })?.loud).toBeUndefined()
+  })
+})
+
+describe('followerStatus', () => {
+  const f = follower as Extract<ProfileSync, { role: 'follower' }>
+
+  it('is a quiet note when up to date', () => {
+    expect(followerStatus({ ...f, total: 3 })).toEqual({
+      tone: 'muted',
+      busy: false,
+      text: `Up to date with the owner. ${SYNC_LOCKED_NOTE}`
+    })
+  })
+
+  it('names local mods that never sync without calling it out of sync', () => {
+    const s = followerStatus({ ...f, total: 3, local: ['Mine'] })
+    expect(s.tone).toBe('muted')
+    expect(s.detail).toContain('Mine')
+  })
+
+  it('is loud and busy while catching up, with a progress bar', () => {
+    expect(followerStatus(f, { phase: 'updating', revision: 5 })).toMatchObject({
+      tone: 'teal',
+      busy: true,
+      text: "Out of sync: getting the owner's latest changes…"
+    })
+    expect(followerStatus(f, { phase: 'applying', done: 1, total: 4, current: 'MenuLib' })).toEqual(
+      {
+        tone: 'teal',
+        busy: true,
+        text: "Out of sync: getting the owner's latest changes (1/4)",
+        detail: 'Installing MenuLib',
+        bar: 0.25
+      }
+    )
+  })
+
+  it('asks to close the game while a revision is held', () => {
+    expect(followerStatus(f, { phase: 'held', revision: 5 })).toMatchObject({
+      tone: 'warn',
+      busy: false,
+      text: "Out of sync: close the game to apply the owner's latest changes."
+    })
+  })
+
+  it('offers Sync now when mods are missing', () => {
+    const s = followerStatus({ ...f, total: 24, behind: true, missing: ['MenuLib'] })
+    expect(s).toMatchObject({
+      tone: 'warn',
+      text: "Out of sync: 23/24 of the owner's mods installed.",
+      syncNow: true
+    })
+    expect(s.detail).toContain('Missing: MenuLib')
   })
 })
 

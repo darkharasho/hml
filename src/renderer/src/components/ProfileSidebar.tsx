@@ -340,7 +340,7 @@ function SyncBadge({ profile }: { profile: ProfileManifest }): React.JSX.Element
   return (
     <span
       title={badge.title}
-      className={`shrink-0 rounded px-1.5 py-px text-[10px] font-medium tabular-nums whitespace-nowrap ${SYNC_TONE_CLASS[badge.tone]}`}
+      className={`shrink-0 rounded px-1.5 py-px text-[10px] font-medium tabular-nums whitespace-nowrap ${SYNC_TONE_CLASS[badge.tone]} ${badge.loud ? 'animate-pulse ring-1 ring-current' : ''}`}
     >
       {badge.label}
     </span>

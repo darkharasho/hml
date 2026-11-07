@@ -25,7 +25,7 @@ import { cliEndpoint, sendCliRequest, startCliServer } from './cli/transport'
 import type { HmlEvent } from '../shared/types'
 import { findNxmArg, linuxDesktopEntry, type HandlerPort } from './nexus/nxm'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
-import { SYNC_POLL_MS } from './sync/service'
+import { SYNC_FOLLOW_POLL_MS, SYNC_POLL_MS } from './sync/service'
 import { makePaths } from './store/paths'
 import { resolveSnapshotPath } from './snapshotPath'
 import { ART_SCHEME } from './art/protocol'
@@ -422,6 +422,9 @@ if (hasLock)
     setTimeout(() => {
       void ready.syncTick()
       setInterval(() => void ready.syncTick(), SYNC_POLL_MS)
+      // Followers also ask every minute (a cached 304 when nothing changed), so a friend's
+      // changes start arriving within about a minute instead of five.
+      setInterval(() => void ready.syncFocusCheck(), SYNC_FOLLOW_POLL_MS)
       // Coming back to HML checks right away, so a friend's count is current when they look.
       app.on('browser-window-focus', () => void ready.syncFocusCheck())
     }, 10_000)
