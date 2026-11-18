@@ -1,6 +1,6 @@
 # Release Notes
 
-Version v1.9.1 — November 17, 2026
+Version v1.9.2 — November 17, 2026
 
 ## Fixes
-- Signing in to Nexus Mods in HML's download window works again. Cloudflare's "Verify you are human" check failed there (error 600010) and kept you from signing in.
+- Downloading from HML's Nexus Mods window installs the mod again. The window opened the plain file page, so the download button saved the zip to your Downloads folder and HML never saw it. It now opens Nexus's mod manager download page, and HML installs the file when you click **Slow download**.
