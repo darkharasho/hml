@@ -1,14 +1,12 @@
 # Release Notes
 
-Version v1.8.1 — November 7, 2026
+Version v1.9.0 — November 17, 2026
 
-## Synced profiles catch up faster
-A profile you follow now checks for the owner's changes every minute instead of every five, and right away when you switch back to HML. When nothing changed, the check is tiny.
+## Nexus Mods downloads without leaving HML
+With a free Nexus Mods account, HML now opens the mod's file page in its own window instead of your browser. Click **Mod Manager Download** there and HML installs the file right away. No browser trip, and you don't need HML set as the Nexus link handler.
+- **Update all** and synced profiles queue every page in that one window. The title shows how far along you are (for example "Nexus Mods download 2 of 5"), and the window closes after the last file.
+- Sign in to Nexus Mods once in that window. HML keeps you signed in.
+- Prefer your browser? Turn on **Settings → Nexus Mods → Download pages in my browser**.
 
-## No more guessing if you're out of sync
-Followed profiles now have a status bar above the mod list:
-- **Getting the latest:** shows as soon as the owner changes something, with a progress bar and the mod being installed.
-- **Waiting for the game:** close the game and the owner's changes get applied.
-- **Missing mods:** lists what didn't install, with a **Sync now** button to try again.
-
-The profile's badge in the sidebar also pulses while it's catching up, so you can spot it from any profile.
+## Fixes
+- A game added from Nexus Mods that's also installed through Steam now shows as one game, not as separate Nexus and Steam cards.
