@@ -184,6 +184,12 @@ describe('searchExtra', () => {
     expect(out[0].nexusModCount).toBe(9)
   })
 
+  it('leaves out a Nexus game already added, which shows from the catalog', async () => {
+    const added = nexusGameDef({ name: 'Skyrim SE', domain: 'skyrimspecialedition' })
+    const out = await make().searchExtra('sky', emptyCatalog([repo, added]), defaultSettings())
+    expect(out).toEqual([])
+  })
+
   it("hides a catalog game's twin before its domain is looked up, by label or name", async () => {
     const out = await make().searchExtra('sky', emptyCatalog([repo]), defaultSettings())
     expect(out.map((g) => g.label)).toEqual(['nexus-skyrimspecialedition'])

@@ -4,12 +4,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  withInstalledSteamIds,
   BEPINEX_INSTALL_RULES,
   createCustomGames,
   customGameDef,
   folderLabel,
   type StoredCustomGame
 } from '../../../src/main/custom/customGames'
+import { nexusGameDef } from '../../../src/main/nexus/games'
 import { makePaths, type AppPaths } from '../../../src/main/store/paths'
 
 let tmp: string
@@ -104,5 +106,30 @@ describe('store', () => {
       JSON.stringify([{ ...trash, cover: { ext: '../../x', at: 1 } }])
     )
     expect((await createCustomGames(paths).list())[0].cover).toBeUndefined()
+  })
+})
+
+describe('withInstalledSteamIds', () => {
+  const app = (
+    appId: string,
+    name: string,
+    dir: string
+  ): { appId: string; name: string; installDir: string } => ({
+    appId,
+    name,
+    installDir: `/steam/steamapps/common/${dir}`
+  })
+
+  it('gives a Nexus-only game the app id of the installed Steam game with its name', () => {
+    const nx = nexusGameDef({ name: 'Invokyr', domain: 'invokyr' })
+    const [out] = withInstalledSteamIds([nx], [app('3000', 'INVOKYR', 'Invokyr Game')])
+    expect(out.steamAppId).toBe('3000')
+  })
+
+  it('ignores punctuation in the name and leaves a name two apps share alone', () => {
+    const nx = nexusGameDef({ name: 'RV There Yet', domain: 'rvthereyet' })
+    expect(withInstalledSteamIds([nx], [app('1', 'RV There Yet?', 'rv')])[0].steamAppId).toBe('1')
+    const both = [app('1', 'RV There Yet?', 'rv'), app('2', 'RV There Yet', 'rv2')]
+    expect(withInstalledSteamIds([nx], both)[0].steamAppId).toBeNull()
   })
 })

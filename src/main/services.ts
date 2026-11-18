@@ -1610,9 +1610,16 @@ export function createServices(deps: ServiceDeps): Services {
         .map((g, i) => ({ g, i, rank: q ? rankGame(g, q) : 0, installed: g.installDir ? 0 : 1 }))
         .sort((a, b) => a.rank - b.rank || a.installed - b.installed || a.i - b.i)
         .map((x) => x.g)
-      const extra = await nexus.searchExtra(query, catalog, settings)
+      const extra = withInstalledSteamIds(
+        await nexus.searchExtra(query, catalog, settings),
+        await installedApps()
+      )
       const extras = await Promise.all(extra.map((g) => summarize(g, catalog, settings, steamRoot)))
-      const installed = await steamCandidates(query, catalog, steamRoot)
+      // A Steam game a Nexus result matched shows once, as that result.
+      const matched = new Set(extra.flatMap((g) => (g.steamAppId ? [g.steamAppId] : [])))
+      const installed = (await steamCandidates(query, catalog, steamRoot)).filter(
+        (g) => !g.steamAppId || !matched.has(g.steamAppId)
+      )
       return withArt([...sorted, ...extras, ...installed])
     },
 

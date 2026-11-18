@@ -203,9 +203,12 @@ export function createNexusGames(ctx: {
       return []
     }
     const cache = await readCache()
+    const have = new Set(catalog.games.map((g) => g.label))
     const out: GameDef[] = []
     for (const n of found) {
       if (!DOMAIN_RE.test(n.domain)) continue
+      // An added Nexus-only game is in the catalog already and shows from there.
+      if (have.has(`${DEPLOY_PREFIX}${n.domain}`)) continue
       if (await twinOf(n.domain, catalog.games, settings, cache, n.name)) continue
       out.push(nexusGameDef({ name: n.name, domain: n.domain, modCount: n.modCount }))
     }

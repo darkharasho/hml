@@ -76,18 +76,32 @@ export function catalogTwin(
   )
 }
 
+const looseName = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+
 /**
- * The games with the app id of the installed Steam app in their folder filled in, for catalog
- * games the catalog lists without one, so HML can launch them and show their Steam art.
+ * The games with the app id of their installed Steam app filled in, so HML can find, launch and
+ * show Steam art for them: catalog games the catalog lists without one by their install folder,
+ * and Nexus-only games (which know only a name) by a Steam app with the same name. A name two
+ * installed apps share is left alone.
  */
 export function withInstalledSteamIds(
   games: GameDef[],
-  apps: { appId: string; installDir: string }[]
+  apps: { appId: string; installDir: string; name?: string }[]
 ): GameDef[] {
   if (apps.length === 0) return games
   const byFolder = new Map(apps.map((a) => [path.basename(a.installDir).toLowerCase(), a.appId]))
+  const byName = new Map<string, string | null>()
+  for (const a of apps) {
+    const n = a.name ? looseName(a.name) : ''
+    if (n) byName.set(n, byName.has(n) ? null : a.appId)
+  }
   return games.map((g) => {
-    if (g.custom || g.steamAppId || !g.steamFolderName) return g
+    if (g.custom || g.steamAppId) return g
+    if (g.label.startsWith('nexus-')) {
+      const id = byName.get(looseName(g.displayName))
+      return id ? { ...g, steamAppId: id } : g
+    }
+    if (!g.steamFolderName) return g
     const id = byFolder.get(g.steamFolderName.toLowerCase())
     return id ? { ...g, steamAppId: id } : g
   })
