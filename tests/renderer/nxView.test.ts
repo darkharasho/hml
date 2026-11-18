@@ -6,6 +6,7 @@ import {
   formatCount,
   installedNexusMod,
   nexusModUrl,
+  nxInAppHint,
   openWebsiteToast,
   relativeDate
 } from '../../src/renderer/src/nxView'
@@ -77,6 +78,14 @@ describe('installedNexusMod', () => {
     expect(
       installedNexusMod([mod({ kind: 'local', fileName: 'a.zip', sha256: '' })], 42)
     ).toBeNull()
+  })
+})
+
+describe('nxInAppHint', () => {
+  it('says what happens after one page or several', () => {
+    const base = 'Click "Mod Manager Download" in the Nexus Mods window.'
+    expect(nxInAppHint(1)).toBe(`${base} HML installs the file when the download starts.`)
+    expect(nxInAppHint(3)).toBe(`${base} HML installs each file and opens the next page.`)
   })
 })
 

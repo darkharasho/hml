@@ -180,6 +180,11 @@ export interface ServiceDeps {
   os: { type: string; release: string; arch: string }
   /** Registers and reports HML as the operating system's `nxm://` handler. */
   nxmHandler: HandlerPort
+  /**
+   * HML's own window for Nexus Mods file pages (free accounts' downloads); returns how many pages
+   * it queued. Missing where HML has no windows.
+   */
+  nexusPages?: { open(urls: string[]): number }
   /** Base URL of the share-code Worker. */
   shareBaseUrl: string
   /** Folder of Flatpak's system-wide overrides; defaults to /var/lib/flatpak/overrides. */
@@ -1584,6 +1589,11 @@ export function createServices(deps: ServiceDeps): Services {
       return nexusApi.nxUpdate(game, profileId, modIds)
     },
     nxRegisterHandler: () => deps.nxmHandler.register(),
+    async nxOpenPages(urls: string[]): Promise<void> {
+      if (!deps.nexusPages) throw new Error("This copy of HML can't open Nexus Mods pages.")
+      const list = Array.isArray(urls) ? urls.filter((u): u is string => typeof u === 'string') : []
+      if (deps.nexusPages.open(list) === 0) throw new Error('No Nexus Mods page to open.')
+    },
     async cliStatus() {
       if (!deps.cliShim) return { file: null, installed: false, stale: false, onPath: false }
       return shimStatus(deps.cliShim)

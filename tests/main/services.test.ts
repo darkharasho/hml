@@ -956,7 +956,8 @@ describe('services', () => {
       manualLoaderKept: [],
       gameColors: true,
       updateNotifications: true,
-      favoriteGames: []
+      favoriteGames: [],
+      nexusPagesInBrowser: false
     })
   })
 
@@ -3841,6 +3842,33 @@ describe('services', () => {
         await a.nxRegisterHandler()
         expect((await a.nxStatus()).handler).toBe('registered')
       })
+    })
+  })
+
+  describe('nxOpenPages', () => {
+    test("hands the page strings to HML's Nexus window", async () => {
+      const opened: string[][] = []
+      const s = createServices({
+        ...deps,
+        nexusPages: {
+          open: (urls) => {
+            opened.push(urls)
+            return urls.length
+          }
+        }
+      })
+      const urls = ['https://www.nexusmods.com/valheim/mods/1', 3] as unknown as string[]
+      await s.nxOpenPages(urls)
+      expect(opened).toEqual([['https://www.nexusmods.com/valheim/mods/1']])
+    })
+
+    test('throws when nothing opened or there is no window', async () => {
+      const none = createServices({ ...deps, nexusPages: { open: () => 0 } })
+      await expect(none.nxOpenPages(['https://example.com'])).rejects.toThrow(/No Nexus Mods page/)
+      const without = createServices(deps)
+      await expect(without.nxOpenPages(['https://www.nexusmods.com/x'])).rejects.toThrow(
+        /can't open Nexus Mods pages/
+      )
     })
   })
 

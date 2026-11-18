@@ -19,7 +19,8 @@ const settings = (lastGame: string | null, used: string[]): Settings => ({
   manualLoaderKept: [],
   gameColors: true,
   updateNotifications: true,
-  favoriteGames: []
+  favoriteGames: [],
+  nexusPagesInBrowser: false
 })
 const game = (label: string, displayName: string): GameSummary =>
   ({ label, displayName }) as GameSummary

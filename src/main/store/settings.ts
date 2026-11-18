@@ -14,7 +14,8 @@ export function defaultSettings(): Settings {
     manualLoaderKept: [],
     gameColors: true,
     updateNotifications: true,
-    favoriteGames: []
+    favoriteGames: [],
+    nexusPagesInBrowser: false
   }
 }
 
@@ -55,7 +56,11 @@ export function normalizeSettings(stored: unknown): Settings {
         : defaults.updateNotifications,
     favoriteGames: Array.isArray(stored.favoriteGames)
       ? [...new Set(stored.favoriteGames.filter((x): x is string => typeof x === 'string'))]
-      : defaults.favoriteGames
+      : defaults.favoriteGames,
+    nexusPagesInBrowser:
+      typeof stored.nexusPagesInBrowser === 'boolean'
+        ? stored.nexusPagesInBrowser
+        : defaults.nexusPagesInBrowser
   }
 }
 

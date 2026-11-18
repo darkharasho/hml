@@ -248,6 +248,8 @@ function NexusSection(): React.JSX.Element {
   const [status, setStatus] = useState<NxStatus | null>(null)
   const [key, setKeyText] = useState('')
   const [registering, setRegistering] = useState(false)
+  const inBrowser = useStore((s) => s.settings?.nexusPagesInBrowser ?? false)
+  const setInBrowser = useStore((s) => s.setNexusPagesInBrowser)
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -345,6 +347,22 @@ function NexusSection(): React.JSX.Element {
           Remove
         </Button>
       </Field>
+
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-fg">Download pages in my browser</p>
+          <p className="mt-0.5 text-xs text-muted">
+            Free accounts download from the mod&apos;s page on Nexus Mods. HML opens it in its own
+            window; turn this on to use your browser, which needs HML to handle Nexus download
+            links.
+          </p>
+        </div>
+        <Toggle
+          checked={inBrowser}
+          label="Download pages in my browser"
+          onChange={(v) => void setInBrowser(v)}
+        />
+      </div>
 
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0 flex-1">

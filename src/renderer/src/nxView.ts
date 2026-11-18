@@ -57,6 +57,14 @@ export function openWebsiteToast(handler: NxStatus['handler']): string {
     : `${base} Turn on "Use HML for Nexus downloads" in Settings first.`
 }
 
+/** Shown after HML's Nexus window opened a free account's file pages. */
+export function nxInAppHint(pages: number): string {
+  const base = 'Click "Mod Manager Download" in the Nexus Mods window.'
+  return pages > 1
+    ? `${base} HML installs each file and opens the next page.`
+    : `${base} HML installs the file when the download starts.`
+}
+
 /** Shown after updates opened the first few file pages for a free account. */
 export const NX_MORE_UPDATES = "Open the remaining updates from each mod's menu."
 /** How many file pages one Update all opens for a free account. */

@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   reportUpdateCount: vi.fn(async () => undefined),
   getUpdateSummary: vi.fn(async () => ({})),
   openExternal: vi.fn(async () => undefined),
+  nxOpenPages: vi.fn(async () => undefined),
   createProfile: vi.fn(),
   deleteProfile: vi.fn(),
   createSyncCode: vi.fn(),
@@ -42,7 +43,7 @@ vi.mock('../../src/renderer/src/api', () => ({
 }))
 
 const { useStore } = await import('../../src/renderer/src/store')
-const { NX_MAX_UPDATE_TABS, NX_NO_KEY, openWebsiteToast } =
+const { NX_MAX_UPDATE_TABS, NX_NO_KEY, nxInAppHint, openWebsiteToast } =
   await import('../../src/renderer/src/nxView')
 
 const status: DeploymentStatus = {
@@ -643,6 +644,8 @@ describe('store sync events', () => {
   beforeEach(() => {
     api.listProfiles.mockReset().mockResolvedValue(reloaded)
     api.openExternal.mockReset().mockResolvedValue(undefined)
+    // These tests are about the browser path; HML's own window is tested on its own below.
+    api.nxOpenPages.mockReset().mockRejectedValue(new Error('no window'))
     api.nxStatus.mockReset().mockResolvedValue({ handler: 'registered' })
     api.getLaunchWarnings.mockReset().mockResolvedValue([])
     api.ghCheckUpdates.mockReset().mockResolvedValue([])
@@ -734,6 +737,34 @@ describe('store sync events', () => {
     useStore.getState().toasts[1].action?.run()
     await settle()
     expect(opened()).toEqual(urls)
+  })
+
+  test("openManualDownloads queues every page in HML's Nexus window", async () => {
+    api.nxOpenPages.mockReset().mockResolvedValue(undefined)
+    const urls = Array.from(
+      { length: NX_MAX_UPDATE_TABS + 1 },
+      (_, i) => `https://www.nexusmods.com/repo/mods/${i}`
+    )
+    await useStore.getState().openManualDownloads(urls)
+    expect(api.nxOpenPages).toHaveBeenCalledWith(urls)
+    expect(api.openExternal).not.toHaveBeenCalled()
+    expect(shown()).toEqual([['info', nxInAppHint(urls.length)]])
+  })
+
+  test("the browser setting skips HML's Nexus window", async () => {
+    api.nxOpenPages.mockReset().mockResolvedValue(undefined)
+    useStore.setState({
+      settings: { nexusPagesInBrowser: true } as unknown as ReturnType<
+        typeof useStore.getState
+      >['settings']
+    })
+    try {
+      await useStore.getState().openManualDownloads(['https://www.nexusmods.com/repo/mods/1'])
+      expect(api.nxOpenPages).not.toHaveBeenCalled()
+      expect(api.openExternal).toHaveBeenCalledWith('https://www.nexusmods.com/repo/mods/1')
+    } finally {
+      useStore.setState({ settings: null })
+    }
   })
 
   test('a sync change to the open profile refreshes its warnings and updates', async () => {

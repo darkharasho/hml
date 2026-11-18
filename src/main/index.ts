@@ -24,6 +24,7 @@ import { findCliArgs, runCli, type CliPort, type CliResult } from './cli/command
 import { cliEndpoint, sendCliRequest, startCliServer } from './cli/transport'
 import type { HmlEvent } from '../shared/types'
 import { findNxmArg, linuxDesktopEntry, type HandlerPort } from './nexus/nxm'
+import { createNexusPagesWindow } from './nexus/pagesWindow'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
 import { SYNC_FOLLOW_POLL_MS, SYNC_POLL_MS } from './sync/service'
 import { makePaths } from './store/paths'
@@ -142,6 +143,7 @@ function serviceDeps(): ServiceDeps {
     spawn,
     execFile: (file, args) => execFileAsync(file, args, { windowsHide: true, shell: false }),
     nxmHandler,
+    nexusPages,
     decodeImage: (data) => {
       const img = nativeImage.createFromBuffer(data)
       if (img.isEmpty()) return null
@@ -291,6 +293,16 @@ function drainNxm(): void {
   if (!services || !rendererLoaded) return
   for (const link of pendingNxm.splice(0)) void services.handleNxm(link)
 }
+
+/** Free accounts' Nexus downloads; the links its pages make are handled like the OS's. */
+const nexusPages = createNexusPagesWindow({
+  parent: () => mainWindowRef,
+  ...(process.platform === 'linux' ? { icon } : {}),
+  onLink: (link) => {
+    pendingNxm.push(link)
+    drainNxm()
+  }
+})
 
 // Registered at top level so a link from a second launch during startup isn't lost.
 if (hasLock) {

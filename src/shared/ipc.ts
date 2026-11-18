@@ -166,6 +166,11 @@ export interface HmlApi {
   nxStatus(): Promise<NxStatus>
   /** Makes HML the operating system's handler for `nxm://` links (only on the user's request). */
   nxRegisterHandler(): Promise<void>
+  /**
+   * Opens Nexus Mods file pages one after another in HML's own window, where "Mod Manager
+   * Download" installs the file. Only nexusmods.com pages.
+   */
+  nxOpenPages(urls: string[]): Promise<void>
   nxSearch(game: string, q: NxQuery): Promise<NxSearchResult>
   nxGetMod(game: string, modId: number): Promise<NxModDetail>
   nxInstall(
@@ -318,6 +323,7 @@ const METHOD_TABLE = {
   nxSetKey: true,
   nxStatus: true,
   nxRegisterHandler: true,
+  nxOpenPages: true,
   nxSearch: true,
   nxGetMod: true,
   nxInstall: true,

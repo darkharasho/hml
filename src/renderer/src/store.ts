@@ -24,7 +24,13 @@ import { api, errorMessage } from './api'
 import { isGhAccessError } from '../../shared/messages'
 import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
-import { NX_MAX_UPDATE_TABS, NX_MORE_UPDATES, NX_NO_KEY, openWebsiteToast } from './nxView'
+import {
+  NX_MAX_UPDATE_TABS,
+  NX_MORE_UPDATES,
+  NX_NO_KEY,
+  nxInAppHint,
+  openWebsiteToast
+} from './nxView'
 import {
   isFollower,
   manualDownloadToast,
@@ -194,6 +200,7 @@ interface State {
   setSettingsOpen(open: boolean): void
   setGameColors(on: boolean): Promise<void>
   setUpdateNotifications(on: boolean): Promise<void>
+  setNexusPagesInBrowser(on: boolean): Promise<void>
   setCreatingProfile(open: boolean): void
   toast(kind: ToastKind, message: string, action?: ToastAction): void
   dismissToast(id: number): void
@@ -484,10 +491,21 @@ export const useStore = create<State>()((set, get) => {
   }
 
   /**
-   * Opens a free account's file pages; the nxm:// links bring the downloads back. Pages past
-   * the tab limit go to `onMore`, or get the Update all hint without it.
+   * Opens a free account's file pages; the nxm:// links bring the downloads back. HML's Nexus
+   * window takes them all, one after another. In the browser (the user's choice, or when HML's
+   * window can't open), pages past the tab limit go to `onMore`, or get the Update all hint.
    */
   async function openNexusPages(urls: string[], onMore?: (rest: string[]) => void): Promise<void> {
+    if (urls.length === 0) return
+    if (!get().settings?.nexusPagesInBrowser) {
+      try {
+        await api.nxOpenPages(urls)
+        get().toast('info', nxInAppHint(urls.length))
+        return
+      } catch {
+        // The browser still works.
+      }
+    }
     try {
       for (const url of urls.slice(0, NX_MAX_UPDATE_TABS)) await api.openExternal(url)
     } catch (e) {
@@ -1355,6 +1373,10 @@ export const useStore = create<State>()((set, get) => {
 
     async setUpdateNotifications(on) {
       await persist((s) => ({ ...s, updateNotifications: on })).catch(fail)
+    },
+
+    async setNexusPagesInBrowser(on) {
+      await persist((s) => ({ ...s, nexusPagesInBrowser: on })).catch(fail)
     },
 
     setCreatingProfile(open) {

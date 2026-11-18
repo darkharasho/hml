@@ -111,6 +111,8 @@ export interface Settings {
   updateNotifications: boolean
   /** Game labels the user starred, in the order they were added. */
   favoriteGames: string[]
+  /** Open free accounts' Nexus Mods download pages in the browser instead of HML's own window. */
+  nexusPagesInBrowser: boolean
 }
 
 export type ModSource =
