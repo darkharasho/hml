@@ -1,5 +1,5 @@
-import { app, BrowserWindow, session, type Session, type WebContents } from 'electron'
-import { browserUserAgent, createNexusPages, type NexusPages, type PageWindow } from './pages'
+import { BrowserWindow, session, type Session, type WebContents } from 'electron'
+import { createNexusPages, type NexusPages, type PageWindow } from './pages'
 
 /** Kept between runs so the user stays signed in to Nexus Mods. */
 const PARTITION = 'persist:nexus'
@@ -34,7 +34,8 @@ let prepared: Session | null = null
 function nexusSession(take: (url: string) => boolean): Session {
   if (prepared) return prepared
   const s = session.fromPartition(PARTITION)
-  s.setUserAgent(browserUserAgent(s.getUserAgent(), app.getName()))
+  // The user agent stays Electron's own: Cloudflare's check on the sign-in page fails when it
+  // claims to be plain Chrome, since the rest of the browser doesn't match.
   // No camera, notifications or the like for websites; an external link that is an nxm:// one
   // (a path the navigation hooks didn't see) comes to HML instead.
   s.setPermissionRequestHandler((_wc, permission, callback, details) => {

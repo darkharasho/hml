@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  browserUserAgent,
   createNexusPages,
   isNexusPage,
   type PageWindow
@@ -51,16 +50,6 @@ describe('isNexusPage', () => {
     expect(isNexusPage('https://nexusmods.com.evil.io/x')).toBe(false)
     expect(isNexusPage('javascript:alert(1)')).toBe(false)
     expect(isNexusPage('not a url')).toBe(false)
-  })
-})
-
-describe('browserUserAgent', () => {
-  it('drops the Electron and app tokens', () => {
-    const ua =
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) hml/1.8.1 Chrome/140.0.0.0 Electron/44.7.2 Safari/537.36'
-    expect(browserUserAgent(ua, 'hml')).toBe(
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
-    )
   })
 })
 

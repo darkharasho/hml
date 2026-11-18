@@ -24,18 +24,6 @@ export function isNexusPage(raw: string): boolean {
 
 export const isNxmUrl = (raw: string): boolean => /^nxm:/i.test(raw)
 
-/**
- * The user agent without the Electron and app tokens, as a plain Chrome would send it. Sign-in
- * pages (Nexus Mods' and the ones it sends to) can turn embedded browsers away.
- */
-export function browserUserAgent(ua: string, appName: string): string {
-  const name = appName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return ua
-    .replace(new RegExp(` (?:Electron|${name})/\\S+`, 'gi'), '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 export interface PageWindow {
   load(url: string): void
   setTitle(title: string): void
