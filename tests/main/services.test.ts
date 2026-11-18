@@ -1762,6 +1762,7 @@ describe('services', () => {
       'runBackgroundChecks',
       'emitOpenProfile',
       'handleNxm',
+      'handleNexusDownload',
       'serveArt',
       'cancelLaunchWatches',
       'syncTick',
@@ -3710,6 +3711,65 @@ describe('services', () => {
         await expect(createNexusServicesOf(api)(link)).rejects.toThrow(
           'Pick a profile for R.E.P.O. in HML first.'
         )
+      })
+
+      describe('handleNexusDownload', () => {
+        const file = { domain: 'repo', modId: 5, fileId: 11 }
+        const last = (): HmlEvent => emitted[emitted.length - 1]
+
+        test("installs the downloaded file as the page's mod without asking for a link", async () => {
+          lastProfile()
+          await withKey()
+          premium = false
+          await api.handleNexusDownload(file, zipOf('CoolMod', '1.0.0'))
+          expect(last()).toEqual({
+            type: 'nexus-installed',
+            game: 'repo',
+            profileId: pid,
+            mod: { name: 'Cool Mod', version: 'v11' }
+          })
+          expect(calls.some((c) => c.url.includes('download_link.json'))).toBe(false)
+        })
+
+        test('installs into the profile the page was opened for, not the one shown now', async () => {
+          lastProfile()
+          await withKey()
+          const other = (await api.createProfile('repo', 'other')).id
+          await api.handleNexusDownload(file, zipOf('CoolMod', '1.0.0'), {
+            game: 'repo',
+            profileId: other
+          })
+          expect(last()).toMatchObject({ type: 'nexus-installed', game: 'repo', profileId: other })
+          expect((await api.listProfiles('repo')).find((p) => p.id === pid)?.mods).toEqual([])
+        })
+
+        test("a remembered profile that is gone, or another game's file, is refused", async () => {
+          lastProfile()
+          await withKey()
+          await api.handleNexusDownload(file, zipOf('CoolMod', '1.0.0'), {
+            game: 'repo',
+            profileId: 'gone'
+          })
+          expect(last()).toEqual({
+            type: 'nexus-failed',
+            message: 'The profile this download was for no longer exists.'
+          })
+          await api.handleNexusDownload({ ...file, domain: 'valheim' }, zipOf('CoolMod', '1.0.0'), {
+            game: 'repo',
+            profileId: pid
+          })
+          expect(last()).toEqual({
+            type: 'nexus-failed',
+            message: 'That file is for another game, not R.E.P.O.: nothing was installed.'
+          })
+        })
+
+        test('a file that is not an archive emits a failure', async () => {
+          lastProfile()
+          await withKey()
+          await api.handleNexusDownload(file, new Uint8Array([1, 2, 3]))
+          expect(last()).toMatchObject({ type: 'nexus-failed' })
+        })
       })
 
       describe('handleNxm', () => {

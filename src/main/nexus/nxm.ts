@@ -1,8 +1,12 @@
 /** A parsed `nxm://` download link ("Mod Manager Download" on nexusmods.com). */
-export interface NxmLink {
+/** One file of one Nexus mod. */
+export interface NexusFileRef {
   domain: string
   modId: number
   fileId: number
+}
+
+export interface NxmLink extends NexusFileRef {
   key: string
   expires: number
   userId: number | null

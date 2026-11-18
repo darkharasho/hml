@@ -346,7 +346,12 @@ export function ModList(): React.JSX.Element | null {
             variant="ghost"
             className="h-7"
             title={manual.map((m) => m.name).join(', ')}
-            onClick={() => void openManualDownloads(manual.map((m) => m.url))}
+            onClick={() =>
+              void openManualDownloads(
+                manual.map((m) => m.url),
+                { game: game.label, profileId: profile.id }
+              )
+            }
           >
             Open
           </Button>

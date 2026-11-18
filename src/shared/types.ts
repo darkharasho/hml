@@ -493,6 +493,12 @@ export interface NxStatus {
   user: NxUser | null
   handler: 'registered' | 'not-registered' | 'unavailable'
 }
+/** The game and profile a Nexus download from HML's window installs into. */
+export interface NxTarget {
+  game: string
+  profileId: string
+}
+
 export type NxInstallResult =
   | { kind: 'installed'; mod: InstalledMod; replaced: string[] }
   | { kind: 'open-website'; url: string }

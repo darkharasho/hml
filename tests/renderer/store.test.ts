@@ -722,12 +722,14 @@ describe('store sync events', () => {
     expect(opened()).toEqual(manual.map((m) => m.url))
   })
 
+  const to = { game: 'repo', profileId: 'follower' }
+
   test('openManualDownloads opens the first pages and offers the rest behind Open', async () => {
     const urls = Array.from(
       { length: NX_MAX_UPDATE_TABS + 1 },
       (_, i) => `https://www.nexusmods.com/repo/mods/${i}`
     )
-    await useStore.getState().openManualDownloads(urls)
+    await useStore.getState().openManualDownloads(urls, to)
     const opened = (): unknown[] => api.openExternal.mock.calls.map((c) => (c as unknown[])[0])
     expect(opened()).toEqual(urls.slice(0, NX_MAX_UPDATE_TABS))
     expect(shown()).toEqual([
@@ -745,8 +747,8 @@ describe('store sync events', () => {
       { length: NX_MAX_UPDATE_TABS + 1 },
       (_, i) => `https://www.nexusmods.com/repo/mods/${i}`
     )
-    await useStore.getState().openManualDownloads(urls)
-    expect(api.nxOpenPages).toHaveBeenCalledWith(urls)
+    await useStore.getState().openManualDownloads(urls, to)
+    expect(api.nxOpenPages).toHaveBeenCalledWith(urls, to)
     expect(api.openExternal).not.toHaveBeenCalled()
     expect(shown()).toEqual([['info', nxInAppHint(urls.length)]])
   })
@@ -759,7 +761,7 @@ describe('store sync events', () => {
       >['settings']
     })
     try {
-      await useStore.getState().openManualDownloads(['https://www.nexusmods.com/repo/mods/1'])
+      await useStore.getState().openManualDownloads(['https://www.nexusmods.com/repo/mods/1'], to)
       expect(api.nxOpenPages).not.toHaveBeenCalled()
       expect(api.openExternal).toHaveBeenCalledWith('https://www.nexusmods.com/repo/mods/1')
     } finally {

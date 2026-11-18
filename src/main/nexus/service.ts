@@ -5,6 +5,7 @@ import type {
   NxFile,
   NxInstallResult,
   NxStatus,
+  NxTarget,
   NxUpdate,
   NxUser
 } from '../../shared/types'
@@ -29,7 +30,7 @@ import {
   type NxClientOpts
 } from './api'
 import type { NexusGames } from './games'
-import type { NxmLink } from './nxm'
+import type { NexusFileRef, NxmLink } from './nxm'
 import { FOLLOWER_LOCKED_MESSAGE, matchesManualEntry } from '../sync/lock'
 
 export interface NexusContext {
@@ -68,7 +69,16 @@ export function createNexusServices(ctx: NexusContext): Pick<
   HmlApi,
   'nxSetKey' | 'nxStatus' | 'nxSearch' | 'nxGetMod' | 'nxInstall' | 'nxCheckUpdates' | 'nxUpdate'
 > & {
-  installFromNxm(link: NxmLink): Promise<{ game: string; profileId: string; mod: InstalledMod }>
+  installFromNxm(
+    link: NxmLink,
+    to?: NxTarget
+  ): Promise<{ game: string; profileId: string; mod: InstalledMod }>
+  /** Installs a file the user downloaded from its Nexus page (a manual-only mod). */
+  installFromDownload(
+    file: NexusFileRef,
+    data: Uint8Array,
+    to?: NxTarget
+  ): Promise<{ game: string; profileId: string; mod: InstalledMod }>
   /** The logged-in Nexus user's id (validating the key if needed); null without a key. */
   loggedInUserId(): Promise<number | null>
 } {
@@ -165,13 +175,18 @@ export function createNexusServices(ctx: NexusContext): Pick<
       file: { fileId: number; version: string }
       key: string
       nxm?: { key: string; expires: number }
+      /** The file itself, already downloaded; no download link is asked for. */
+      data?: Uint8Array
     }
   ): Promise<{ mod: InstalledMod; replaced: string[] }> {
     const { domain, modId, file, key } = o
-    const links = await downloadLinks(client, key, domain, modId, file.fileId, o.nxm)
-    if (links.length === 0) throw new Error('Nexus Mods returned no download link for that file.')
+    let bytes = o.data
+    if (!bytes) {
+      const links = await downloadLinks(client, key, domain, modId, file.fileId, o.nxm)
+      if (links.length === 0) throw new Error('Nexus Mods returned no download link for that file.')
+      bytes = await downloadFile(client, links[0])
+    }
     const info = await getMod(client, domain, modId)
-    const bytes = await downloadFile(client, links[0])
     const entries = await readArchive(bytes)
     const catalog = await ctx.getCatalog()
     const packageId = `nexus-${modId}`
@@ -327,24 +342,45 @@ export function createNexusServices(ctx: NexusContext): Pick<
     return results
   }
 
-  async function installFromNxm(
-    link: NxmLink
-  ): Promise<{ game: string; profileId: string; mod: InstalledMod }> {
-    const catalog = await ctx.getCatalog()
-    const settings = await loadSettings(paths)
-    let def: GameDef | undefined
-    for (const g of catalog.games) {
-      if ((await games.cachedDomain(g, settings)) === link.domain) {
-        def = g
-        break
+  /** The game a download is for: `to`'s when given (it must be that game's file), else by domain. */
+  async function gameFor(
+    link: NexusFileRef,
+    settings: Awaited<ReturnType<typeof loadSettings>>,
+    to?: NxTarget
+  ): Promise<GameDef> {
+    if (to) {
+      const def = await ctx.requireGame(to.game)
+      if ((await requireDomain(def, settings)).domain !== link.domain) {
+        throw new Error(
+          `That file is for another game, not ${def.displayName}: nothing was installed.`
+        )
       }
+      return def
     }
-    if (!def) throw new Error(`Open ${link.domain} in HML before downloading its mods.`)
+    const catalog = await ctx.getCatalog()
+    for (const g of catalog.games) {
+      if ((await games.cachedDomain(g, settings)) === link.domain) return g
+    }
+    throw new Error(`Open ${link.domain} in HML before downloading its mods.`)
+  }
+
+  /**
+   * Installs one Nexus file into `to` (the profile whose page it came from), or without one into
+   * the profile last shown for the file's game.
+   */
+  async function installLinked(
+    link: NexusFileRef,
+    from: { nxm: { key: string; expires: number } } | { data: Uint8Array },
+    to?: NxTarget
+  ): Promise<{ game: string; profileId: string; mod: InstalledMod }> {
+    const settings = await loadSettings(paths)
+    const def = await gameFor(link, settings, to)
     requireSupported(def)
-    const profileId = settings.lastProfile[def.label]
+    const profileId = to ? to.profileId : settings.lastProfile[def.label]
     if (!profileId) throw new Error(`Pick a profile for ${def.displayName} in HML first.`)
-    // A follower takes only the downloads its sync asked for by hand.
     const target = await getProfile(paths, def.label, profileId).catch(() => null)
+    if (to && !target) throw new Error('The profile this download was for no longer exists.')
+    // A follower takes only the downloads its sync asked for by hand.
     if (target?.sync?.role === 'follower' && !matchesManualEntry(target.sync.manual ?? [], link)) {
       throw new Error(FOLLOWER_LOCKED_MESSAGE)
     }
@@ -361,7 +397,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
       modId: link.modId,
       file,
       key,
-      nxm: { key: link.key, expires: link.expires }
+      ...from
     })
     return { game: def.label, profileId, mod }
   }
@@ -385,7 +421,9 @@ export function createNexusServices(ctx: NexusContext): Pick<
     nxInstall: install,
     nxCheckUpdates: checkUpdates,
     nxUpdate: update,
-    installFromNxm,
+    installFromNxm: (link, to) =>
+      installLinked(link, { nxm: { key: link.key, expires: link.expires } }, to),
+    installFromDownload: (file, data, to) => installLinked(file, { data }, to),
     async loggedInUserId() {
       const key = await loadKey()
       return key ? (await currentUser(key)).userId : null

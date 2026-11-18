@@ -1,4 +1,5 @@
 import type {
+  NxTarget,
   AddCustomGameInput,
   ConfigFile,
   CopyModsResult,
@@ -168,9 +169,10 @@ export interface HmlApi {
   nxRegisterHandler(): Promise<void>
   /**
    * Opens Nexus Mods file pages one after another in HML's own window, where "Mod Manager
-   * Download" installs the file. Only nexusmods.com pages.
+   * Download" installs the file. Only nexusmods.com pages. Their downloads go to `target`'s
+   * profile; without one, to the profile last shown for the file's game.
    */
-  nxOpenPages(urls: string[]): Promise<void>
+  nxOpenPages(urls: string[], target?: NxTarget): Promise<void>
   nxSearch(game: string, q: NxQuery): Promise<NxSearchResult>
   nxGetMod(game: string, modId: number): Promise<NxModDetail>
   nxInstall(

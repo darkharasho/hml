@@ -8,6 +8,7 @@ import type {
   HmlCustomGame,
   HmlEvent,
   InstalledMod,
+  NxTarget,
   LaunchMode,
   LaunchWarning,
   LaunchWatchResult,
@@ -104,7 +105,7 @@ import { applyRevision } from './sync/apply'
 import { lockFollowers } from './sync/lock'
 import { createSyncServices } from './sync/service'
 import { gameByDomain, getMod } from './nexus/api'
-import { parseNxm, type HandlerPort } from './nexus/nxm'
+import { parseNxm, type HandlerPort, type NexusFileRef } from './nexus/nxm'
 import { findInstalledMod, providesPackage } from '../shared/modIdentity'
 import {
   createSteamArt,
@@ -184,7 +185,7 @@ export interface ServiceDeps {
    * HML's own window for Nexus Mods file pages (free accounts' downloads); returns how many pages
    * it queued. Missing where HML has no windows.
    */
-  nexusPages?: { open(urls: string[]): number }
+  nexusPages?: { open(urls: string[], target?: NxTarget): number }
   /** Base URL of the share-code Worker. */
   shareBaseUrl: string
   /** Folder of Flatpak's system-wide overrides; defaults to /var/lib/flatpak/overrides. */
@@ -260,7 +261,10 @@ export type Services = HmlApi & {
   runBackgroundChecks(): Promise<void>
   /** Tells the renderer to show a profile (an update notification was clicked). */
   emitOpenProfile(game: string, profileId: string): void
-  handleNxm(raw: string): Promise<void>
+  /** `target`: the profile HML's Nexus window opened the page for; else the game's last shown. */
+  handleNxm(raw: string, target?: NxTarget): Promise<void>
+  /** Installs a file downloaded from its page in HML's Nexus window. Never throws, like handleNxm. */
+  handleNexusDownload(file: NexusFileRef, data: Uint8Array, target?: NxTarget): Promise<void>
   /** Answers an `hml-art://` request (the protocol handler in index.ts). */
   serveArt(url: string): Promise<Response>
   /** Stops every waitForGame (the window closed or reloaded, so nobody is waiting). */
@@ -1025,7 +1029,7 @@ export function createServices(deps: ServiceDeps): Services {
     isGameRunning: (def) => isGameRunning(deps.platform, deps.execFile, def.exeNames)
   })
 
-  const { installFromNxm, loggedInUserId, ...nexusApi } = createNexusServices({
+  const { installFromNxm, installFromDownload, loggedInUserId, ...nexusApi } = createNexusServices({
     deps,
     client: nexusClient,
     games: nexus,
@@ -1489,7 +1493,7 @@ export function createServices(deps: ServiceDeps): Services {
   }
 
   /** Handles an `nxm://` link end to end. Never throws: the outcome is an event. */
-  async function handleNxm(raw: string): Promise<void> {
+  async function handleNxm(raw: string, target?: NxTarget): Promise<void> {
     try {
       const link = parseNxm(raw)
       if (!link) throw new Error("That isn't a Nexus Mods download link.")
@@ -1498,20 +1502,40 @@ export function createServices(deps: ServiceDeps): Services {
       if (me !== null && link.userId !== me) {
         throw new Error('This download link is for a different Nexus Mods account.')
       }
-      const { game, profileId, mod } = await installFromNxm(link)
-      // A follower's manual download is done: its entry goes.
-      await syncApi.pruneManual(game, profileId).catch((e: unknown) => {
-        console.warn(`Sync couldn't update ${game}/${profileId}'s manual downloads:`, e)
-      })
-      deps.emit({
-        type: 'nexus-installed',
-        game,
-        profileId,
-        mod: { name: mod.name, version: mod.version }
-      })
+      await nexusInstalled(await installFromNxm(link, target))
     } catch (e) {
       deps.emit({ type: 'nexus-failed', message: errMsg(e) })
     }
+  }
+
+  async function handleNexusDownload(
+    file: NexusFileRef,
+    data: Uint8Array,
+    target?: NxTarget
+  ): Promise<void> {
+    try {
+      await nexusInstalled(await installFromDownload(file, data, target))
+    } catch (e) {
+      deps.emit({ type: 'nexus-failed', message: errMsg(e) })
+    }
+  }
+
+  async function nexusInstalled(r: {
+    game: string
+    profileId: string
+    mod: InstalledMod
+  }): Promise<void> {
+    const { game, profileId, mod } = r
+    // A follower's manual download is done: its entry goes.
+    await syncApi.pruneManual(game, profileId).catch((e: unknown) => {
+      console.warn(`Sync couldn't update ${game}/${profileId}'s manual downloads:`, e)
+    })
+    deps.emit({
+      type: 'nexus-installed',
+      game,
+      profileId,
+      mod: { name: mod.name, version: mod.version }
+    })
   }
 
   const background = createBackgroundChecks({
@@ -1562,6 +1586,7 @@ export function createServices(deps: ServiceDeps): Services {
     syncFocusCheck: () => syncApi.focusCheck(),
     ...customApi,
     handleNxm,
+    handleNexusDownload,
     serveArt: (url) => serveArt(url, artSources),
     cancelLaunchWatches() {
       for (const watch of launchWatches.values()) watch.abort()
@@ -1589,10 +1614,14 @@ export function createServices(deps: ServiceDeps): Services {
       return nexusApi.nxUpdate(game, profileId, modIds)
     },
     nxRegisterHandler: () => deps.nxmHandler.register(),
-    async nxOpenPages(urls: string[]): Promise<void> {
+    async nxOpenPages(urls: string[], target?: NxTarget): Promise<void> {
       if (!deps.nexusPages) throw new Error("This copy of HML can't open Nexus Mods pages.")
       const list = Array.isArray(urls) ? urls.filter((u): u is string => typeof u === 'string') : []
-      if (deps.nexusPages.open(list) === 0) throw new Error('No Nexus Mods page to open.')
+      const to =
+        target && typeof target.game === 'string' && typeof target.profileId === 'string'
+          ? { game: target.game, profileId: target.profileId }
+          : undefined
+      if (deps.nexusPages.open(list, to) === 0) throw new Error('No Nexus Mods page to open.')
     },
     async cliStatus() {
       if (!deps.cliShim) return { file: null, installed: false, stale: false, onPath: false }

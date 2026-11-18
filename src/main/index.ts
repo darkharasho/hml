@@ -22,7 +22,7 @@ import { registerUpdates } from './updateIpc'
 import { createServices, type ServiceDeps, type Services } from './services'
 import { findCliArgs, runCli, type CliPort, type CliResult } from './cli/commands'
 import { cliEndpoint, sendCliRequest, startCliServer } from './cli/transport'
-import type { HmlEvent } from '../shared/types'
+import type { HmlEvent, NxTarget } from '../shared/types'
 import { findNxmArg, linuxDesktopEntry, type HandlerPort } from './nexus/nxm'
 import { createNexusPagesWindow } from './nexus/pagesWindow'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
@@ -287,21 +287,23 @@ if (!hasLock && !cliArgv) app.quit()
 let services: ReturnType<typeof createServices> | null = null
 let rendererLoaded = false
 /** nxm:// links that arrived before services existed or the window could receive events. */
-const pendingNxm: string[] = []
+const pendingNxm: { link: string; target?: NxTarget }[] = []
 
 function drainNxm(): void {
   if (!services || !rendererLoaded) return
-  for (const link of pendingNxm.splice(0)) void services.handleNxm(link)
+  for (const { link, target } of pendingNxm.splice(0)) void services.handleNxm(link, target)
 }
 
 /** Free accounts' Nexus downloads; the links its pages make are handled like the OS's. */
 const nexusPages = createNexusPagesWindow({
   parent: () => mainWindowRef,
   ...(process.platform === 'linux' ? { icon } : {}),
-  onLink: (link) => {
-    pendingNxm.push(link)
+  onLink: (link, target) => {
+    pendingNxm.push({ link, ...(target ? { target } : {}) })
     drainNxm()
-  }
+  },
+  // Pages only open from HML's own window, so services exist by then.
+  onFile: (ref, data, target) => void services?.handleNexusDownload(ref, data, target)
 })
 
 // Registered at top level so a link from a second launch during startup isn't lost.
@@ -314,7 +316,7 @@ if (hasLock) {
     }
     const link = findNxmArg(argv)
     if (!link) return
-    pendingNxm.push(link)
+    pendingNxm.push({ link })
     drainNxm()
   })
 }
@@ -409,7 +411,7 @@ if (hasLock)
 
     // A link that launched HML is handled once the renderer can receive the event.
     const launchLink = findNxmArg(process.argv)
-    if (launchLink) pendingNxm.push(launchLink)
+    if (launchLink) pendingNxm.push({ link: launchLink })
     createWindow()
 
     // Check mods for updates shortly after startup and then periodically: GitHub auto-updates

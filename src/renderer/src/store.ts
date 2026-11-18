@@ -14,6 +14,7 @@ import type {
   LaunchWarning,
   ModUpdate,
   NxInstallResult,
+  NxTarget,
   NxUpdate,
   ProfileManifest,
   SyncProgress,
@@ -134,7 +135,8 @@ interface State {
   /** Follower: re-applies the owner's mods now. Owner: publishes now. Toasts the result. */
   syncNow(id: string): Promise<void>
   /** Opens a follower's manual Nexus downloads; pages past the tab limit wait behind a toast. */
-  openManualDownloads(urls: string[]): Promise<void>
+  /** Opens a follower's manual downloads; they install into `target` (that follower). */
+  openManualDownloads(urls: string[], target: NxTarget): Promise<void>
   /** Switches to a game's profile (after an import) and reloads its list. */
   openImportedProfile(game: string, profileId: string): Promise<void>
   openProfileFolder(): Promise<void>
@@ -459,11 +461,11 @@ export const useStore = create<State>()((set, get) => {
    * Offers a follower's manual downloads. Open shows the first pages; any left over get a new
    * toast whose Open shows the next ones.
    */
-  function manualDownloads(urls: string[], first: boolean): void {
+  function manualDownloads(urls: string[], first: boolean, target: NxTarget): void {
     const message = first ? manualDownloadToast(urls.length) : moreManualToast(urls.length)
     get().toast('info', message, {
       label: 'Open',
-      run: () => void get().openManualDownloads(urls)
+      run: () => void get().openManualDownloads(urls, target)
     })
   }
 
@@ -472,7 +474,8 @@ export const useStore = create<State>()((set, get) => {
     if (e.manual.length > 0)
       manualDownloads(
         e.manual.map((m) => m.url),
-        true
+        true,
+        { game: e.game, profileId: e.profileId }
       )
     await afterSyncChange(e.game, e.profileId)
   }
@@ -495,11 +498,15 @@ export const useStore = create<State>()((set, get) => {
    * window takes them all, one after another. In the browser (the user's choice, or when HML's
    * window can't open), pages past the tab limit go to `onMore`, or get the Update all hint.
    */
-  async function openNexusPages(urls: string[], onMore?: (rest: string[]) => void): Promise<void> {
+  async function openNexusPages(
+    urls: string[],
+    target: NxTarget,
+    onMore?: (rest: string[]) => void
+  ): Promise<void> {
     if (urls.length === 0) return
     if (!get().settings?.nexusPagesInBrowser) {
       try {
-        await api.nxOpenPages(urls)
+        await api.nxOpenPages(urls, target)
         get().toast('info', nxInAppHint(urls.length))
         return
       } catch {
@@ -747,8 +754,8 @@ export const useStore = create<State>()((set, get) => {
       await afterSyncChange(game.label, id)
     },
 
-    openManualDownloads(urls) {
-      return openNexusPages(urls, (rest) => manualDownloads(rest, false))
+    openManualDownloads(urls, target) {
+      return openNexusPages(urls, target, (rest) => manualDownloads(rest, false, target))
     },
 
     async detachSync(id) {
@@ -1093,7 +1100,7 @@ export const useStore = create<State>()((set, get) => {
         return 'done'
       }
       // Free accounts finish on the file page; the nxm:// link brings the download back.
-      await openNexusPages([result.url])
+      await openNexusPages([result.url], { game: currentGame.label, profileId: currentProfile })
       return 'done'
     },
 
@@ -1146,7 +1153,8 @@ export const useStore = create<State>()((set, get) => {
         get().toast('success', `Updated ${installed.length} Nexus mods`)
       }
       const urls = results.flatMap((r) => (r.kind === 'open-website' ? [r.url] : []))
-      if (urls.length > 0) await openNexusPages(urls)
+      if (urls.length > 0)
+        await openNexusPages(urls, { game: currentGame.label, profileId: currentProfile })
       if (results.length === 0) get().toast('info', 'Nexus mods are already up to date')
     },
 

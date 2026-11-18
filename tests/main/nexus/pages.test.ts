@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   createNexusPages,
+  filePageRef,
   isNexusPage,
   type PageWindow
 } from '../../../src/main/nexus/pages'
+import type { NxTarget } from '../../../src/shared/types'
 
 const page = (n: number): string => `https://www.nexusmods.com/valheim/mods/${n}?tab=files`
 const nxm = (file: number): string =>
@@ -13,14 +15,20 @@ function setup(): {
   pages: ReturnType<typeof createNexusPages>
   log: string[]
   links: string[]
+  sent: { what: string; target?: NxTarget }[]
   closeByUser: () => void
 } {
   const log: string[] = []
   const links: string[] = []
+  const sent: { what: string; target?: NxTarget }[] = []
   let onClosed: () => void = () => undefined
   let n = 0
   const pages = createNexusPages({
-    onLink: (raw) => links.push(raw),
+    onLink: (raw, target) => {
+      links.push(raw)
+      sent.push({ what: raw, target })
+    },
+    onFile: (ref, _data, target) => sent.push({ what: `file ${ref.modId}/${ref.fileId}`, target }),
     openWindow(closed): PageWindow {
       const id = ++n
       onClosed = closed
@@ -36,7 +44,7 @@ function setup(): {
       }
     }
   })
-  return { pages, log, links, closeByUser: () => onClosed() }
+  return { pages, log, links, sent, closeByUser: () => onClosed() }
 }
 
 describe('isNexusPage', () => {
@@ -50,6 +58,18 @@ describe('isNexusPage', () => {
     expect(isNexusPage('https://nexusmods.com.evil.io/x')).toBe(false)
     expect(isNexusPage('javascript:alert(1)')).toBe(false)
     expect(isNexusPage('not a url')).toBe(false)
+  })
+})
+
+describe('filePageRef', () => {
+  it('reads the mod and file from a Nexus file page', () => {
+    expect(
+      filePageRef('https://www.nexusmods.com/Invokyr/mods/12?tab=files&file_id=34&nxm=1')
+    ).toEqual({ domain: 'invokyr', modId: 12, fileId: 34 })
+    expect(filePageRef('https://www.nexusmods.com/invokyr/mods/12?tab=files')).toBeNull()
+    expect(filePageRef('https://www.nexusmods.com/invokyr/mods/12/x?file_id=34')).toBeNull()
+    expect(filePageRef('https://www.nexusmods.com/invokyr/mods/12?file_id=-1')).toBeNull()
+    expect(filePageRef('https://example.com/invokyr/mods/12?file_id=34')).toBeNull()
   })
 })
 
@@ -95,15 +115,48 @@ describe('createNexusPages', () => {
     expect(log).toEqual([])
   })
 
-  it("asks file pages for the mod manager download, so the click makes an nxm link", () => {
+  it('asks file pages for the mod manager download, so the click makes an nxm link', () => {
     const { pages, log } = setup()
     pages.open([
       'https://www.nexusmods.com/valheim/mods/7?tab=files&file_id=12',
       'https://www.nexusmods.com/valheim/mods/8?tab=files&file_id=13&nxm=1'
     ])
-    expect(log[1]).toBe('load#1 https://www.nexusmods.com/valheim/mods/7?tab=files&file_id=12&nxm=1')
+    expect(log[1]).toBe(
+      'load#1 https://www.nexusmods.com/valheim/mods/7?tab=files&file_id=12&nxm=1'
+    )
     pages.take(nxm(10))
-    expect(log.at(-2)).toBe('load#1 https://www.nexusmods.com/valheim/mods/8?tab=files&file_id=13&nxm=1')
+    expect(log.at(-2)).toBe(
+      'load#1 https://www.nexusmods.com/valheim/mods/8?tab=files&file_id=13&nxm=1'
+    )
+  })
+
+  it('a downloaded file moves on to the next page like a link does', () => {
+    const { pages, log, links } = setup()
+    const ref = { domain: 'valheim', modId: 1, fileId: 9 }
+    pages.open([page(1), page(2)])
+    log.length = 0
+    pages.downloaded(ref, new Uint8Array())
+    expect(log).toEqual([`load#1 ${page(2)}`, 'title#1 Nexus Mods download 2 of 2'])
+    pages.downloaded(ref, new Uint8Array())
+    expect(log.at(-1)).toBe('close#1')
+    expect(links).toEqual([])
+  })
+
+  it('each page sends its downloads to the profile it was opened for', () => {
+    const { pages, sent } = setup()
+    const a = { game: 'valheim', profileId: 'a' }
+    const b = { game: 'valheim', profileId: 'b' }
+    pages.open([page(1)], a)
+    pages.open([page(2)], b)
+    pages.open([page(3)])
+    pages.take(nxm(10))
+    pages.downloaded({ domain: 'valheim', modId: 2, fileId: 20 }, new Uint8Array())
+    pages.take(nxm(11))
+    expect(sent).toEqual([
+      { what: nxm(10), target: a },
+      { what: 'file 2/20', target: b },
+      { what: nxm(11), target: undefined }
+    ])
   })
 
   it('opens nothing for non-Nexus links and drops duplicates', () => {
