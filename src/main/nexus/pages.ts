@@ -22,6 +22,17 @@ export function isNexusPage(raw: string): boolean {
   }
 }
 
+/**
+ * A file page (`?file_id=`) gets `nxm=1`, Nexus's own "Mod Manager Download" link: without it the
+ * page's download button hands out the zip itself, which HML can't catch, instead of an nxm link.
+ */
+export function modManagerPage(raw: string): string {
+  const u = new URL(raw)
+  if (!u.searchParams.has('file_id') || u.searchParams.get('nxm') === '1') return raw
+  u.searchParams.set('nxm', '1')
+  return u.toString()
+}
+
 export const isNxmUrl = (raw: string): boolean => /^nxm:/i.test(raw)
 
 export interface PageWindow {
@@ -56,7 +67,10 @@ export function createNexusPages(opts: {
     total > 1 ? `Nexus Mods download ${done + 1} of ${total}` : 'Nexus Mods download'
 
   function open(urls: string[]): number {
-    const fresh = urls.filter(isNexusPage).filter((u, i, all) => all.indexOf(u) === i)
+    const fresh = urls
+      .filter(isNexusPage)
+      .map(modManagerPage)
+      .filter((u, i, all) => all.indexOf(u) === i)
     if (fresh.length === 0) return 0
     if (!win) {
       queue = []

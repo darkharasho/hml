@@ -95,6 +95,17 @@ describe('createNexusPages', () => {
     expect(log).toEqual([])
   })
 
+  it("asks file pages for the mod manager download, so the click makes an nxm link", () => {
+    const { pages, log } = setup()
+    pages.open([
+      'https://www.nexusmods.com/valheim/mods/7?tab=files&file_id=12',
+      'https://www.nexusmods.com/valheim/mods/8?tab=files&file_id=13&nxm=1'
+    ])
+    expect(log[1]).toBe('load#1 https://www.nexusmods.com/valheim/mods/7?tab=files&file_id=12&nxm=1')
+    pages.take(nxm(10))
+    expect(log.at(-2)).toBe('load#1 https://www.nexusmods.com/valheim/mods/8?tab=files&file_id=13&nxm=1')
+  })
+
   it('opens nothing for non-Nexus links and drops duplicates', () => {
     const { pages, log } = setup()
     expect(pages.open(['https://example.com/', 'file:///etc/passwd'])).toBe(0)
