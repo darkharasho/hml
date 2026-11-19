@@ -7,7 +7,9 @@ import {
   gameMismatchNote,
   importProgress,
   importSummary,
-  localModsNote
+  installNexusLabel,
+  localModsNote,
+  pendingNexusNote
 } from '../../src/renderer/src/shareView'
 
 function result(installed: number, unresolved: number): ImportResult {
@@ -21,7 +23,8 @@ function result(installed: number, unresolved: number): ImportResult {
       kind: 'local' as const,
       reason: 'Local file'
     })),
-    warnings: []
+    warnings: [],
+    pendingNexus: []
   }
 }
 
@@ -121,5 +124,20 @@ describe('SHARE_SOURCE_BADGE', () => {
 describe('COPY_FAILED', () => {
   it('tells the user to copy the code by hand', () => {
     expect(COPY_FAILED).toBe("Couldn't copy. Select the code and copy it manually.")
+  })
+})
+
+describe('pending Nexus copy', () => {
+  it('says how many Nexus mods wait in the profile', () => {
+    expect(pendingNexusNote(1)).toBe(
+      '1 Nexus mod needs a download from its page. The profile lists it, and HML\'s Nexus Mods window installs it when you click "Mod Manager Download".'
+    )
+    expect(pendingNexusNote(3)).toBe(
+      '3 Nexus mods need downloads from their pages. The profile lists them, and HML\'s Nexus Mods window installs each one when you click "Mod Manager Download".'
+    )
+  })
+  it('labels the install button', () => {
+    expect(installNexusLabel(1)).toBe('Install Nexus mod')
+    expect(installNexusLabel(4)).toBe('Install 4 Nexus mods')
   })
 })

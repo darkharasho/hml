@@ -9,11 +9,12 @@ import type {
   HmlExportMod,
   ImportResult,
   ModSource,
+  PendingNexusMod,
   ProfileManifest,
   UnresolvedMod
 } from '../../shared/types'
 import { normalizeSyncCode } from '../../shared/shareCode'
-import { getProfile, RESERVED } from '../profiles/profiles'
+import { getProfile, RESERVED, saveProfile } from '../profiles/profiles'
 import type { ServiceDeps } from '../services'
 import { buildHmlFile, IMPORT_TOO_BIG, MAX_HML_BYTES, readHmlFile } from './hmlFile'
 import {
@@ -381,6 +382,21 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       } catch (e) {
         warnings.push(`The config files couldn't be restored: ${errMsg(e)}`)
       }
+      // A free account's Nexus mods wait in the profile, to install from HML's Nexus window.
+      // A follower lists them in its sync state instead.
+      const pendingNexus: PendingNexusMod[] = unresolved.flatMap((u) =>
+        u.nexusFile ? [{ name: u.name, version: u.version, ...u.nexusFile }] : []
+      )
+      if (pendingNexus.length > 0 && !held.sync) {
+        try {
+          await serialize(game, profileId, async () => {
+            const p = await getProfile(deps.paths, game, profileId)
+            await saveProfile(deps.paths, { ...p, pendingNexus })
+          })
+        } catch (e) {
+          warnings.push(`The Nexus mods to install couldn't be listed: ${errMsg(e)}`)
+        }
+      }
       if (held.sync) {
         try {
           if (!ctx.sync) throw new Error(SYNC_UNAVAILABLE)
@@ -421,7 +437,8 @@ export function createShareServices(ctx: ShareContext): ShareApi {
         profile,
         installed: installedIds.filter((id) => id !== null).length,
         unresolved,
-        warnings
+        warnings,
+        pendingNexus
       } satisfies ImportResult
     }
   }

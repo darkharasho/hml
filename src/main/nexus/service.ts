@@ -1,3 +1,4 @@
+import { nexusFilePageUrl } from '../../shared/nexusPage'
 import type {
   Catalog,
   GameDef,
@@ -62,8 +63,7 @@ function looksLikeKey(k: string): boolean {
 const newestMain = (files: NxFile[]): NxFile | undefined =>
   files.filter((f) => f.category === 'MAIN').sort((a, b) => b.date - a.date)[0]
 
-const filePageUrl = (domain: string, modId: number, fileId: number): string =>
-  `https://www.nexusmods.com/${domain}/mods/${modId}?tab=files&file_id=${fileId}`
+const filePageUrl = nexusFilePageUrl
 
 export function createNexusServices(ctx: NexusContext): Pick<
   HmlApi,

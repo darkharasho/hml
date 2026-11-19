@@ -3782,6 +3782,23 @@ describe('services', () => {
           })
         })
 
+        test("installing a listed Nexus mod takes it off the profile's list", async () => {
+          lastProfile()
+          await withKey()
+          const p = await getProfile(deps.paths, 'repo', pid)
+          const other = { name: 'Other', version: '2.0.0', domain: 'repo', modId: 6, fileId: 12 }
+          await saveProfile(deps.paths, {
+            ...p,
+            pendingNexus: [{ name: 'Cool Mod', version: '1.0.0', ...file }, other]
+          })
+          await api.handleNexusDownload(file, zipOf('CoolMod', '1.0.0'), {
+            game: 'repo',
+            profileId: pid
+          })
+          expect(last()).toMatchObject({ type: 'nexus-installed' })
+          expect((await getProfile(deps.paths, 'repo', pid)).pendingNexus).toEqual([other])
+        })
+
         test('a file that is not an archive emits a failure', async () => {
           lastProfile()
           await withKey()
@@ -4700,8 +4717,10 @@ describe('share import', () => {
         name: 'Cool Mod',
         version: '1.0.0',
         kind: 'nexus',
-        reason: 'Needs Nexus Mods Premium. Download it from the website.',
-        url: 'https://www.nexusmods.com/repo/mods/5?tab=files&file_id=11'
+        reason:
+          "Nexus Mods only lets Premium accounts download it directly. Install it from the profile's list.",
+        url: 'https://www.nexusmods.com/repo/mods/5?tab=files&file_id=11',
+        nexusFile: { domain: 'repo', modId: 5, fileId: 11 }
       },
       {
         name: 'Cool Mod',
@@ -4721,8 +4740,40 @@ describe('share import', () => {
   test('without a Nexus key the mod is unresolved with the Settings hint', async () => {
     const r = await importCode([nx()])
     expect(r.unresolved).toEqual([
-      expect.objectContaining({ reason: 'Add your Nexus Mods API key in Settings to download.' })
+      expect.objectContaining({
+        reason: 'Add your Nexus Mods API key in Settings to download.',
+        nexusFile: { domain: 'repo', modId: 5, fileId: 11 }
+      })
     ])
+  })
+
+  test("a free account's Nexus mods wait in the new profile; another game's mod doesn't", async () => {
+    premium = false
+    await withKey()
+    const r = await importCode([nx(), nx('skyrim')])
+    const waiting = [{ name: 'Cool Mod', version: '1.0.0', domain: 'repo', modId: 5, fileId: 11 }]
+    expect(r.pendingNexus).toEqual(waiting)
+    expect(r.profile.pendingNexus).toEqual(waiting)
+  })
+
+  test('an import with every mod installed lists no Nexus mods to install', async () => {
+    const r = await importCode([ts('Own-Mod', '1.0.0')])
+    expect(r.pendingNexus).toEqual([])
+    expect(r.profile.pendingNexus).toBeUndefined()
+  })
+
+  test('dismissPendingNexus takes one mod off the list, and the last one removes it', async () => {
+    premium = false
+    await withKey()
+    const r = await importCode([nx()])
+    const pid = r.profile.id
+    const second = { name: 'Other', version: '2.0.0', domain: 'repo', modId: 6, fileId: 12 }
+    const p = await getProfile(deps.paths, 'repo', pid)
+    await saveProfile(deps.paths, { ...p, pendingNexus: [...p.pendingNexus!, second] })
+    await api.dismissPendingNexus('repo', pid, 5)
+    expect((await getProfile(deps.paths, 'repo', pid)).pendingNexus).toEqual([second])
+    await api.dismissPendingNexus('repo', pid, 6)
+    expect((await getProfile(deps.paths, 'repo', pid)).pendingNexus).toBeUndefined()
   })
 
   test('a changed GitHub file is installed with a warning', async () => {

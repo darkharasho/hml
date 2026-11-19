@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ImportResult, ShareModDetail, SharePreview } from '../../../shared/types'
 import { api, errorMessage } from '../api'
-import { SHARE_SOURCE_BADGE, gameMismatchNote, importProgress, importSummary } from '../shareView'
+import {
+  SHARE_SOURCE_BADGE,
+  gameMismatchNote,
+  importProgress,
+  importSummary,
+  installNexusLabel,
+  pendingNexusNote
+} from '../shareView'
+import { nexusFilePageUrl } from '../../../shared/nexusPage'
 import { useStore } from '../store'
 import { ALREADY_FOLLOWING } from '../syncView'
 import { initials } from '../tsView'
@@ -18,6 +26,7 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   const currentGame = useStore((s) => s.currentGame?.label ?? null)
   const openImported = useStore((s) => s.openImportedProfile)
   const toast = useStore((s) => s.toast)
+  const openManualDownloads = useStore((s) => s.openManualDownloads)
   const [code, setCode] = useState('')
   const [opening, setOpening] = useState<'code' | 'file' | null>(null)
   const [preview, setPreview] = useState<SharePreview | null>(null)
@@ -72,6 +81,14 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
     if (!result) return
     onClose()
     void openImported(result.game, result.profile.id)
+  }
+  /** Goes to the new profile and opens its Nexus mods' pages in HML's Nexus window. */
+  const installNexus = (): void => {
+    if (!result) return
+    const target = { game: result.game, profileId: result.profile.id }
+    const urls = result.pendingNexus.map((p) => nexusFilePageUrl(p.domain, p.modId, p.fileId))
+    onClose()
+    void openImported(target.game, target.profileId).then(() => openManualDownloads(urls, target))
   }
   // The profile exists once the import ran, so closing the result goes to it like Done does.
   const close = (): void => {
@@ -142,9 +159,21 @@ export function ImportDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
   }
 
   const footer = result ? (
-    <Button variant="primary" autoFocus onClick={done}>
-      Done
-    </Button>
+    result.pendingNexus.length > 0 ? (
+      <div className="flex gap-2">
+        <Button variant="quiet" onClick={done}>
+          Later
+        </Button>
+        <Button variant="primary" autoFocus onClick={installNexus}>
+          <Icon name="download" />
+          {installNexusLabel(result.pendingNexus.length)}
+        </Button>
+      </div>
+    ) : (
+      <Button variant="primary" autoFocus onClick={done}>
+        Done
+      </Button>
+    )
   ) : preview ? (
     <div className="flex w-full items-center justify-between gap-3">
       {importing ? <ImportProgress progress={progress} /> : <span />}
@@ -383,6 +412,9 @@ function ImportResultView({ result }: { result: ImportResult }): React.JSX.Eleme
   const toast = useStore((s) => s.toast)
   const openPage = (url: string): void =>
     void api.openExternal(url).catch((e) => toast('error', errorMessage(e)))
+  // Nexus mods the profile lists to install are summed up; the list shows the rest.
+  const waiting = result.pendingNexus.length
+  const others = result.unresolved.filter((u) => !u.nexusFile)
   return (
     <>
       <p className="flex items-center gap-2 font-medium text-fg">
@@ -392,9 +424,15 @@ function ImportResultView({ result }: { result: ImportResult }): React.JSX.Eleme
         />
         {importSummary(result)}
       </p>
-      {result.unresolved.length > 0 && (
+      {waiting > 0 && (
+        <p className="mt-3 flex items-start gap-2 rounded-md border border-dashed border-warn/40 px-3 py-2 text-xs">
+          <Icon name="download" className="mt-px size-3.5 shrink-0 text-warn" />
+          <span>{pendingNexusNote(waiting)}</span>
+        </p>
+      )}
+      {others.length > 0 && (
         <ul className="mt-3 flex max-h-56 flex-col overflow-y-auto rounded-md border border-line">
-          {result.unresolved.map((m, i) => (
+          {others.map((m, i) => (
             <li
               key={`${m.name}-${i}`}
               className="flex items-center gap-3 border-line px-3 py-2 not-last:border-b"

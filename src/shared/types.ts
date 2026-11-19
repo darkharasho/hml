@@ -234,6 +234,17 @@ export interface ProfileManifest {
   createdAt: string
   mods: InstalledMod[]
   sync?: ProfileSync
+  /** Nexus mods an import couldn't download itself; each goes once that mod is installed. */
+  pendingNexus?: PendingNexusMod[]
+}
+
+/** A Nexus file waiting to be installed from its page in HML's Nexus window. */
+export interface PendingNexusMod {
+  name: string
+  version: string
+  domain: string
+  modId: number
+  fileId: number
 }
 
 export interface HmlExportMod {
@@ -285,6 +296,8 @@ export interface UnresolvedMod {
   kind: ModSource['kind']
   reason: string
   url?: string
+  /** A Nexus file that can still be installed from its page, so the profile lists it. */
+  nexusFile?: { domain: string; modId: number; fileId: number }
 }
 
 export interface ImportResult {
@@ -293,6 +306,8 @@ export interface ImportResult {
   installed: number
   unresolved: UnresolvedMod[]
   warnings: string[]
+  /** The Nexus files the new profile lists to install from their pages. */
+  pendingNexus: PendingNexusMod[]
 }
 
 export type LaunchMode = 'modded' | 'vanilla'

@@ -25,6 +25,20 @@ export function importSummary(result: ImportResult): string {
   return `Imported ${result.installed} of ${total} ${total === 1 ? 'mod' : 'mods'}.`
 }
 
+/** The import result's line about Nexus mods waiting in the new profile. */
+export function pendingNexusNote(n: number): string {
+  const what =
+    n === 1
+      ? '1 Nexus mod needs a download from its page'
+      : `${n} Nexus mods need downloads from their pages`
+  return `${what}. The profile lists ${n === 1 ? 'it' : 'them'}, and HML's Nexus Mods window installs ${n === 1 ? 'it' : 'each one'} when you click "Mod Manager Download".`
+}
+
+/** The import result's button that opens the new profile's Nexus mods in HML's window. */
+export function installNexusLabel(n: number): string {
+  return n === 1 ? 'Install Nexus mod' : `Install ${n} Nexus mods`
+}
+
 const IMPORTING = 'Importing '
 
 /**

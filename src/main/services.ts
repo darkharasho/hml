@@ -36,6 +36,7 @@ import {
   getProfile,
   listProfiles,
   renameProfile,
+  prunePendingNexus,
   saveProfile
 } from './profiles/profiles'
 import { installZip, setModEnabled, uninstallMod } from './install/installer'
@@ -1530,6 +1531,10 @@ export function createServices(deps: ServiceDeps): Services {
     mod: InstalledMod
   }): Promise<void> {
     const { game, profileId, mod } = r
+    await serialize(game, profileId, () => prunePendingNexus(paths, game, profileId)).catch(
+      (e: unknown) =>
+        console.warn(`Couldn't update ${game}/${profileId}'s Nexus mods to install:`, e)
+    )
     // A follower's manual download is done: its entry goes.
     await syncApi.pruneManual(game, profileId).catch((e: unknown) => {
       console.warn(`Sync couldn't update ${game}/${profileId}'s manual downloads:`, e)
@@ -1751,6 +1756,10 @@ export function createServices(deps: ServiceDeps): Services {
         }
       }
       return profile
+    },
+    async dismissPendingNexus(game, profileId, modId) {
+      if (typeof modId !== 'number') throw new Error('Expected a Nexus mod id.')
+      await serialize(game, profileId, () => prunePendingNexus(paths, game, profileId, modId))
     },
     renameProfile: (game, id, name) =>
       serialize(game, id, () => renameProfile(paths, game, id, name)),

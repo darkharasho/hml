@@ -9,6 +9,8 @@ import {
   nexusModUrl,
   nxInAppHint,
   openWebsiteToast,
+  pendingNexusHeading,
+  pendingNexusRows,
   relativeDate
 } from '../../src/renderer/src/nxView'
 
@@ -136,5 +138,44 @@ describe('canPlayDeployGame', () => {
       true
     )
     expect(canPlayDeployGame({ custom: undefined, steamAppId: null })).toBe(false)
+  })
+})
+
+describe('pendingNexusRows', () => {
+  const waiting = [
+    { name: 'Cool', version: '1.0.0', domain: 'repo', modId: 42, fileId: 7 },
+    { name: 'Other', version: '2.0.0', domain: 'repo', modId: 43, fileId: 8 }
+  ]
+  it("lists an import's Nexus mods not installed since, with their file pages", () => {
+    const rows = pendingNexusRows({
+      mods: [mod({ kind: 'nexus', domain: 'repo', modId: 42, fileId: 9 })],
+      pendingNexus: waiting
+    })
+    expect(rows).toEqual([
+      {
+        key: 'repo/43',
+        name: 'Other',
+        version: '2.0.0',
+        url: 'https://www.nexusmods.com/repo/mods/43?tab=files&file_id=8',
+        modId: 43
+      }
+    ])
+  })
+  it("lists a follower's manual downloads, which can't be dismissed", () => {
+    const url = 'https://www.nexusmods.com/repo/mods/42?tab=files&file_id=7'
+    expect(
+      pendingNexusRows({
+        mods: [],
+        pendingNexus: waiting,
+        sync: { role: 'follower', code: 'c', revision: 1, manual: [{ name: 'Cool', url }] }
+      })
+    ).toEqual([{ key: url, name: 'Cool', version: '', url, modId: null }])
+  })
+  it('is empty without a list', () => {
+    expect(pendingNexusRows({ mods: [] })).toEqual([])
+  })
+  it('heads the list', () => {
+    expect(pendingNexusHeading(1)).toBe('1 Nexus mod to install')
+    expect(pendingNexusHeading(2)).toBe('2 Nexus mods to install')
   })
 })

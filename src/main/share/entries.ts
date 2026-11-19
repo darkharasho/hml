@@ -5,6 +5,7 @@ import type { HmlExportMod, TsPackage, UnresolvedMod } from '../../shared/types'
 import { compareVersions } from '../../shared/version'
 import { tagPrefix } from '../../shared/ghTag'
 import { getProfile } from '../profiles/profiles'
+import { NX_NO_KEY } from '../../shared/messages'
 import type { ServiceDeps } from '../services'
 import type { GhInstallOptions } from '../github/service'
 
@@ -33,6 +34,10 @@ export const errMsg = (e: unknown): string => (e instanceof Error ? e.message : 
 
 /** GitHub install errors that mean the release or its file is gone, not that GitHub is unreachable. */
 const GH_GONE = [/ has no release /, / has no file named /, / failed: HTTP 404$/]
+
+/** Why a free account's Nexus mod waits in the profile. */
+export const NEEDS_PAGE_DOWNLOAD =
+  "Nexus Mods only lets Premium accounts download it directly. Install it from the profile's list."
 
 const missingWarning = (fullName: string, missing: string[]): string[] =>
   missing.length > 0 ? [`${fullName}: missing dependencies ${missing.join(', ')}.`] : []
@@ -122,13 +127,18 @@ export function createEntryInstaller(ctx: { deps: ServiceDeps; installers: Share
     entry: HmlExportMod,
     refreshOnce: () => Promise<void>
   ): Promise<{ modId: string; warnings: string[] } | { unresolved: UnresolvedMod }> {
-    const unresolved = (reason: string, url?: string): { unresolved: UnresolvedMod } => ({
+    const unresolved = (
+      reason: string,
+      url?: string,
+      nexusFile?: UnresolvedMod['nexusFile']
+    ): { unresolved: UnresolvedMod } => ({
       unresolved: {
         name: modName(entry),
         version: entry.version,
         kind: entry.source.kind,
         reason,
-        ...(url !== undefined ? { url } : {})
+        ...(url !== undefined ? { url } : {}),
+        ...(nexusFile ? { nexusFile } : {})
       }
     })
     const s = entry.source
@@ -187,9 +197,17 @@ export function createEntryInstaller(ctx: { deps: ServiceDeps; installers: Share
           if (domain !== s.domain) {
             return unresolved(`This mod is for a different game on Nexus Mods (${s.domain}).`)
           }
-          const r = await api.nxInstall(game, profileId, s.modId, s.fileId)
+          // A free account (or one without a key yet) installs it from its page later.
+          const file = { domain: s.domain, modId: s.modId, fileId: s.fileId }
+          let r: Awaited<ReturnType<typeof api.nxInstall>>
+          try {
+            r = await api.nxInstall(game, profileId, s.modId, s.fileId)
+          } catch (e) {
+            if (errMsg(e) === NX_NO_KEY) return unresolved(NX_NO_KEY, undefined, file)
+            throw e
+          }
           if (r.kind === 'open-website') {
-            return unresolved('Needs Nexus Mods Premium. Download it from the website.', r.url)
+            return unresolved(NEEDS_PAGE_DOWNLOAD, r.url, file)
           }
           return { modId: r.mod.id, warnings: [] }
         }

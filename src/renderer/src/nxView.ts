@@ -4,9 +4,11 @@ import type {
   GameDef,
   InstalledMod,
   NxFileCategory,
-  NxStatus
+  NxStatus,
+  ProfileManifest
 } from '../../shared/types'
 import { NX_NO_KEY } from '../../shared/messages'
+import { nexusFilePageUrl, stillPending } from '../../shared/nexusPage'
 import { compactCount } from './tsView'
 
 export { NX_NO_KEY }
@@ -94,4 +96,45 @@ export function deploymentLabel(
     return `This profile is deployed (${s.files} ${s.files === 1 ? 'file' : 'files'}).`
   }
   return `${s.profileName ?? 'Another profile'} is deployed.`
+}
+
+/** A Nexus file the profile lists to install from its page. */
+export interface PendingNexusRow {
+  key: string
+  name: string
+  /** Empty when the list doesn't record it (a follower's manual download). */
+  version: string
+  url: string
+  /** The Nexus mod id, for taking it off the list; null for a follower, whose sync owns the list. */
+  modId: number | null
+}
+
+/**
+ * The profile's Nexus mods still to install: a follower's manual downloads, or the ones an import
+ * couldn't download itself that aren't installed since.
+ */
+export function pendingNexusRows(
+  profile: Pick<ProfileManifest, 'mods' | 'sync' | 'pendingNexus'>
+): PendingNexusRow[] {
+  if (profile.sync?.role === 'follower') {
+    return (profile.sync.manual ?? []).map((m) => ({
+      key: m.url,
+      name: m.name,
+      version: '',
+      url: m.url,
+      modId: null
+    }))
+  }
+  return stillPending(profile.pendingNexus, profile.mods).map((p) => ({
+    key: `${p.domain}/${p.modId}`,
+    name: p.name,
+    version: p.version,
+    url: nexusFilePageUrl(p.domain, p.modId, p.fileId),
+    modId: p.modId
+  }))
+}
+
+/** The heading of a profile's list of Nexus mods to install. */
+export function pendingNexusHeading(n: number): string {
+  return n === 1 ? '1 Nexus mod to install' : `${n} Nexus mods to install`
 }

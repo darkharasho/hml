@@ -20,7 +20,7 @@ import {
   UPDATE_MODES,
   updateModeLabel
 } from '../ghView'
-import { nexusModUrl } from '../nxView'
+import { nexusModUrl, pendingNexusRows } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
 import {
   LOCAL_WONT_SYNC,
@@ -28,7 +28,6 @@ import {
   followerStatus,
   isFollower,
   isOwner,
-  manualDownloadToast,
   syncProgressKey
 } from '../syncView'
 import { initials, UNSUPPORTED_LOADER } from '../tsView'
@@ -42,6 +41,7 @@ import { CopyToProfileDialog, DisableDialog, UninstallDialog } from './ModDepsDi
 import { GhVersionDialog } from './GhVersionDialog'
 import { ConfigEditor } from './ConfigEditor'
 import { LogViewer } from './LogViewer'
+import { PendingNexusList } from './PendingNexusList'
 import { configsForMod } from '../configView'
 import { dependenciesOf, dependentsOf, orphanedBy } from '../../../shared/modDeps'
 
@@ -104,7 +104,6 @@ export function ModList(): React.JSX.Element | null {
   const installFromPaths = useStore((s) => s.installFromPaths)
   const toast = useStore((s) => s.toast)
   const openProfileFolder = useStore((s) => s.openProfileFolder)
-  const openManualDownloads = useStore((s) => s.openManualDownloads)
   const game = useStore((s) => s.currentGame)
   const currentDomain = useStore((s) => s.currentDomain)
   const updates = useStore((s) => s.updates)
@@ -155,8 +154,9 @@ export function ModList(): React.JSX.Element | null {
   // A followed profile's mods change only through its sync code; configs stay editable.
   const locked = isFollower(profile)
   const owner = isOwner(profile)
-  // Nexus files the sync couldn't download for a free account; pruned once installed.
-  const manual = profile.sync?.role === 'follower' ? (profile.sync.manual ?? []) : []
+  // Nexus files a free account installs from their pages: a follower's manual downloads, or the
+  // ones an import couldn't download. Each goes once it's installed.
+  const pending = pendingNexusRows(profile)
   const updateById = new Map(updates.map((u) => [u.modId, u]))
   const ghUpdateById = new Map(ghUpdates.map((u) => [u.modId, u]))
   const nxUpdateById = new Map(nxUpdates.map((u) => [u.modId, u]))
@@ -335,27 +335,8 @@ export function ModList(): React.JSX.Element | null {
       {profile.sync?.role === 'follower' && (
         <FollowerBanner game={game.label} profileId={profile.id} sync={profile.sync} />
       )}
-      {locked && manual.length > 0 && (
-        <div
-          role="note"
-          className="mx-6 mt-2 flex items-center gap-2 rounded-md border border-warn/30 bg-warn/10 py-1.5 pr-1.5 pl-3 text-sm text-warn"
-        >
-          <Icon name="warn" className="size-4 shrink-0" />
-          <span className="flex-1">{manualDownloadToast(manual.length)}</span>
-          <Button
-            variant="ghost"
-            className="h-7"
-            title={manual.map((m) => m.name).join(', ')}
-            onClick={() =>
-              void openManualDownloads(
-                manual.map((m) => m.url),
-                { game: game.label, profileId: profile.id }
-              )
-            }
-          >
-            Open
-          </Button>
-        </div>
+      {activeTab === 'installed' && (
+        <PendingNexusList rows={pending} target={{ game: game.label, profileId: profile.id }} />
       )}
 
       {onlineOpened && (

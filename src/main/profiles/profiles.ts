@@ -1,3 +1,4 @@
+import { stillPending } from '../../shared/nexusPage'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ProfileManifest } from '../../shared/types'
@@ -178,6 +179,26 @@ export async function duplicateProfile(
     await fs.rm(to, { recursive: true, force: true })
     throw e
   }
+}
+
+/**
+ * Drops pending Nexus mods that are installed now, and the one `dismiss` names (by Nexus mod id).
+ * True when the list changed.
+ */
+export async function prunePendingNexus(
+  paths: AppPaths,
+  game: string,
+  id: string,
+  dismiss?: number
+): Promise<boolean> {
+  const profile = await getProfile(paths, game, id)
+  if (!profile.pendingNexus) return false
+  const left = stillPending(profile.pendingNexus, profile.mods).filter((p) => p.modId !== dismiss)
+  if (left.length === profile.pendingNexus.length) return false
+  const next: ProfileManifest = { ...profile, pendingNexus: left }
+  if (left.length === 0) delete next.pendingNexus
+  await saveProfile(paths, next)
+  return true
 }
 
 export async function deleteProfile(paths: AppPaths, game: string, id: string): Promise<void> {

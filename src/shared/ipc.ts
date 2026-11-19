@@ -64,6 +64,8 @@ export interface HmlApi {
   listProfiles(game: string): Promise<ProfileManifest[]>
   createProfile(game: string, name: string): Promise<ProfileManifest>
   renameProfile(game: string, id: string, name: string): Promise<void>
+  /** Takes a Nexus mod off the profile's list of mods to install. */
+  dismissPendingNexus(game: string, profileId: string, modId: number): Promise<void>
   /** A new profile named `name` with a copy of `id`'s mods and configs. */
   duplicateProfile(game: string, id: string, name: string): Promise<ProfileManifest>
   deleteProfile(game: string, id: string): Promise<void>
@@ -279,6 +281,7 @@ const METHOD_TABLE = {
   listProfiles: true,
   createProfile: true,
   renameProfile: true,
+  dismissPendingNexus: true,
   duplicateProfile: true,
   deleteProfile: true,
   installFromFile: true,

@@ -138,6 +138,8 @@ interface State {
   /** Opens a follower's manual Nexus downloads; pages past the tab limit wait behind a toast. */
   /** Opens a follower's manual downloads; they install into `target` (that follower). */
   openManualDownloads(urls: string[], target: NxTarget): Promise<void>
+  /** Takes a Nexus mod off the current profile's list of mods to install. */
+  dismissPendingNexus(modId: number): Promise<void>
   /** Switches to a game's profile (after an import) and reloads its list. */
   openImportedProfile(game: string, profileId: string): Promise<void>
   openProfileFolder(): Promise<void>
@@ -757,6 +759,15 @@ export const useStore = create<State>()((set, get) => {
 
     openManualDownloads(urls, target) {
       return openNexusPages(urls, target, (rest) => manualDownloads(rest, false, target))
+    },
+
+    async dismissPendingNexus(modId) {
+      const { currentGame: game, currentProfile: profileId } = get()
+      if (!game || !profileId) return
+      await busy(async () => {
+        await api.dismissPendingNexus(game.label, profileId, modId)
+        await reloadProfiles()
+      })
     },
 
     async detachSync(id) {
