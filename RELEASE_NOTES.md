@@ -1,5 +1,12 @@
 # Release Notes
 
+Version v1.9.5 — November 18, 2026
+
+## Nexus mods to install, listed in the profile
+When an imported profile has Nexus mods that a free account has to download from their pages, HML now lists them at the top of the profile's Installed tab. Click Install, or Install all, and HML's Nexus Mods window opens each file page. Click "Mod Manager Download" and HML installs the file into that profile; the mod then leaves the list. The list stays with the profile until each mod is installed, and ✕ removes one you don't want. Mods skipped because no Nexus API key was set are listed too.
+
+The import result now offers "Install N Nexus mods" to start right away, or Later. Synced profiles you follow show their manual downloads in the same list.
+
 Version v1.9.4 — November 18, 2026
 
 ## Play deploys your mods
