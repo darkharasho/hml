@@ -1318,6 +1318,13 @@ export const useStore = create<State>()((set, get) => {
       set((s) => ({ launching: { ...s.launching, [label]: mode } }))
       const name = currentGame.displayName
       try {
+        // A deploy game plays what is in its folder, so Play deploys the current profile first.
+        // Deploying again also picks up mods changed since the last deploy.
+        if (currentGame.loader === 'deploy' && currentProfile && currentGame.installDir) {
+          const deployed = await busy(() => api.deployProfile(label, currentProfile))
+          if (get().currentGame?.label === label) await refreshDeployment()
+          if (deployed === failed || !current()) return
+        }
         const ok = await busy(() =>
           api.launch(label, mode === 'modded' ? currentProfile : null, mode)
         )

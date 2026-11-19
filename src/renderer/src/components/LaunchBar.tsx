@@ -114,7 +114,7 @@ export function LaunchBar(): React.JSX.Element | null {
   const hero = useFallbackSrc(gameColors ? (game?.heroUrls ?? []) : [])
 
   if (!game) return null
-  // HML doesn't start deploy games: it copies the mods into the game folder and the user starts it.
+  // Deploy games: mods are copied into the game folder. Play (when HML can start it) deploys first.
   const deploys = game.loader === 'deploy'
   const chosen = game.custom?.loaderChoice
   const customBepinex = !!game.custom && game.loader === 'bepinex' && chosen !== 'none'
@@ -213,7 +213,9 @@ export function LaunchBar(): React.JSX.Element | null {
                 title={
                   warnings.includes('no-runner')
                     ? 'Choose a runner first (Choose runner…).'
-                    : undefined
+                    : game.installDir
+                      ? "Deploys this profile's mods, then starts the game."
+                      : undefined
                 }
                 onClick={() => void launch('vanilla')}
               >

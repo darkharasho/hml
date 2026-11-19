@@ -7,6 +7,7 @@ import type { DeploymentStatus, GhUpdate, ProfileManifest } from '../../src/shar
 const api = vi.hoisted(() => ({
   getDeployment: vi.fn(),
   removeDeployment: vi.fn(),
+  deployProfile: vi.fn(),
   listProfiles: vi.fn(),
   ghCheckUpdates: vi.fn(),
   ghSetPrereleases: vi.fn(),
@@ -618,6 +619,65 @@ describe('store launch', () => {
         message: 'R.E.P.O. closed before it finished starting.'
       })
     ])
+  })
+})
+
+describe('store launch of a deploy game', () => {
+  const inv = {
+    label: 'nexus-invokyr',
+    displayName: 'Invokyr',
+    loader: 'deploy',
+    steamAppId: '3883570',
+    installDir: '/games/Invokyr'
+  }
+  const deployed = {
+    profileId: 'p1',
+    profileName: 'Default',
+    files: 3,
+    deployedAt: '2026-11-18T00:00:00.000Z'
+  }
+
+  beforeEach(() => {
+    api.launch.mockReset().mockResolvedValue(undefined)
+    api.waitForGame.mockReset().mockResolvedValue('running')
+    api.deployProfile.mockReset().mockResolvedValue(deployed)
+    api.getDeployment.mockReset().mockResolvedValue(deployed)
+    useStore.setState({
+      currentGame: inv as unknown as GameSummary,
+      currentProfile: 'p1',
+      deployment: null,
+      launching: {},
+      toasts: []
+    })
+  })
+
+  test('Play deploys the current profile, then starts the game', async () => {
+    const order: string[] = []
+    api.deployProfile.mockImplementation(async () => (order.push('deploy'), deployed))
+    api.launch.mockImplementation(async () => void order.push('launch'))
+    await useStore.getState().launch('vanilla')
+    expect(api.deployProfile).toHaveBeenCalledWith('nexus-invokyr', 'p1')
+    expect(api.launch).toHaveBeenCalledWith('nexus-invokyr', null, 'vanilla')
+    expect(order).toEqual(['deploy', 'launch'])
+    expect(useStore.getState().deployment).toEqual(deployed)
+    expect(useStore.getState().launching).toEqual({})
+  })
+
+  test('a failed deploy shows the error and does not start the game', async () => {
+    api.deployProfile.mockRejectedValue(new Error('The game folder /games/Invokyr does not exist.'))
+    await useStore.getState().launch('vanilla')
+    expect(api.launch).not.toHaveBeenCalled()
+    expect(useStore.getState().launching).toEqual({})
+    expect(useStore.getState().toasts.map((t) => t.message)).toEqual([
+      'The game folder /games/Invokyr does not exist.'
+    ])
+  })
+
+  test('a game without a folder starts without deploying', async () => {
+    useStore.setState({ currentGame: { ...inv, installDir: null } as unknown as GameSummary })
+    await useStore.getState().launch('vanilla')
+    expect(api.deployProfile).not.toHaveBeenCalled()
+    expect(api.launch).toHaveBeenCalled()
   })
 })
 
