@@ -27,6 +27,7 @@ import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import {
   NX_MAX_UPDATE_TABS,
+  canPlayDeployGame,
   NX_MORE_UPDATES,
   NX_NO_KEY,
   nxInAppHint,
@@ -1305,8 +1306,9 @@ export const useStore = create<State>()((set, get) => {
 
     async launch(mode) {
       const { currentGame, currentProfile } = get()
-      // HML does not start catalog deploy games (the launch bar deploys instead); custom ones can Play.
-      if (!currentGame || (currentGame.loader === 'deploy' && !currentGame.custom)) return
+      // HML starts a deploy game only when it can (custom, or a known Steam app).
+      if (!currentGame || (currentGame.loader === 'deploy' && !canPlayDeployGame(currentGame)))
+        return
       const label = currentGame.label
       // A second press while the game is starting does nothing.
       if (get().launching[label]) return

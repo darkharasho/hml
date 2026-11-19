@@ -405,12 +405,16 @@ export function createServices(deps: ServiceDeps): Services {
    * the store. A cover the user chose stays first.
    */
   async function withArt(games: GameSummary[]): Promise<GameSummary[]> {
-    const ids = games.flatMap((g) => (g.custom && g.steamAppId ? [g.steamAppId] : []))
+    // Custom games, and games without a cover of their own (added from Nexus Mods), that HML
+    // knows a Steam app id for.
+    const wantsCover = (g: GameSummary): g is GameSummary & { steamAppId: string } =>
+      !!g.steamAppId && (!!g.custom || !g.iconUrl)
+    const ids = games.flatMap((g) => (wantsCover(g) ? [g.steamAppId] : []))
     const covers = ids.length > 0 ? await steamArt.covers(ids) : new Map<string, string[]>()
     return games.map((g) => {
       const heroes = g.steamAppId ? steamHeroUrls(g.steamAppId) : []
       const withHero = heroes.length > 0 ? { ...g, heroUrls: heroes } : g
-      const art = g.custom && g.steamAppId ? covers.get(g.steamAppId) : undefined
+      const art = wantsCover(g) ? covers.get(g.steamAppId) : undefined
       if (!art || art.length === 0) return withHero
       return g.custom?.image
         ? { ...withHero, iconFallbacks: art }
@@ -1273,7 +1277,7 @@ export function createServices(deps: ServiceDeps): Services {
     await launch(plan, at.profileDir, at.gameDir, deps.spawn)
   }
 
-  /** Starts a custom Steam game without a loader: a plain Steam launch, whatever the mode. */
+  /** Starts a Steam game without a loader: a plain Steam launch, whatever the mode. */
   async function launchSteamPlain(def: GameDef & { steamAppId: string }): Promise<void> {
     const steamRoot = await getSteamRoot()
     if (!steamRoot) throw new Error('Steam was not found. Set the Steam folder in settings.')
@@ -1935,7 +1939,9 @@ export function createServices(deps: ServiceDeps): Services {
       const def = await requireGame(game)
       directExits.delete(def.label)
       if (isFolderGame(def)) return launchFolderGame(def, profileId, mode)
-      if (def.loader === 'deploy' && def.custom?.source === 'steam' && def.steamAppId) {
+      // A deploy game HML knows the Steam app of (custom, or added from Nexus Mods and found
+      // installed through Steam) starts through Steam; the deployed mods are already in place.
+      if (def.loader === 'deploy' && def.steamAppId) {
         return launchSteamPlain({ ...def, steamAppId: def.steamAppId })
       }
       if (def.loader === 'deploy') {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DeploymentStatus, InstalledMod, ModSource } from '../../src/shared/types'
 import {
+  canPlayDeployGame,
   deploymentLabel,
   fileCategoryLabel,
   formatCount,
@@ -125,5 +126,15 @@ describe('deploymentLabel', () => {
       'Another profile is deployed.'
     )
     expect(deploymentLabel(status(), null)).toBe('Default is deployed.')
+  })
+})
+
+describe('canPlayDeployGame', () => {
+  it('plays custom games and deploy games with a Steam app id, not others', () => {
+    expect(canPlayDeployGame({ custom: undefined, steamAppId: '3883570' })).toBe(true)
+    expect(canPlayDeployGame({ custom: { source: 'folder' } as never, steamAppId: null })).toBe(
+      true
+    )
+    expect(canPlayDeployGame({ custom: undefined, steamAppId: null })).toBe(false)
   })
 })

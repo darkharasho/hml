@@ -279,6 +279,24 @@ describe('services', () => {
     expect(s.lastGame).toBe('repo')
   })
 
+  test('a Nexus-added game installed through Steam gets its Steam cover and launches through Steam', async () => {
+    mkdirSync(path.join(steamRoot, 'steamapps', 'common', 'Invokyr'))
+    writeFileSync(
+      path.join(steamRoot, 'steamapps', 'appmanifest_3883570.acf'),
+      '"AppState"\n{\n"name" "Invokyr"\n"installdir" "Invokyr"\n"StateFlags" "4"\n}\n'
+    )
+    writeFileSync(deps.paths.nxAddedGames, JSON.stringify([{ name: 'Invokyr', domain: 'invokyr' }]))
+    const api = createServices(deps)
+    const game = await api.getGame('nexus-invokyr')
+    expect(game).toMatchObject({
+      steamAppId: '3883570',
+      installDir: path.join(steamRoot, 'steamapps', 'common', 'Invokyr'),
+      iconUrl: expect.stringContaining('3883570')
+    })
+    await api.launch('nexus-invokyr', null, 'vanilla')
+    expect(spawned).toEqual([{ cmd: 'steam', args: ['-applaunch', '3883570'] }])
+  })
+
   test('deployment api: exact errors, warnings, deploy and remove', async () => {
     deps.fetch = (async (url: string) => {
       const json = url.includes('graphql')

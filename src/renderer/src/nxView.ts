@@ -1,5 +1,11 @@
 // Pure display helpers for the Nexus Mods views. No DOM, no store, so they unit-test in node.
-import type { DeploymentStatus, InstalledMod, NxFileCategory, NxStatus } from '../../shared/types'
+import type {
+  DeploymentStatus,
+  GameDef,
+  InstalledMod,
+  NxFileCategory,
+  NxStatus
+} from '../../shared/types'
 import { NX_NO_KEY } from '../../shared/messages'
 import { compactCount } from './tsView'
 
@@ -69,6 +75,14 @@ export function nxInAppHint(pages: number): string {
 export const NX_MORE_UPDATES = "Open the remaining updates from each mod's menu."
 /** How many file pages one Update all opens for a free account. */
 export const NX_MAX_UPDATE_TABS = 5
+
+/**
+ * True when HML can start a deploy game: custom games, and games it knows the Steam app of
+ * (added from Nexus Mods and found installed through Steam). Others are started as usual.
+ */
+export function canPlayDeployGame(g: Pick<GameDef, 'custom' | 'steamAppId'>): boolean {
+  return !!g.custom || !!g.steamAppId
+}
 
 /** The launch bar's line for a deploy game: what is in its game folder now. */
 export function deploymentLabel(

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { LaunchWarning } from '../../../shared/types'
 import { api, errorMessage } from '../api'
 import { installedLoaderLabel, shortLoaderLabel } from '../customView'
-import { deploymentLabel } from '../nxView'
+import { canPlayDeployGame, deploymentLabel } from '../nxView'
 import { useCurrentProfile, useStore, useSyncLocked } from '../store'
 import { SYNC_LOCKED_NOTE } from '../syncView'
 import { useFallbackSrc } from '../useFallbackSrc'
@@ -204,7 +204,7 @@ export function LaunchBar(): React.JSX.Element | null {
     <>
       {deploys ? (
         <>
-          {game.custom &&
+          {canPlayDeployGame(game) &&
             (launching ? (
               <LaunchingButton game={game.label} />
             ) : (
