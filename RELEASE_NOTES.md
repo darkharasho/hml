@@ -1,5 +1,17 @@
 # Release Notes
 
+Version v1.9.6 — November 18, 2026
+
+## Nexus games start like any other game
+Games added from Nexus Mods that HML finds through Steam (Invokyr, for example) now have Start vanilla and Start modded, like Thunderstore games. Start modded copies the profile's mods into the game folder and starts the game. Start vanilla takes HML's mods out first. HML finds the game folder through Steam, so there's nothing to set up. Deploy mods and Remove mods only appear for games HML can't start or can't find.
+
+## Nexus mods to install, in the mod list
+Nexus mods waiting to be installed now appear as dashed rows in the profile's mod list, not in a separate box. A profile whose only mods are waiting ones no longer shows the "Browse mods" page.
+
+## Fixes
+- Picking a Nexus game from the home page keeps its Steam cover on the game page.
+- Profile names are unique. Importing or creating a profile with a name already in use adds " (2)", " (3)" and so on.
+
 Version v1.9.5 — November 18, 2026
 
 ## Nexus mods to install, listed in the profile
