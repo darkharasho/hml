@@ -1080,11 +1080,15 @@ export function createServices(deps: ServiceDeps): Services {
     const d = String(domain).trim().toLowerCase()
     const games = (await getCatalog()).games
     const twin = await nexus.twinOf(d, games, settings)
-    if (twin) return summarize(twin, await getCatalog(), settings, null)
-    const added = await nexus.addGame(d)
+    const added = twin ? null : await nexus.addGame(d)
     // Its Nexus name can show it is a game HML has under another name; that one is used.
-    const named = await nexus.twinOf(d, games, settings, added.displayName)
-    return summarize(named ?? added, await getCatalog(), settings, null)
+    const named = added ? await nexus.twinOf(d, games, settings, added.displayName) : null
+    const label = (twin ?? named ?? added)!.label
+    // The full summary, as the home page shows it: the Steam app it's installed as, its folder
+    // and its cover.
+    const summary = await getGameSummary(label)
+    if (!summary) throw new Error(`HML couldn't find the game ${label}.`)
+    return summary
   }
 
   async function nxGetDomain(game: string): Promise<string | null> {

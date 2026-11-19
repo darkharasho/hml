@@ -20,7 +20,7 @@ import {
   UPDATE_MODES,
   updateModeLabel
 } from '../ghView'
-import { nexusModUrl, pendingNexusRows } from '../nxView'
+import { nexusModUrl, pendingNexusHeading, pendingNexusRows } from '../nxView'
 import { useCurrentProfile, useStore } from '../store'
 import {
   LOCAL_WONT_SYNC,
@@ -41,7 +41,7 @@ import { CopyToProfileDialog, DisableDialog, UninstallDialog } from './ModDepsDi
 import { GhVersionDialog } from './GhVersionDialog'
 import { ConfigEditor } from './ConfigEditor'
 import { LogViewer } from './LogViewer'
-import { PendingNexusList } from './PendingNexusList'
+import { PendingNexusRows } from './PendingNexusList'
 import { configsForMod } from '../configView'
 import { dependenciesOf, dependentsOf, orphanedBy } from '../../../shared/modDeps'
 
@@ -100,6 +100,7 @@ function useModIcons(
 export function ModList(): React.JSX.Element | null {
   const profile = useCurrentProfile()
   const busy = useStore((s) => s.busy)
+  const openManualDownloads = useStore((s) => s.openManualDownloads)
   const installFromFile = useStore((s) => s.installFromFile)
   const installFromPaths = useStore((s) => s.installFromPaths)
   const toast = useStore((s) => s.toast)
@@ -219,6 +220,12 @@ export function ModList(): React.JSX.Element | null {
       (activeFilter === 'all' || (activeFilter === 'updates' ? hasUpdate(m) : !m.enabled)) &&
       (!needle || m.name.toLowerCase().includes(needle) || m.id.toLowerCase().includes(needle))
   )
+  // Nexus mods still to install sit among the installed ones, under the "all" filter only.
+  const shownPending =
+    activeFilter === 'all'
+      ? pending.filter((r) => !needle || r.name.toLowerCase().includes(needle))
+      : []
+  const nxTarget = { game: game.label, profileId: profile.id }
   const browseOnline = (): void => {
     setTab('online')
     setOnlineOpened(true)
@@ -335,9 +342,6 @@ export function ModList(): React.JSX.Element | null {
       {profile.sync?.role === 'follower' && (
         <FollowerBanner game={game.label} profileId={profile.id} sync={profile.sync} />
       )}
-      {activeTab === 'installed' && (
-        <PendingNexusList rows={pending} target={{ game: game.label, profileId: profile.id }} />
-      )}
 
       {onlineOpened && (
         <div className={activeTab === 'online' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
@@ -361,7 +365,7 @@ export function ModList(): React.JSX.Element | null {
       {activeTab === 'log' && (
         <LogViewer game={game.label} profileId={profile.id} mods={profile.mods} active />
       )}
-      {activeTab !== 'installed' ? null : mods.length === 0 ? (
+      {activeTab !== 'installed' ? null : mods.length === 0 && pending.length === 0 ? (
         <EmptyState
           onPick={() => void installFromFile()}
           onGithub={openGithub}
@@ -407,8 +411,24 @@ export function ModList(): React.JSX.Element | null {
               </FilterChip>
             )}
             <p className="ml-auto text-xs text-muted tabular-nums">
-              {enabledCount} of {mods.length} enabled
+              {mods.length > 0 && `${enabledCount} of ${mods.length} enabled`}
+              {mods.length > 0 && pending.length > 0 && ' · '}
+              {pending.length > 0 && pendingNexusHeading(pending.length)}
             </p>
+            {pending.length > 1 && (
+              <Button
+                title="Opens each page in HML's Nexus Mods window. The downloads install here."
+                onClick={() =>
+                  void openManualDownloads(
+                    pending.map((r) => r.url),
+                    nxTarget
+                  )
+                }
+              >
+                <Icon name="download" />
+                Install all from Nexus
+              </Button>
+            )}
             {updateCount > 0 && (
               <Button
                 variant="primary"
@@ -421,7 +441,7 @@ export function ModList(): React.JSX.Element | null {
               </Button>
             )}
           </div>
-          {shown.length === 0 ? (
+          {shown.length === 0 && shownPending.length === 0 ? (
             <div className="px-2 py-10 text-center text-sm text-muted">
               <p>{needle ? `No mods match “${query.trim()}”.` : 'No mods match this filter.'}</p>
               <Button
@@ -457,6 +477,7 @@ export function ModList(): React.JSX.Element | null {
                   onEditConfig={openConfig}
                 />
               ))}
+              <PendingNexusRows rows={shownPending} target={nxTarget} />
             </ul>
           )}
         </div>

@@ -50,12 +50,26 @@ const readable = (m: ProfileManifest): ProfileManifest =>
       }
     : m
 
+/** `name`, or `name (2)`, `name (3)`… when a profile already has it (ignoring case). */
+export function uniqueProfileName(name: string, taken: string[]): string {
+  const used = new Set(taken.map((t) => t.trim().toLowerCase()))
+  if (!used.has(name.trim().toLowerCase())) return name
+  for (let n = 2; ; n++) {
+    const candidate = `${name} (${n})`
+    if (!used.has(candidate.toLowerCase())) return candidate
+  }
+}
+
 export async function createProfile(
   paths: AppPaths,
   game: string,
-  name: string
+  wanted: string
 ): Promise<ProfileManifest> {
   assertSafe('game', game)
+  const name = uniqueProfileName(
+    wanted,
+    (await listProfiles(paths, game)).map((p) => p.name)
+  )
   const slug = slugifyProfileName(name)
   // `__deploy__` is the deploy lock's key (see services.ts).
   if (slug === '__deploy__') throw new Error('That profile name is reserved.')

@@ -651,21 +651,42 @@ describe('store launch of a deploy game', () => {
     })
   })
 
-  test('Play deploys the current profile, then starts the game', async () => {
+  test('Start modded deploys the current profile, then starts the game', async () => {
     const order: string[] = []
     api.deployProfile.mockImplementation(async () => (order.push('deploy'), deployed))
     api.launch.mockImplementation(async () => void order.push('launch'))
-    await useStore.getState().launch('vanilla')
+    await useStore.getState().launch('modded')
     expect(api.deployProfile).toHaveBeenCalledWith('nexus-invokyr', 'p1')
-    expect(api.launch).toHaveBeenCalledWith('nexus-invokyr', null, 'vanilla')
+    expect(api.launch).toHaveBeenCalledWith('nexus-invokyr', 'p1', 'modded')
     expect(order).toEqual(['deploy', 'launch'])
     expect(useStore.getState().deployment).toEqual(deployed)
     expect(useStore.getState().launching).toEqual({})
   })
 
+  test('Start vanilla takes deployed mods out, then starts the game', async () => {
+    const order: string[] = []
+    api.removeDeployment.mockReset().mockImplementation(async () => void order.push('remove'))
+    api.getDeployment.mockResolvedValue(null)
+    api.listProfiles.mockReset().mockResolvedValue([])
+    api.launch.mockImplementation(async () => void order.push('launch'))
+    useStore.setState({ deployment: deployed })
+    await useStore.getState().launch('vanilla')
+    expect(api.deployProfile).not.toHaveBeenCalled()
+    expect(api.launch).toHaveBeenCalledWith('nexus-invokyr', null, 'vanilla')
+    expect(order).toEqual(['remove', 'launch'])
+    expect(useStore.getState().deployment).toBeNull()
+  })
+
+  test('Start vanilla with nothing deployed just starts the game', async () => {
+    api.removeDeployment.mockReset()
+    await useStore.getState().launch('vanilla')
+    expect(api.removeDeployment).not.toHaveBeenCalled()
+    expect(api.launch).toHaveBeenCalledWith('nexus-invokyr', null, 'vanilla')
+  })
+
   test('a failed deploy shows the error and does not start the game', async () => {
     api.deployProfile.mockRejectedValue(new Error('The game folder /games/Invokyr does not exist.'))
-    await useStore.getState().launch('vanilla')
+    await useStore.getState().launch('modded')
     expect(api.launch).not.toHaveBeenCalled()
     expect(useStore.getState().launching).toEqual({})
     expect(useStore.getState().toasts.map((t) => t.message)).toEqual([
@@ -675,7 +696,7 @@ describe('store launch of a deploy game', () => {
 
   test('a game without a folder starts without deploying', async () => {
     useStore.setState({ currentGame: { ...inv, installDir: null } as unknown as GameSummary })
-    await useStore.getState().launch('vanilla')
+    await useStore.getState().launch('modded')
     expect(api.deployProfile).not.toHaveBeenCalled()
     expect(api.launch).toHaveBeenCalled()
   })

@@ -114,8 +114,11 @@ export function LaunchBar(): React.JSX.Element | null {
   const hero = useFallbackSrc(gameColors ? (game?.heroUrls ?? []) : [])
 
   if (!game) return null
-  // Deploy games: mods are copied into the game folder. Play (when HML can start it) deploys first.
-  const deploys = game.loader === 'deploy'
+  // Deploy games: mods are copied into the game folder. One HML can start, with a known folder,
+  // starts like any other game: Start modded deploys first, Start vanilla takes the mods out.
+  // Otherwise the folder is managed by hand with Deploy mods and Remove mods.
+  const deploys = game.loader === 'deploy' && !(canPlayDeployGame(game) && game.installDir)
+  const noRunner = warnings.includes('no-runner')
   const chosen = game.custom?.loaderChoice
   const customBepinex = !!game.custom && game.loader === 'bepinex' && chosen !== 'none'
 
@@ -209,14 +212,8 @@ export function LaunchBar(): React.JSX.Element | null {
               <LaunchingButton game={game.label} />
             ) : (
               <Button
-                disabled={busy || warnings.includes('no-runner')}
-                title={
-                  warnings.includes('no-runner')
-                    ? 'Choose a runner first (Choose runner…).'
-                    : game.installDir
-                      ? "Deploys this profile's mods, then starts the game."
-                      : undefined
-                }
+                disabled={busy || noRunner}
+                title={noRunner ? 'Choose a runner first (Choose runner…).' : undefined}
                 onClick={() => void launch('vanilla')}
               >
                 <Icon name="play" />
@@ -242,7 +239,11 @@ export function LaunchBar(): React.JSX.Element | null {
           {launching === 'vanilla' ? (
             <LaunchingButton game={game.label} />
           ) : (
-            <Button disabled={busy || !!launching} onClick={() => void launch('vanilla')}>
+            <Button
+              disabled={busy || !!launching || noRunner}
+              title={noRunner ? 'Choose a runner first (Choose runner…).' : undefined}
+              onClick={() => void launch('vanilla')}
+            >
               Start vanilla
             </Button>
           )}
@@ -251,7 +252,8 @@ export function LaunchBar(): React.JSX.Element | null {
           ) : (
             <Button
               variant="primary"
-              disabled={busy || !!launching || !profile}
+              disabled={busy || !!launching || !profile || noRunner}
+              title={noRunner ? 'Choose a runner first (Choose runner…).' : undefined}
               onClick={() => void launch('modded')}
               className="px-4"
             >

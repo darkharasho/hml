@@ -1329,12 +1329,22 @@ export const useStore = create<State>()((set, get) => {
       set((s) => ({ launching: { ...s.launching, [label]: mode } }))
       const name = currentGame.displayName
       try {
-        // A deploy game plays what is in its folder, so Play deploys the current profile first.
-        // Deploying again also picks up mods changed since the last deploy.
-        if (currentGame.loader === 'deploy' && currentProfile && currentGame.installDir) {
-          const deployed = await busy(() => api.deployProfile(label, currentProfile))
-          if (get().currentGame?.label === label) await refreshDeployment()
-          if (deployed === failed || !current()) return
+        // A deploy game plays what is in its folder. Modded deploys the current profile first
+        // (again, so mods changed since the last deploy go in); vanilla takes deployed mods out.
+        if (currentGame.loader === 'deploy' && currentGame.installDir) {
+          if (mode === 'modded' && currentProfile) {
+            const deployed = await busy(() => api.deployProfile(label, currentProfile))
+            if (get().currentGame?.label === label) await refreshDeployment()
+            if (deployed === failed || !current()) return
+          } else if (mode === 'vanilla' && get().deployment) {
+            const removed = await busy(() => api.removeDeployment(label))
+            // A remove copies changed files back into their mods, so the profile may change.
+            if (get().currentGame?.label === label) {
+              await reloadProfiles().catch(fail)
+              await refreshDeployment()
+            }
+            if (removed === failed || !current()) return
+          }
         }
         const ok = await busy(() =>
           api.launch(label, mode === 'modded' ? currentProfile : null, mode)

@@ -297,6 +297,27 @@ describe('services', () => {
     expect(spawned).toEqual([{ cmd: 'steam', args: ['-applaunch', '3883570'] }])
   })
 
+  test('picking a Nexus game from the home page keeps its Steam app, folder and cover', async () => {
+    mkdirSync(path.join(steamRoot, 'steamapps', 'common', 'Invokyr'))
+    writeFileSync(
+      path.join(steamRoot, 'steamapps', 'appmanifest_3883570.acf'),
+      '"AppState"\n{\n"name" "Invokyr"\n"installdir" "Invokyr"\n"StateFlags" "4"\n}\n'
+    )
+    deps.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ data: { game: { id: '9', name: 'Invokyr', domainName: 'invokyr' } } })
+    })) as unknown as typeof fetch
+    const api = createServices(deps)
+    expect(await api.addNexusGame('invokyr')).toMatchObject({
+      label: 'nexus-invokyr',
+      steamAppId: '3883570',
+      installDir: path.join(steamRoot, 'steamapps', 'common', 'Invokyr'),
+      iconUrl: expect.stringContaining('3883570')
+    })
+  })
+
   test('deployment api: exact errors, warnings, deploy and remove', async () => {
     deps.fetch = (async (url: string) => {
       const json = url.includes('graphql')
@@ -4848,11 +4869,13 @@ describe('share import', () => {
     expect(readFileSync(path.join(dir, 'BepInEx', 'config', 'ok.cfg'), 'utf8')).toBe('ok')
   })
 
-  test('a taken name gets a unique id and a blank name uses the profile name', async () => {
-    await api.createProfile('repo', 'Friends')
+  test('a taken name gets a unique name and id, and a blank name uses the profile name', async () => {
+    await api.createProfile('repo', 'friends')
     const r = await importCode([], {}, '   ')
-    expect(r.profile.name).toBe('Friends')
+    expect(r.profile.name).toBe('Friends (2)')
     expect(r.profile.id).toBe('friends-2')
+    const again = await importCode([], {}, '   ')
+    expect(again.profile.name).toBe('Friends (3)')
   })
 
   test('an unconfirmable Nexus domain leaves the mod unresolved without installing it', async () => {
