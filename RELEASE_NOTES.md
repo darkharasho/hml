@@ -1,5 +1,13 @@
 # Release Notes
 
+Version v1.9.4 — November 18, 2026
+
+## Play deploys your mods
+For games where HML copies mods into the game folder, Play now deploys the current profile first and then starts the game. Switching profiles, or turning mods on and off, no longer needs a separate Deploy before playing. If the deploy fails, HML shows the error and doesn't start the game. Deploy mods and Remove mods are still there.
+
+## Fixes
+- Steam games added from Nexus Mods (Invokyr, for example) show their cover and get a Play button once HML finds them installed through Steam.
+
 Version v1.9.3 — November 17, 2026
 
 ## Mods with manual downloads only
