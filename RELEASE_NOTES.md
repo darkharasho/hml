@@ -1,5 +1,10 @@
 # Release Notes
 
+Version v1.9.8 — November 20, 2026
+
+## Fixes
+- Nexus files you download from their page in HML's Nexus window (mods whose author turned off Mod Manager Download) now install without a Nexus Mods API key. Mod Manager Download, Install and Update still need one.
+
 Version v1.9.7 — November 20, 2026
 
 ## Fixes
