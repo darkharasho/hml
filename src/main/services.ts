@@ -119,7 +119,6 @@ import {
 } from './art/steamArt'
 import { createTsIcons, modIconCandidates, modIconPath } from './art/modIcons'
 import { ensureDllOverride, type ProxyDll } from './steam/protonPrefix'
-import type { SsoSocket } from './nexus/sso'
 import {
   hasShimloader,
   linkShimloader,
@@ -189,8 +188,6 @@ export interface ServiceDeps {
    * it queued. Missing where HML has no windows.
    */
   nexusPages?: { open(urls: string[], target?: NxTarget): number }
-  /** Opens the Nexus Mods sign-in socket; defaults to the built-in WebSocket. */
-  nxSsoConnect?: (url: string) => SsoSocket
   /** Base URL of the share-code Worker. */
   shareBaseUrl: string
   /** Folder of Flatpak's system-wide overrides; defaults to /var/lib/flatpak/overrides. */

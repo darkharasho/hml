@@ -3472,42 +3472,6 @@ describe('services', () => {
       expect(calls).toEqual([])
     })
 
-    test('sign in with Nexus Mods saves the key Nexus sends and opens the page in the browser', async () => {
-      const opened: string[] = []
-      const a = createServices({
-        ...deps,
-        fetch: nxFetch,
-        shell: {
-          ...deps.shell,
-          openExternal: async (url: string) => {
-            opened.push(url)
-          }
-        },
-        nxSsoConnect: () => {
-          const s = {
-            send: () =>
-              queueMicrotask(() => {
-                s.onmessage?.({
-                  data: JSON.stringify({ success: true, data: { connection_token: 't' } })
-                })
-                s.onmessage?.({ data: JSON.stringify({ success: true, data: { api_key: KEY } }) })
-              }),
-            close: () => {},
-            onopen: null as (() => void) | null,
-            onmessage: null as ((ev: { data: unknown }) => void) | null,
-            onclose: null,
-            onerror: null
-          }
-          queueMicrotask(() => s.onopen?.())
-          return s
-        }
-      })
-      expect(await a.nxSignIn()).toEqual({ name: 'Haro', isPremium: true })
-      expect(opened).toHaveLength(1)
-      expect(opened[0]).toMatch(/^https:\/\/www\.nexusmods\.com\/sso\?id=.+&application=hml$/)
-      expect(readFileSync(deps.paths.nxKey).toString()).toBe(KEY)
-    })
-
     test('null removes the key', async () => {
       await withKey()
       expect(await api.nxSetKey(null)).toBeNull()
