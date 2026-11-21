@@ -298,6 +298,40 @@ describe('services', () => {
     expect(spawned).toEqual([{ cmd: 'steam', args: ['-applaunch', '3883570'] }])
   })
 
+  test('a Steam game added by hand and its Nexus game do not hide each other', async () => {
+    mkdirSync(path.join(steamRoot, 'steamapps', 'common', 'Invokyr'))
+    writeFileSync(
+      path.join(steamRoot, 'steamapps', 'appmanifest_3883570.acf'),
+      '"AppState"\n{\n"name" "Invokyr"\n"installdir" "Invokyr"\n"StateFlags" "4"\n}\n'
+    )
+    writeFileSync(deps.paths.nxAddedGames, JSON.stringify([{ name: 'Invokyr', domain: 'invokyr' }]))
+    writeFileSync(
+      deps.paths.customGames,
+      JSON.stringify([
+        {
+          label: 'steam-3883570',
+          source: 'steam',
+          displayName: 'Invokyr',
+          steamAppId: '3883570',
+          loaderChoice: 'bepinex6-il2cpp',
+          exeName: 'Invokyr.exe',
+          dataFolderName: 'Invokyr_Data',
+          cover: null
+        }
+      ])
+    )
+    deps.fetch = (async (url: string) => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () =>
+        String(url).includes('graphql') ? { data: { games: { nodes: [] } } } : fixture
+    })) as unknown as typeof fetch
+    const api = createServices(deps)
+    const labels = (await api.searchGames('invokyr')).map((g) => g.label)
+    expect(labels).toEqual(['steam-3883570'])
+  })
+
   test('a deploy game with BepInEx deployed makes its Proton prefix load winhttp first', async () => {
     const dir = path.join(steamRoot, 'steamapps', 'common', 'Invokyr')
     mkdirSync(dir)

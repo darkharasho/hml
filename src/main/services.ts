@@ -452,7 +452,8 @@ export function createServices(deps: ServiceDeps): Services {
       for (const g of added) {
         const app = apps.find((a) => a.appId === g.steamAppId)
         const twin = app && catalogTwin(catalog.games, app)
-        if (twin) twins.add(twin.supported ? g.label : twin.label)
+        // A Nexus game hidden as this game's twin doesn't hide it back, or neither shows.
+        if (twin && !twins.has(twin.label)) twins.add(twin.supported ? g.label : twin.label)
       }
     }
     return twins
