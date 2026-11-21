@@ -1,5 +1,10 @@
 # Release Notes
 
+Version v1.9.9 — November 20, 2026
+
+## Fixes
+- A game you added from your Steam library that's also on Nexus Mods (Invokyr, for example) shows up in game search and Your games again. Since 1.9.4, having both copies hid both of them.
+
 Version v1.9.8 — November 20, 2026
 
 ## Fixes
