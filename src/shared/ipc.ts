@@ -167,6 +167,13 @@ export interface HmlApi {
   /** Saves (after verifying) or, with null/empty, removes the Nexus Mods API key. Never returns it. */
   nxSetKey(key: string | null): Promise<NxUser | null>
   nxStatus(): Promise<NxStatus>
+  /**
+   * Signs in through Nexus Mods in the browser: the user clicks Authorise and HML saves the API
+   * key Nexus sends it. Resolves with the account once saved.
+   */
+  nxSignIn(): Promise<NxUser>
+  /** Stops a sign-in that is waiting for the user. */
+  nxCancelSignIn(): Promise<void>
   /** Makes HML the operating system's handler for `nxm://` links (only on the user's request). */
   nxRegisterHandler(): Promise<void>
   /**
@@ -327,6 +334,8 @@ const METHOD_TABLE = {
   nxSetDomain: true,
   nxSetKey: true,
   nxStatus: true,
+  nxSignIn: true,
+  nxCancelSignIn: true,
   nxRegisterHandler: true,
   nxOpenPages: true,
   nxSearch: true,

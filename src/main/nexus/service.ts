@@ -31,6 +31,8 @@ import {
   type NxClientOpts
 } from './api'
 import type { NexusGames } from './games'
+import { nexusSsoKey, type SsoSocket } from './sso'
+import { randomUUID } from 'node:crypto'
 import type { NexusFileRef, NxmLink } from './nxm'
 import { FOLLOWER_LOCKED_MESSAGE, matchesManualEntry } from '../sync/lock'
 
@@ -67,7 +69,15 @@ const filePageUrl = nexusFilePageUrl
 
 export function createNexusServices(ctx: NexusContext): Pick<
   HmlApi,
-  'nxSetKey' | 'nxStatus' | 'nxSearch' | 'nxGetMod' | 'nxInstall' | 'nxCheckUpdates' | 'nxUpdate'
+  | 'nxSetKey'
+  | 'nxStatus'
+  | 'nxSignIn'
+  | 'nxCancelSignIn'
+  | 'nxSearch'
+  | 'nxGetMod'
+  | 'nxInstall'
+  | 'nxCheckUpdates'
+  | 'nxUpdate'
 > & {
   installFromNxm(
     link: NxmLink,
@@ -110,6 +120,29 @@ export function createNexusServices(ctx: NexusContext): Pick<
     user = who
     validated = true
     return { name: who.name, isPremium: who.isPremium }
+  }
+
+  let signIn: AbortController | null = null
+
+  async function signInWithNexus(): Promise<NxUser> {
+    if (!deps.secrets.isAvailable()) throw new Error(noSecureStorage('a Nexus Mods API key'))
+    // A new sign-in replaces one still waiting.
+    signIn?.abort()
+    const ctl = new AbortController()
+    signIn = ctl
+    try {
+      const key = await nexusSsoKey({
+        connect: deps.nxSsoConnect ?? ((url) => new WebSocket(url) as unknown as SsoSocket),
+        open: (url) => deps.shell.openExternal(url),
+        uuid: randomUUID,
+        signal: ctl.signal
+      })
+      const who = await setKey(key)
+      if (!who) throw new Error(BAD_KEY)
+      return who
+    } finally {
+      if (signIn === ctl) signIn = null
+    }
   }
 
   async function status(): Promise<NxStatus> {
@@ -408,6 +441,10 @@ export function createNexusServices(ctx: NexusContext): Pick<
   return {
     nxSetKey: setKey,
     nxStatus: status,
+    nxSignIn: signInWithNexus,
+    async nxCancelSignIn() {
+      signIn?.abort()
+    },
     async nxSearch(game, q) {
       const { domain } = await domainOf(game)
       return searchMods(client, domain, q)
