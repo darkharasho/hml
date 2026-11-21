@@ -18,6 +18,11 @@ import { readZipEntries, type ZipEntries } from './zipEntries'
 
 export { readZipEntries, type ZipEntries }
 
+/** True when a DLL names BepInEx, as a BepInEx plugin's assembly references do. */
+function referencesBepInEx(bytes: Uint8Array): boolean {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).includes('BepInEx')
+}
+
 export function detectPackageMeta(
   zip: ZipEntries,
   fallbackName: string
@@ -296,7 +301,10 @@ export async function installZipReporting(
     ...new Set([...(opts.provides ?? []), ...(rawLoader && loaderIds[0] ? [loaderIds[0]] : [])])
   ]
   const plan = deploy
-    ? planDeploy(zip.names, { root: game.deployRoot })
+    ? planDeploy(zip.names, {
+        root: game.deployRoot,
+        bepinexPlugin: { folder: packageId, isPlugin: (from) => referencesBepInEx(zip.read(from)) }
+      })
     : planInstall(zip.names, {
         packageId,
         rules: game.installRules,

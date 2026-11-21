@@ -297,6 +297,29 @@ describe('services', () => {
     expect(spawned).toEqual([{ cmd: 'steam', args: ['-applaunch', '3883570'] }])
   })
 
+  test('a deploy game with BepInEx deployed makes its Proton prefix load winhttp first', async () => {
+    const dir = path.join(steamRoot, 'steamapps', 'common', 'Invokyr')
+    mkdirSync(dir)
+    writeFileSync(
+      path.join(steamRoot, 'steamapps', 'appmanifest_3883570.acf'),
+      '"AppState"\n{\n"name" "Invokyr"\n"installdir" "Invokyr"\n"StateFlags" "4"\n}\n'
+    )
+    writeFileSync(deps.paths.nxAddedGames, JSON.stringify([{ name: 'Invokyr', domain: 'invokyr' }]))
+    const reg = path.join(steamRoot, 'steamapps', 'compatdata', '3883570', 'pfx', 'user.reg')
+    mkdirSync(path.dirname(reg), { recursive: true })
+    const REG = 'WINE REGISTRY Version 2\n\n[Software\\\\Wine\\\\DllOverrides] 1\n#time=1\n'
+    writeFileSync(reg, REG)
+    const api = createServices(deps)
+    // Without doorstop in the folder the prefix is left alone.
+    await api.launch('nexus-invokyr', null, 'vanilla')
+    expect(readFileSync(reg, 'utf8')).toBe(REG)
+    writeFileSync(path.join(dir, 'winhttp.dll'), '')
+    writeFileSync(path.join(dir, 'doorstop_config.ini'), '')
+    await api.launch('nexus-invokyr', null, 'modded')
+    expect(readFileSync(reg, 'utf8')).toContain('"winhttp"="native,builtin"')
+    expect(spawned).toHaveLength(2)
+  })
+
   test('picking a Nexus game from the home page keeps its Steam app, folder and cover', async () => {
     mkdirSync(path.join(steamRoot, 'steamapps', 'common', 'Invokyr'))
     writeFileSync(

@@ -550,6 +550,24 @@ describe('planDeploy', () => {
     expect(toR(['MyMod.esp', 'meshes/a.nif'])).toEqual(['MyMod.esp', 'meshes/a.nif'])
     expect(toR(['Data/x.esp', 'readme.txt'])).toEqual(['Data/x.esp', 'readme.txt'])
   })
+  test('a flat archive with a BepInEx plugin DLL goes into BepInEx/plugins/<folder>', () => {
+    const bepinexPlugin = { folder: 'nexus-23', isPlugin: (f: string) => f.endsWith('Boost.dll') }
+    const toP = (e: string[]): string[] => planDeploy(e, { bepinexPlugin }).files.map((f) => f.to)
+    expect(toP(['Boost.dll', 'README.txt'])).toEqual([
+      'BepInEx/plugins/nexus-23/Boost.dll',
+      'BepInEx/plugins/nexus-23/README.txt'
+    ])
+    expect(toP(['Wrap/Boost.dll'])).toEqual(['BepInEx/plugins/nexus-23/Boost.dll'])
+    // Not a plugin, not flat, or with a root: as before.
+    expect(toP(['Other.dll'])).toEqual(['Other.dll'])
+    expect(toP(['Boost.dll', 'BepInEx/config/x.cfg'])).toEqual([
+      'Boost.dll',
+      'BepInEx/config/x.cfg'
+    ])
+    expect(
+      planDeploy(['Boost.dll'], { root: 'Data', bepinexPlugin }).files.map((f) => f.to)
+    ).toEqual(['Boost.dll'])
+  })
   test('without a root a lone Data folder is kept', () => {
     expect(planDeploy(['Data/x.esp'], {}).files.map((f) => f.to)).toEqual(['Data/x.esp'])
   })

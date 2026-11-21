@@ -58,6 +58,7 @@ import {
   detectDoorstopVersion,
   findPreloader,
   findExeDir,
+  hasDeployedDoorstop,
   isProtonGame,
   launch,
   launchWarnings,
@@ -1296,6 +1297,11 @@ export function createServices(deps: ServiceDeps): Services {
       steamAppId: def.steamAppId,
       flatpak: isFlatpakSteam(steamRoot)
     })
+    // A deployed BepInEx (doorstop's winhttp.dll next to its ini) only loads under Proton when the
+    // prefix takes winhttp from the game folder first.
+    if (platform === 'linux' && (await hasDeployedDoorstop(gameDir))) {
+      await prepareProtonPrefix(def, steamRoot, def.steamAppId)
+    }
     await launch(plan, paths.gameDir(def.label), gameDir, deps.spawn)
   }
 

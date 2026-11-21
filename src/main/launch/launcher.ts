@@ -55,6 +55,14 @@ export async function isProtonGame(
   return false
 }
 
+/** True when `gameDir` has BepInEx's doorstop proxy: `winhttp.dll` next to `doorstop_config.ini`. */
+export async function hasDeployedDoorstop(gameDir: string): Promise<boolean> {
+  return (
+    (await exists(path.join(gameDir, 'winhttp.dll'))) &&
+    (await exists(path.join(gameDir, 'doorstop_config.ini')))
+  )
+}
+
 /**
  * The folder a game's exe is in: the install folder, or for a game whose catalog Steam folder
  * goes deeper (Hades II's `Hades II/Ship`, Outward's `Outward/Outward_Defed`), that subfolder

@@ -284,8 +284,16 @@ const LAYOUT_DIRS = new Set(
  * Deploy games mirror the game folder (or its `root` folder): install as-is, minus one sole
  * wrapping folder unless it is a known game-layout directory. With a root, a sole top-level
  * folder named like the root is stripped too, so `Data/x.esp` lands in `<root>/x.esp`.
+ * Without a root, a flat archive holding a BepInEx plugin DLL (as `bepinexPlugin.isPlugin` tells)
+ * goes into `BepInEx/plugins/<folder>/`, where BepInEx loads it, instead of the game folder.
  */
-export function planDeploy(entries: string[], opts: { root?: string } = {}): InstallPlan {
+export function planDeploy(
+  entries: string[],
+  opts: {
+    root?: string
+    bepinexPlugin?: { folder: string; isPlugin: (from: string) => boolean }
+  } = {}
+): InstallPlan {
   const items = entries.map((from) => ({ from, segs: normalize(from) }))
   const soleTop = (list: Item[]): string | null =>
     list.length > 0 &&
@@ -302,7 +310,14 @@ export function planDeploy(entries: string[], opts: { root?: string } = {}): Ins
   if (opts.root && top !== null && eq(top, opts.root)) {
     cur = cur.map((i) => ({ ...i, segs: i.segs.slice(1) }))
   }
+  const plugin = opts.bepinexPlugin
+  const flatPlugin =
+    !opts.root &&
+    plugin !== undefined &&
+    cur.every((i) => i.segs.length === 1) &&
+    cur.some((i) => i.segs[0].toLowerCase().endsWith('.dll') && plugin.isPlugin(i.from))
+  const prefix = flatPlugin ? `BepInEx/plugins/${plugin.folder}/` : ''
   return {
-    files: cur.map((i) => ({ from: i.from, to: i.segs.join('/'), disableable: true }))
+    files: cur.map((i) => ({ from: i.from, to: prefix + i.segs.join('/'), disableable: true }))
   }
 }

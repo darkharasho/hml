@@ -382,6 +382,21 @@ describe('installer', () => {
     ).toBe('esp')
   })
 
+  test('a deploy game puts a flat BepInEx plugin zip into BepInEx/plugins', async () => {
+    const deployGame: GameDef = { ...game, label: 'nexus-x', loader: 'deploy', installRules: [] }
+    const p = (await createProfile(paths, 'nexus-x', 'p')).id
+    const plugin = zipSync({ 'Boost.dll': strToU8('MZ..BepInEx.Unity.IL2CPP..') })
+    const mod = await installZip(paths, deployGame, catalog, p, plugin, src, {
+      packageId: 'nexus-23'
+    })
+    expect(mod.files).toEqual(['nexus-23/BepInEx/plugins/nexus-23/Boost.dll'])
+    const native = zipSync({ 'native.dll': strToU8('MZ..') })
+    const other = await installZip(paths, deployGame, catalog, p, native, src, {
+      packageId: 'nexus-24'
+    })
+    expect(other.files).toEqual(['nexus-24/native.dll'])
+  })
+
   test('a deploy game strips a Data folder that equals its deploy root', async () => {
     const deployGame: GameDef = {
       ...game,
