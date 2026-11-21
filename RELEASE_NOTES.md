@@ -1,5 +1,11 @@
 # Release Notes
 
+Version v1.9.7 — November 20, 2026
+
+## Fixes
+- BepInEx installed from Nexus Mods now loads under Proton. Starting a game with BepInEx deployed sets Proton to load BepInEx's winhttp.dll from the game folder, so mods run without Steam launch options.
+- A Nexus mod whose download is just a plugin DLL (and maybe a readme) now installs into BepInEx/plugins, where BepInEx loads it, instead of the game folder. Reinstall a mod like this you installed before 1.9.7 to move it.
+
 Version v1.9.6 — November 18, 2026
 
 ## Nexus games start like any other game
