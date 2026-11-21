@@ -27,6 +27,7 @@ import { createGithubServices } from '../../src/main/github/service'
 import { getProfile, saveProfile } from '../../src/main/profiles/profiles'
 import { readHmlFile } from '../../src/main/share/hmlFile'
 import { HML_METHODS } from '../../src/shared/ipc'
+import { NX_NO_KEY } from '../../src/shared/messages'
 import type { HmlEvent, TsQuery } from '../../src/shared/types'
 
 const hooks = vi.hoisted(() => ({
@@ -3791,6 +3792,13 @@ describe('services', () => {
             mod: { name: 'Cool Mod', version: 'v11' }
           })
           expect(calls.some((c) => c.url.includes('download_link.json'))).toBe(false)
+        })
+
+        test('a downloaded file installs without a Nexus key; a Mod Manager link still needs one', async () => {
+          lastProfile()
+          await api.handleNexusDownload(file, zipOf('CoolMod', '1.0.0'))
+          expect(last()).toMatchObject({ type: 'nexus-installed', game: 'repo', profileId: pid })
+          await expect(createNexusServicesOf(api)(link)).rejects.toThrow(NX_NO_KEY)
         })
 
         test('installs into the profile the page was opened for, not the one shown now', async () => {

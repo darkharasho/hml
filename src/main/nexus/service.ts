@@ -173,7 +173,8 @@ export function createNexusServices(ctx: NexusContext): Pick<
       domain: string
       modId: number
       file: { fileId: number; version: string }
-      key: string
+      /** Only needed to ask for a download link; an already-downloaded file needs none. */
+      key: string | null
       nxm?: { key: string; expires: number }
       /** The file itself, already downloaded; no download link is asked for. */
       data?: Uint8Array
@@ -182,6 +183,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     const { domain, modId, file, key } = o
     let bytes = o.data
     if (!bytes) {
+      if (!key) throw new Error(NX_NO_KEY)
       const links = await downloadLinks(client, key, domain, modId, file.fileId, o.nxm)
       if (links.length === 0) throw new Error('Nexus Mods returned no download link for that file.')
       bytes = await downloadFile(client, links[0])
@@ -384,8 +386,9 @@ export function createNexusServices(ctx: NexusContext): Pick<
     if (target?.sync?.role === 'follower' && !matchesManualEntry(target.sync.manual ?? [], link)) {
       throw new Error(FOLLOWER_LOCKED_MESSAGE)
     }
+    // A file downloaded from its page installs without a key; a Mod Manager Download link needs one.
     const key = await loadKey()
-    if (!key) throw new Error(NX_NO_KEY)
+    if (!key && 'nxm' in from) throw new Error(NX_NO_KEY)
     const { gameId } = await requireDomain(def, settings)
     const files = await modFiles(client, gameId, link.modId)
     const file = files.find((f) => f.fileId === link.fileId) ?? {
