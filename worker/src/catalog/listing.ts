@@ -29,6 +29,8 @@ export interface CrawledRepo {
   manifest: string | null
   manifestTooLarge?: true
   releases: CrawledRelease[]
+  /** Set when the repo has more releases than were crawled: the cursor of the next page. */
+  releasesCursor?: string
   archived: boolean
 }
 
@@ -104,29 +106,54 @@ export function buildStatus(
   isKnownGame: (l: string) => boolean,
   now: string
 ): RepoStatus {
+  return listRepo(r, isKnownGame, now).status
+}
+
+/**
+ * The repo's status, and whether a mod with a tagPrefix found no release of its own: in a
+ * monorepo with more releases than were crawled, older pages may hold that mod's releases.
+ */
+export function listRepo(
+  r: CrawledRepo,
+  isKnownGame: (l: string) => boolean,
+  now: string
+): { status: RepoStatus; moreReleases: boolean } {
   const base = { owner: r.owner, repo: r.repo, crawledAt: now }
+  const done = (status: RepoStatus): { status: RepoStatus; moreReleases: boolean } => ({
+    status,
+    moreReleases: false
+  })
   if (r.manifestTooLarge)
-    return { ...base, listed: [], warnings: [], rejected: 'invalid-manifest: (root): too large' }
+    return done({
+      ...base,
+      listed: [],
+      warnings: [],
+      rejected: 'invalid-manifest: (root): too large'
+    })
   const m = validateManifest(r.manifest, isKnownGame)
   if (!m.ok)
-    return {
+    return done({
       ...base,
       listed: [],
       warnings: (m.warnings ?? []).slice(0, MAX_WARNINGS),
       rejected: m.error
-    }
+    })
   const warnings = [...m.warnings]
   const listed: CatalogEntry[] = []
   let firstReason: string | undefined
+  let moreReleases = false
   const single = m.mods.length === 1
   for (const mod of m.mods) {
     const res = listMod(r, mod, single)
     if ('reason' in res) {
       firstReason ??= res.reason
       warnings.push(`${mod.id}: not listed (${res.reason})`)
+      if (res.reason === 'no-releases' && mod.tagPrefix) moreReleases = true
     } else listed.push(res)
   }
-  if (listed.length === 0)
-    return { ...base, listed, warnings: warnings.slice(0, MAX_WARNINGS), rejected: firstReason }
-  return { ...base, listed, warnings: warnings.slice(0, MAX_WARNINGS) }
+  const status: RepoStatus =
+    listed.length === 0
+      ? { ...base, listed, warnings: warnings.slice(0, MAX_WARNINGS), rejected: firstReason }
+      : { ...base, listed, warnings: warnings.slice(0, MAX_WARNINGS) }
+  return { status, moreReleases }
 }

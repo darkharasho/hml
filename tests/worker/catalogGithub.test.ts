@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { GhGraphqlError, SEARCH_QUERY, fetchSearchPage } from '../../worker/src/catalog/github'
+import {
+  GhGraphqlError,
+  RELEASES_PAGE_SIZE,
+  RELEASES_QUERY,
+  SEARCH_QUERY,
+  fetchMoreReleases,
+  fetchSearchPage
+} from '../../worker/src/catalog/github'
 import page from '../fixtures/gh-graphql-page.json'
 
 const ok = (body: unknown, status = 200): typeof fetch =>
@@ -116,5 +123,55 @@ describe('fetchSearchPage', () => {
     expect(e).toBeInstanceOf(GhGraphqlError)
     expect(e.status).toBe(200)
     expect(e.message).toContain('Bad credentials')
+  })
+})
+
+describe('release follow-ups', () => {
+  const relNode = (tag: string): unknown => ({
+    tagName: tag,
+    isDraft: false,
+    isPrerelease: false,
+    publishedAt: '2026-01-01T00:00:00Z',
+    releaseAssets: { nodes: [{ name: 'a.zip', size: 1, downloadCount: 2 }] }
+  })
+
+  it('keeps the releases cursor of a repo with more releases than the search returned', async () => {
+    const body = structuredClone(page) as {
+      data: { search: { nodes: { releases?: Record<string, unknown> }[] } }
+    }
+    body.data.search.nodes[0].releases!.pageInfo = { hasNextPage: true, endCursor: 'R1' }
+    const r = await fetchSearchPage(ok(body), 't', null)
+    expect(r.repos[0].releasesCursor).toBe('R1')
+    expect(r.repos[1].releasesCursor).toBeUndefined()
+    expect(SEARCH_QUERY).toMatch(
+      /releases\(first: 20[^)]*\) \{\s*pageInfo \{ hasNextPage endCursor \}/
+    )
+  })
+
+  it('fetches the next page of one repo’s releases', async () => {
+    const f = ok({
+      data: {
+        repository: {
+          releases: {
+            pageInfo: { hasNextPage: true, endCursor: 'R2' },
+            nodes: [relNode('b-v1.0.0'), { bad: true }]
+          }
+        }
+      }
+    })
+    const r = await fetchMoreReleases(f, 'tok', 'alice', 'mono', 'R1')
+    const init = (f as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit
+    expect(JSON.parse(init.body as string)).toEqual({
+      query: RELEASES_QUERY,
+      variables: { owner: 'alice', name: 'mono', after: 'R1', first: RELEASES_PAGE_SIZE }
+    })
+    expect(r.releases.map((x) => x.tag)).toEqual(['b-v1.0.0'])
+    expect(r.nextCursor).toBe('R2')
+  })
+
+  it('throws on a follow-up without a repository', async () => {
+    await expect(
+      fetchMoreReleases(ok({ data: { repository: null } }), 't', 'a', 'b', 'R1')
+    ).rejects.toThrow(GhGraphqlError)
   })
 })

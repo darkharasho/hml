@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildStatus,
+  listRepo,
   type CrawledRelease,
   type CrawledRepo
 } from '../../worker/src/catalog/listing'
@@ -174,5 +175,24 @@ describe('buildStatus', () => {
     const s = buildStatus(repo({ manifest: man(mod({ games: ['repo', 'zzz'] })) }), known, NOW)
     expect(s.warnings.some((w) => w.includes('zzz'))).toBe(true)
     expect(s.listed[0].games).toEqual(['repo'])
+  })
+})
+
+describe('listRepo', () => {
+  it('asks for more releases when a prefixed mod has none in the crawled ones', () => {
+    const r = repo({
+      manifest: man(mod({ id: 'a', tagPrefix: 'a' }), mod({ id: 'b', tagPrefix: 'b' })),
+      releases: [rel('a-v1.0.0', '2026-01-01T00:00:00Z')]
+    })
+    expect(listRepo(r, known, NOW).moreReleases).toBe(true)
+  })
+  it("doesn't when every prefixed mod has releases, or a plain mod has none", () => {
+    const both = repo({
+      manifest: man(mod({ id: 'a', tagPrefix: 'a' }), mod({ id: 'b', tagPrefix: 'b' })),
+      releases: [rel('a-v1.0.0', '2026-01-01T00:00:00Z'), rel('b-v1.0.0', '2026-01-01T00:00:00Z')]
+    })
+    expect(listRepo(both, known, NOW).moreReleases).toBe(false)
+    const plain = repo({ releases: [rel('v1', '2026-02-01T00:00:00Z', { draft: true })] })
+    expect(listRepo(plain, known, NOW).moreReleases).toBe(false)
   })
 })

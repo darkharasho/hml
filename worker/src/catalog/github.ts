@@ -2,6 +2,14 @@
 import { MANIFEST_MAX_BYTES } from '../../../src/shared/hmlManifest'
 import type { CrawledRelease, CrawledRepo } from './listing'
 
+const RELEASE_FIELDS = `fragment Rel on Release {
+  tagName
+  isDraft
+  isPrerelease
+  publishedAt
+  releaseAssets(first: 15) { nodes { name size downloadCount } }
+}`
+
 export const SEARCH_QUERY = `query($cursor: String, $first: Int!) {
   search(query: "topic:hml-mod archived:false fork:true sort:created-asc", type: REPOSITORY, first: $first, after: $cursor) {
     repositoryCount
@@ -18,18 +26,27 @@ export const SEARCH_QUERY = `query($cursor: String, $first: Int!) {
         defaultBranchRef { name }
         object(expression: "HEAD:hml.json") { ... on Blob { text byteSize } }
         releases(first: 20, orderBy: {field: CREATED_AT, direction: DESC}) {
-          nodes {
-            tagName
-            isDraft
-            isPrerelease
-            publishedAt
-            releaseAssets(first: 15) { nodes { name size downloadCount } }
-          }
+          pageInfo { hasNextPage endCursor }
+          nodes { ...Rel }
         }
       }
     }
   }
-}`
+}
+${RELEASE_FIELDS}`
+
+/** Releases per follow-up page of one repo (a monorepo whose mod is past the first 20). */
+export const RELEASES_PAGE_SIZE = 50
+
+export const RELEASES_QUERY = `query($owner: String!, $name: String!, $after: String, $first: Int!) {
+  repository(owner: $owner, name: $name) {
+    releases(first: $first, after: $after, orderBy: {field: CREATED_AT, direction: DESC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes { ...Rel }
+    }
+  }
+}
+${RELEASE_FIELDS}`
 
 export const DEFAULT_PAGE_SIZE = 30
 
@@ -86,11 +103,7 @@ function mapRepo(n: unknown): CrawledRepo | null {
     if (size !== undefined && size > MANIFEST_MAX_BYTES) tooLarge = true
     else manifest = str(n.object.text) ?? null
   }
-  const releases: CrawledRelease[] = []
-  for (const r of list(n.releases)) {
-    const m = mapRelease(r)
-    if (m) releases.push(m)
-  }
+  const releases = mapReleases(n.releases)
   const out: CrawledRepo = {
     id: String(dbId),
     ownerId,
@@ -105,7 +118,57 @@ function mapRepo(n: unknown): CrawledRepo | null {
     archived: n.isArchived === true
   }
   if (tooLarge) out.manifestTooLarge = true
+  const more = nextCursor(n.releases)
+  if (more) out.releasesCursor = more
   return out
+}
+
+function mapReleases(conn: unknown): CrawledRelease[] {
+  const out: CrawledRelease[] = []
+  for (const r of list(conn)) {
+    const m = mapRelease(r)
+    if (m) out.push(m)
+  }
+  return out
+}
+
+/** A connection's end cursor when it has a next page, else null. */
+function nextCursor(conn: unknown): string | null {
+  const pi = isObj(conn) && isObj(conn.pageInfo) ? conn.pageInfo : {}
+  const end = str(pi.endCursor)
+  return pi.hasNextPage === true && end ? end : null
+}
+
+async function graphql(
+  fetchFn: typeof fetch,
+  token: string,
+  query: string,
+  variables: Record<string, unknown>
+): Promise<{ body: unknown; status: number }> {
+  const res = await fetchFn('https://api.github.com/graphql', {
+    method: 'POST',
+    headers: {
+      authorization: `bearer ${token}`,
+      'user-agent': 'hml-catalog',
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({ query, variables })
+  })
+  if (!res.ok) throw new GhGraphqlError(`GitHub GraphQL HTTP ${res.status}`, res.status)
+  try {
+    return { body: await res.json(), status: res.status }
+  } catch {
+    throw new GhGraphqlError('GitHub GraphQL returned invalid JSON', res.status)
+  }
+}
+
+function graphqlError(body: unknown, status: number): GhGraphqlError {
+  const errs = isObj(body) && Array.isArray(body.errors) ? body.errors : []
+  const msg = errs
+    .map((e) => (isObj(e) ? str(e.message) : undefined))
+    .filter(Boolean)
+    .join('; ')
+  return new GhGraphqlError(`GitHub GraphQL error: ${msg || 'no data'}`, status)
 }
 
 export async function fetchSearchPage(
@@ -114,41 +177,39 @@ export async function fetchSearchPage(
   cursor: string | null,
   pageSize = DEFAULT_PAGE_SIZE
 ): Promise<{ repos: CrawledRepo[]; nextCursor: string | null; total: number }> {
-  const res = await fetchFn('https://api.github.com/graphql', {
-    method: 'POST',
-    headers: {
-      authorization: `bearer ${token}`,
-      'user-agent': 'hml-catalog',
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({ query: SEARCH_QUERY, variables: { cursor, first: pageSize } })
+  const { body, status } = await graphql(fetchFn, token, SEARCH_QUERY, {
+    cursor,
+    first: pageSize
   })
-  if (!res.ok) throw new GhGraphqlError(`GitHub GraphQL HTTP ${res.status}`, res.status)
-  let body: unknown
-  try {
-    body = await res.json()
-  } catch {
-    throw new GhGraphqlError('GitHub GraphQL returned invalid JSON', res.status)
-  }
   const search = isObj(body) && isObj(body.data) ? body.data.search : undefined
-  if (!isObj(search)) {
-    const errs = isObj(body) && Array.isArray(body.errors) ? body.errors : []
-    const msg = errs
-      .map((e) => (isObj(e) ? str(e.message) : undefined))
-      .filter(Boolean)
-      .join('; ')
-    throw new GhGraphqlError(`GitHub GraphQL error: ${msg || 'no data'}`, res.status)
-  }
+  if (!isObj(search)) throw graphqlError(body, status)
   const repos: CrawledRepo[] = []
   for (const n of list(search)) {
     const r = mapRepo(n)
     if (r) repos.push(r)
   }
-  const pi = isObj(search.pageInfo) ? search.pageInfo : {}
-  const end = str(pi.endCursor)
   return {
     repos,
-    nextCursor: pi.hasNextPage === true && end ? end : null,
+    nextCursor: nextCursor(search),
     total: num(search.repositoryCount) ?? repos.length
   }
+}
+
+/** The next page of one repo's releases, newest first, after `after`. */
+export async function fetchMoreReleases(
+  fetchFn: typeof fetch,
+  token: string,
+  owner: string,
+  name: string,
+  after: string
+): Promise<{ releases: CrawledRelease[]; nextCursor: string | null }> {
+  const { body, status } = await graphql(fetchFn, token, RELEASES_QUERY, {
+    owner,
+    name,
+    after,
+    first: RELEASES_PAGE_SIZE
+  })
+  const repo = isObj(body) && isObj(body.data) ? body.data.repository : undefined
+  if (!isObj(repo) || !isObj(repo.releases)) throw graphqlError(body, status)
+  return { releases: mapReleases(repo.releases), nextCursor: nextCursor(repo.releases) }
 }

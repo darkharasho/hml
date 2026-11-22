@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CatalogIndex, RepoStatus } from '../../src/shared/ghCatalog'
-import { CRAWL_PAGES_PER_RUN, runCrawl, type CrawlState } from '../../worker/src/catalog/crawl'
+import {
+  CRAWL_PAGES_PER_RUN,
+  MAX_RELEASE_FOLLOWUPS,
+  MAX_RELEASE_PAGES_PER_REPO,
+  runCrawl,
+  type CrawlState
+} from '../../worker/src/catalog/crawl'
 import type { BlockState } from '../../worker/src/catalog/blocklist'
 import { createHandler } from '../../worker/src/index'
 import { fakeFetch, makeCatalogEnv, memKv, repoNode, type MemKv } from './catalogFakes'
@@ -50,6 +56,26 @@ describe('runCrawl', () => {
     expect(state.cursor).toBeNull()
     expect(state.pass).toEqual({})
     expect(log).toHaveBeenCalledWith(expect.stringContaining('"catalog":"run"'))
+  })
+
+  it('logs pages, subrequests (retries and the schema fetch included) and wall time', async () => {
+    const { env } = makeCatalogEnv(seeded())
+    const { fetchFn } = fakeFetch(pagesOf(2), (c, first) =>
+      c === 'c1' && first === 30 ? 502 : null
+    )
+    const r = await runCrawl(env, fetchFn, () => T0)
+    expect(r.subrequests).toBe(3)
+    const line = JSON.parse(log.mock.calls.at(-1)![0] as string) as Record<string, unknown>
+    expect(line).toEqual({
+      catalog: 'run',
+      pages: 2,
+      repos: 2,
+      subrequests: 3,
+      writes: r.writes,
+      wallMs: 0
+    })
+    const schemaRun = await runCrawl(makeCatalogEnv().env, fetchFn, () => T0)
+    expect(schemaRun).toMatchObject({ pages: 0, subrequests: 1 })
   })
 
   it('resumes a 5-page pass across runs and writes indexes only at the end', async () => {
@@ -357,6 +383,109 @@ describe('runCrawl', () => {
     }) as unknown as typeof fetch
     await runCrawl(env, fetchFn, () => T0)
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('1500'))
+  })
+})
+
+describe('monorepo release follow-ups', () => {
+  const release = (tag: string): unknown => ({
+    tagName: tag,
+    isDraft: false,
+    isPrerelease: false,
+    publishedAt: '2026-02-01T00:00:00Z',
+    releaseAssets: { nodes: [{ name: `${tag}.zip`, size: 1, downloadCount: 1 }] }
+  })
+  /** A two-mod repo whose first release page has only mod a; mod b is `pagesToB` pages later. */
+  function mono(id: number, owner: string): unknown {
+    const manifest = JSON.stringify({
+      schema: 1,
+      mods: [
+        { id: 'a', name: 'A', description: 'd', games: ['repo'], tagPrefix: 'a' },
+        { id: 'b', name: 'B', description: 'd', games: ['repo'], tagPrefix: 'b' }
+      ]
+    })
+    const node = repoNode(id, owner, `mono${id}`) as Record<string, unknown>
+    return {
+      ...node,
+      object: { text: manifest, byteSize: manifest.length },
+      releases: {
+        pageInfo: { hasNextPage: true, endCursor: 'P1' },
+        nodes: [release('a-v1.0.0')]
+      }
+    }
+  }
+  /** Serves search pages as fakeFetch does, and release pages of every repo by cursor. */
+  function withReleases(
+    pages: unknown[][],
+    pagesToB: number
+  ): { fetchFn: typeof fetch; follow: { owner: string; after: string }[] } {
+    const base = fakeFetch(pages)
+    const follow: { owner: string; after: string }[] = []
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      const body = JSON.parse((init?.body as string | undefined) ?? '{}') as {
+        query?: string
+        variables: { owner: string; after: string }
+      }
+      if (!body.query?.includes('repository(owner:')) return base.fetchFn(url, init)
+      follow.push({ owner: body.variables.owner, after: body.variables.after })
+      const n = Number(body.variables.after.slice(1))
+      const last = n >= pagesToB
+      return new Response(
+        JSON.stringify({
+          data: {
+            repository: {
+              releases: {
+                pageInfo: { hasNextPage: !last, endCursor: `P${n + 1}` },
+                nodes: last ? [release('b-v2.0.0')] : [release(`a-v0.${n}.0`)]
+              }
+            }
+          }
+        })
+      )
+    }) as unknown as typeof fetch
+    return { fetchFn, follow }
+  }
+
+  it('pages a monorepo’s releases until a prefixed mod is found', async () => {
+    const { env, mem } = makeCatalogEnv(seeded())
+    const { fetchFn, follow } = withReleases([[mono(1, 'alice')]], 2)
+    await runCrawl(env, fetchFn, () => T0)
+    expect(follow).toEqual([
+      { owner: 'alice', after: 'P1' },
+      { owner: 'alice', after: 'P2' }
+    ])
+    expect(index(mem, 'repo')!.mods.map((m) => m.id)).toEqual(['a', 'b'])
+    expect(index(mem, 'repo')!.mods[1].latest.tag).toBe('b-v2.0.0')
+  })
+
+  it('stops paging one repo after MAX_RELEASE_PAGES_PER_REPO pages', async () => {
+    const { env, mem } = makeCatalogEnv(seeded())
+    const { fetchFn, follow } = withReleases([[mono(1, 'alice')]], MAX_RELEASE_PAGES_PER_REPO + 1)
+    await runCrawl(env, fetchFn, () => T0)
+    expect(follow).toHaveLength(MAX_RELEASE_PAGES_PER_REPO)
+    const status = mem.json<Record<string, RepoStatus>>('catalog:status')!['alice/mono1']
+    expect(status.listed.map((m) => m.id)).toEqual(['a'])
+    expect(status.warnings).toContain('b: not listed (no-releases)')
+  })
+
+  it('makes at most MAX_RELEASE_FOLLOWUPS follow-up requests a run', async () => {
+    const { env } = makeCatalogEnv(seeded())
+    const repos = Array.from({ length: MAX_RELEASE_FOLLOWUPS + 3 }, (_, i) => mono(i + 1, `o${i}`))
+    const { fetchFn, follow } = withReleases([repos], 1)
+    const r = await runCrawl(env, fetchFn, () => T0)
+    expect(follow).toHaveLength(MAX_RELEASE_FOLLOWUPS)
+    expect(r.subrequests).toBe(1 + MAX_RELEASE_FOLLOWUPS)
+  })
+
+  it('keeps the first-page status when a follow-up fails', async () => {
+    const { env, mem } = makeCatalogEnv(seeded())
+    const base = fakeFetch([[mono(1, 'alice')]])
+    const fetchFn = (async (url: string, init?: RequestInit) =>
+      String(init?.body).includes('repository(owner:')
+        ? new Response('down', { status: 502 })
+        : base.fetchFn(url, init)) as unknown as typeof fetch
+    const r = await runCrawl(env, fetchFn, () => T0)
+    expect(r.finishedPass).toBe(true)
+    expect(index(mem, 'repo')!.mods.map((m) => m.id)).toEqual(['a'])
   })
 })
 

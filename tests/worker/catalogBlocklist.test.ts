@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import type { BlockEntry } from '../../src/shared/ghCatalog'
 import type { CrawledRepo } from '../../worker/src/catalog/listing'
-import { isBlocked, serveBlocklist, updateBlockState, type BlockState } from '../../worker/src/catalog/blocklist'
+import {
+  isBlocked,
+  serveBlocklist,
+  updateBlockState,
+  type BlockState
+} from '../../worker/src/catalog/blocklist'
 
 const repo = (owner: string, name: string, id = '1', ownerId = 'O1'): CrawledRepo => ({
-  id, ownerId, owner, repo: name, stars: 0, createdAt: '', ownerAvatar: '',
-  defaultBranch: 'main', manifest: null, releases: [], archived: false
+  id,
+  ownerId,
+  owner,
+  repo: name,
+  stars: 0,
+  createdAt: '',
+  ownerAvatar: '',
+  defaultBranch: 'main',
+  manifest: null,
+  releases: [],
+  archived: false
 })
 const entry = (target: string, reason = 'bad'): BlockEntry => ({ target, reason, at: '2026-01-01' })
 const empty = (): BlockState => ({ ids: {} })

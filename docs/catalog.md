@@ -115,6 +115,7 @@ HML lists a mod from its newest non-draft release that has a matching asset. A s
 - With a single mod and no `tagPrefix`, every release counts.
 - With a `tagPrefix`, only releases whose tag has that prefix count. The match ignores case, and a trailing separator or `v` in the prefix is fine (`infinite-energy-v` works).
 - The asset is the first `.zip`, or the first one that matches `assetPattern`.
+- HML reads a repo's 20 newest releases. If a mod with a `tagPrefix` has none among them, it reads up to 100 older ones (two pages of 50). The crawl reads at most 5 such extra pages per run, so when many monorepos crawled together need them, some mods can stay unlisted with `no-releases`. A new release of the mod fixes that.
 
 ## How listing works
 

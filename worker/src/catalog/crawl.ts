@@ -7,8 +7,8 @@ import type { CatalogEntry, CatalogIndex, RepoStatus } from '../../../src/shared
 import { isKnownGameLabel } from '../../../src/shared/hmlManifest'
 import type { Env, KvLike } from '../index'
 import { isBlocked, parseBlockState, updateBlockState, type BlockState } from './blocklist'
-import { fetchSearchPage, GhGraphqlError } from './github'
-import { buildStatus } from './listing'
+import { fetchMoreReleases, fetchSearchPage, GhGraphqlError } from './github'
+import { listRepo, type CrawledRepo } from './listing'
 import {
   isObj,
   KEY_BLOCKS,
@@ -25,6 +25,14 @@ import {
 
 export const CRAWL_PAGES_PER_RUN = 3
 export const RETRY_PAGE_SIZE = 15
+/**
+ * Follow-up release queries per run, for monorepos whose prefixed mod isn't in the first 20
+ * releases. With CRAWL_PAGES_PER_RUN pages and one retry each, a run makes at most
+ * 3 + 3 + 5 = 11 outbound requests (a schema refresh run makes 1), well under the free plan's 50.
+ */
+export const MAX_RELEASE_FOLLOWUPS = 5
+/** Follow-up release pages (RELEASES_PAGE_SIZE each) for one repo in one run. */
+export const MAX_RELEASE_PAGES_PER_REPO = 2
 export const SCHEMA_URL = 'https://thunderstore.io/api/experimental/schema/dev/latest/'
 const GAMES_MAX_AGE_MS = 86_400_000
 const SEARCH_RESULT_CAP = 1000
@@ -98,6 +106,42 @@ function knownGame(games: GamesCache | null): (label: string) => boolean {
 }
 
 type Page = Awaited<ReturnType<typeof fetchSearchPage>>
+
+/**
+ * The repo's status, paging its older releases while a prefixed mod has none of its own, within
+ * the run's follow-up budget. A failed follow-up keeps the status so far.
+ */
+async function statusWithFollowUps(
+  fetchFn: typeof fetch,
+  token: string,
+  repo: CrawledRepo,
+  isKnown: (l: string) => boolean,
+  crawledAt: string,
+  budget: { followUps: number }
+): Promise<RepoStatus> {
+  let r = repo
+  let { status, moreReleases } = listRepo(r, isKnown, crawledAt)
+  let cursor = r.releasesCursor
+  for (
+    let n = 0;
+    moreReleases && cursor && n < MAX_RELEASE_PAGES_PER_REPO && budget.followUps > 0;
+    n++
+  ) {
+    budget.followUps--
+    try {
+      const more = await fetchMoreReleases(fetchFn, token, r.owner, r.repo, cursor)
+      r = { ...r, releases: [...r.releases, ...more.releases] }
+      cursor = more.nextCursor ?? undefined
+      ;({ status, moreReleases } = listRepo(r, isKnown, crawledAt))
+    } catch (e) {
+      console.warn(
+        `catalog: releases follow-up failed for ${r.owner}/${r.repo}: ${(e as Error).message}`
+      )
+      break
+    }
+  }
+  return status
+}
 
 /** One page, retried once at a smaller size on a GitHub gateway timeout. Null stops the run. */
 async function fetchPage(
@@ -183,20 +227,39 @@ async function finishPass(
   return { writes, indexed }
 }
 
+export interface CrawlRun {
+  pages: number
+  repos: number
+  finishedPass: boolean
+  /** KV writes. */
+  writes: number
+  /** Outbound requests: search pages, their retries, release follow-ups and the schema fetch. */
+  subrequests: number
+}
+
 export async function runCrawl(
   env: Env,
-  fetchFn: typeof fetch,
+  rawFetch: typeof fetch,
   now: () => number
-): Promise<{ pages: number; repos: number; finishedPass: boolean; writes: number }> {
+): Promise<CrawlRun> {
   const started = now()
   const kv = env.PROFILES
   let pages = 0
   let repos = 0
   let writes = 0
+  let subrequests = 0
   let finishedPass = false
-  const done = (): { pages: number; repos: number; finishedPass: boolean; writes: number } => {
-    console.log(JSON.stringify({ catalog: 'run', pages, repos, writes, ms: now() - started }))
-    return { pages, repos, finishedPass, writes }
+  const budget = { followUps: MAX_RELEASE_FOLLOWUPS }
+  const fetchFn: typeof fetch = (input, init) => {
+    subrequests++
+    return rawFetch(input, init)
+  }
+  const done = (): CrawlRun => {
+    // wallMs is wall time, awaits included; the CPU limit counts only the Worker's own work.
+    console.log(
+      JSON.stringify({ catalog: 'run', pages, repos, subrequests, writes, wallMs: now() - started })
+    )
+    return { pages, repos, finishedPass, writes, subrequests }
   }
 
   let games = (await readStored<GamesCache>(kv, KEY_GAMES)).value
@@ -250,11 +313,20 @@ export async function runCrawl(
     blocks = updateBlockState(entries, blocks, page.repos)
     const crawledAt = new Date(now()).toISOString()
     for (const r of page.repos) {
-      const status = buildStatus(r, isKnown, crawledAt)
-      const blocked = isBlocked(r, entries, blocks)
-      state.pass[`${r.owner}/${r.repo}`.toLowerCase()] = blocked
-        ? { ...status, listed: [], rejected: 'blocked' }
-        : status
+      const key = `${r.owner}/${r.repo}`.toLowerCase()
+      if (isBlocked(r, entries, blocks)) {
+        const { status } = listRepo(r, isKnown, crawledAt)
+        state.pass[key] = { ...status, listed: [], rejected: 'blocked' }
+      } else {
+        state.pass[key] = await statusWithFollowUps(
+          fetchFn,
+          env.GITHUB_TOKEN,
+          r,
+          isKnown,
+          crawledAt,
+          budget
+        )
+      }
     }
     state.cursor = page.nextCursor
     if (page.nextCursor === null) {
