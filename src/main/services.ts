@@ -107,6 +107,7 @@ import { applyRevision } from './sync/apply'
 import { lockFollowers } from './sync/lock'
 import { createSyncServices } from './sync/service'
 import { createCatalogServices } from './ghcatalog/service'
+import { createCatalogInstaller } from './ghcatalog/install'
 import { gameByDomain, getMod } from './nexus/api'
 import { parseNxm, type HandlerPort, type NexusFileRef } from './nexus/nxm'
 import { findInstalledMod, providesPackage } from '../shared/modIdentity'
@@ -1028,13 +1029,39 @@ export function createServices(deps: ServiceDeps): Services {
     }
   }
 
+  const catalogApi = createCatalogServices({
+    paths,
+    fetch: deps.fetch,
+    shareBaseUrl: deps.shareBaseUrl,
+    now
+  })
+
   const { ghInstallWith, ...ghServices } = createGithubServices({
     deps,
     getCatalog,
     requireGame,
     serialize,
     // Fails closed: when tasklist fails, this round of auto-update skips the game.
-    isGameRunning: (def) => isGameRunning(deps.platform, deps.execFile, def.exeNames)
+    isGameRunning: (def) => isGameRunning(deps.platform, deps.execFile, def.exeNames),
+    blockedReason: catalogApi.blockedReason,
+    cachedEntry: catalogApi.cachedEntry
+  })
+
+  const catalogInstaller = createCatalogInstaller({
+    catList: (game) => catalogApi.catList(game),
+    blockedReason: catalogApi.blockedReason,
+    installedMods: async (game, profileId) => (await getProfile(paths, game, profileId)).mods,
+    trustedOwners: async () => (await loadSettings(paths)).trustedCatalogOwners,
+    trustOwners: (owners) =>
+      updateSettings(paths, (cur) => ({
+        ...cur,
+        trustedCatalogOwners: [...new Set([...cur.trustedCatalogOwners, ...owners])]
+      })),
+    // As for a pasted link: replacing an installed mod under a running game is refused.
+    ghInstallWith: (game, profileId, url, asset, opts) =>
+      ghInstallWith(game, profileId, url, asset, { ...opts, beforeReplacing: assertGameClosed }),
+    tsInstall: (game, profileId, fullName) =>
+      tsInstallChecked(game, profileId, fullName, undefined, true)
   })
 
   const { installFromNxm, installFromDownload, loggedInUserId, ...nexusApi } = createNexusServices({
@@ -1367,13 +1394,6 @@ export function createServices(deps: ServiceDeps): Services {
   })
   late.sync = syncApi
 
-  const catalogApi = createCatalogServices({
-    paths,
-    fetch: deps.fetch,
-    shareBaseUrl: deps.shareBaseUrl,
-    now
-  })
-
   const shareApi = createShareServices({
     deps,
     getCatalog,
@@ -1613,6 +1633,8 @@ export function createServices(deps: ServiceDeps): Services {
     catList: catalogApi.catList,
     catReadme: catalogApi.catReadme,
     catStatus: catalogApi.catStatus,
+    catPlanInstall: catalogInstaller.catPlanInstall,
+    catInstall: catalogInstaller.catInstall,
     syncTick: () => syncApi.tick(),
     syncFocusCheck: () => syncApi.focusCheck(),
     ...customApi,

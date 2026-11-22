@@ -99,3 +99,27 @@ describe('cachedEntry', () => {
     expect(f).not.toHaveBeenCalled()
   })
 })
+
+describe('cachedEntry with a malformed cache', () => {
+  it('skips garbage entries and matches a manifest prefix with its separator', async () => {
+    const paths = makePaths(dir)
+    await writeJsonAtomic(paths.catalogCache('repo'), {
+      fetchedAt: new Date(1000).toISOString(),
+      etag: null,
+      mods: [
+        null,
+        5,
+        { owner: 'a' },
+        { key: 'a/b/e', owner: 'a', repo: 'b', id: 'e', tagPrefix: 'energy-v' }
+      ]
+    })
+    const svc = createCatalogServices({
+      paths,
+      fetch: vi.fn() as unknown as typeof fetch,
+      shareBaseUrl: 'https://w.test',
+      now: () => 1000
+    })
+    expect((await svc.cachedEntry('repo', 'a', 'b', 'energy'))?.id).toBe('e')
+    expect(await svc.cachedEntry('repo', 'a', 'b', '')).toBeNull()
+  })
+})

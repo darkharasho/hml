@@ -170,3 +170,68 @@ describe('blockedReason', () => {
     expect(await blockedReason(down, 'evil', 'x')).toBeNull()
   })
 })
+
+describe('malformed index entries', () => {
+  const garbage = [
+    entry('good'),
+    null,
+    7,
+    'str',
+    [],
+    { key: 'a/b/nokey-owner', repo: 'b' },
+    { key: 1, owner: 'a', repo: 'b' }
+  ]
+
+  it('are dropped from a network body', async () => {
+    const f = vi.fn(async (..._a: unknown[]) => ok({ game: 'repo', builtAt: 'x', mods: garbage }))
+    const r = await loadCatalogIndex(opts(f as unknown as typeof fetch, { t: 1 }), 'repo')
+    expect(r.mods.map((m) => m.id)).toEqual(['good'])
+  })
+
+  it('are dropped from the cache', async () => {
+    await fs.writeFile(
+      path.join(dir, 'repo.json'),
+      JSON.stringify({ fetchedAt: new Date(1).toISOString(), etag: null, mods: garbage })
+    )
+    const f = vi.fn()
+    const r = await loadCatalogIndex(opts(f as unknown as typeof fetch, { t: 2 }), 'repo')
+    expect(f).not.toHaveBeenCalled()
+    expect(r.mods.map((m) => m.id)).toEqual(['good'])
+  })
+})
+
+describe('blocklist negative cache', () => {
+  it('waits 5 minutes after a failed refresh before trying the network again', async () => {
+    const clock = { t: 1_000_000 }
+    const f = vi.fn(async (..._a: unknown[]) => {
+      throw new Error('down')
+    })
+    const o = { ...opts(f as unknown as typeof fetch, clock), blocklistState: { failedAt: null } }
+    expect(await blockedReason(o, 'evil', 'x')).toBeNull()
+    expect(f).toHaveBeenCalledTimes(1)
+    clock.t += 5 * 60_000 - 1
+    expect(await blockedReason(o, 'evil', 'x')).toBeNull()
+    expect(f).toHaveBeenCalledTimes(1)
+    clock.t += 1
+    await blockedReason(o, 'evil', 'x')
+    expect(f).toHaveBeenCalledTimes(2)
+  })
+
+  it('serves the stale cached copy meanwhile, and a bad status counts as a failure', async () => {
+    const clock = { t: 1 }
+    const list = { entries: [{ names: ['evil/x'], reason: 'malware' }] }
+    const state = { failedAt: null }
+    const good = vi.fn(async (..._a: unknown[]) => ok(list))
+    await blockedReason(
+      { ...opts(good as unknown as typeof fetch, clock), blocklistState: state },
+      'a',
+      'b'
+    )
+    clock.t += CATALOG_MAX_AGE_MS
+    const bad = vi.fn(async (..._a: unknown[]) => new Response('nope', { status: 500 }))
+    const o = { ...opts(bad as unknown as typeof fetch, clock), blocklistState: state }
+    expect(await blockedReason(o, 'evil', 'x')).toBe('malware')
+    expect(await blockedReason(o, 'evil', 'x')).toBe('malware')
+    expect(bad).toHaveBeenCalledTimes(1)
+  })
+})

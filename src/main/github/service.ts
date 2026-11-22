@@ -1,8 +1,10 @@
 import { promises as fs } from 'node:fs'
 import { zipSync } from 'fflate'
+import type { CatalogEntry } from '../../shared/ghCatalog'
 import type {
   Catalog,
   GameDef,
+  GhBlocked,
   GhModConfig,
   GhPrereleaseResult,
   GhModChoice,
@@ -48,6 +50,15 @@ export interface GhContext {
   serialize<T>(game: string, profileId: string, fn: () => Promise<T>): Promise<T>
   /** True while the game runs (or can't be told); the background auto-update skips it. */
   isGameRunning(def: GameDef): Promise<boolean>
+  /** Why HML blocks the repo or its owner, or null (also when it can't tell: fails open). */
+  blockedReason(owner: string, repo: string): Promise<string | null>
+  /** The game's cached catalog entry of the repo's mod with tag prefix `prefix`; disk only. */
+  cachedEntry(
+    game: string,
+    owner: string,
+    repo: string,
+    prefix: string
+  ): Promise<CatalogEntry | null>
 }
 
 export const unsupportedLoaderMessage = (def: GameDef): string =>
@@ -150,6 +161,7 @@ export function createGithubServices(ctx: GhContext): Pick<
   | 'ghInstallRelease'
   | 'ghSetToken'
   | 'ghTokenStatus'
+  | 'ghBlocked'
 > & {
   ghAutoUpdateAll(): Promise<void>
   ghInstallWith(
@@ -162,6 +174,36 @@ export function createGithubServices(ctx: GhContext): Pick<
 } {
   const { deps, serialize } = ctx
   const { paths } = deps
+
+  /** The block's reason for the mod's repo, or null; a failing lookup counts as not blocked. */
+  const blockedOf = (m: GhMod): Promise<string | null> =>
+    ctx.blockedReason(m.source.owner, m.source.repo).catch(() => null)
+  const blockedError = (reason: string): Error => new Error(`Blocked by HML: ${reason}`)
+
+  /**
+   * The mod with its saved asset pattern refreshed from the game's cached catalog entry, so an
+   * author renaming their assets doesn't break updates. Only the entry with the installed tag's
+   * prefix counts: a changed tagPrefix is a different mod.
+   */
+  async function withCatalogPattern(game: string, profileId: string, m: GhMod): Promise<GhMod> {
+    const entry = await ctx
+      .cachedEntry(game, m.source.owner, m.source.repo, tagPrefix(m.source.tag))
+      .catch(() => null)
+    const pattern = entry?.assetPattern
+    if (typeof pattern !== 'string' || pattern === configOf(m).assetPattern) return m
+    const saved = await serialize(game, profileId, async () => {
+      const profile = await getProfile(paths, game, profileId)
+      const current = profile.mods.find((x) => x.id === m.id)
+      if (!current || !isGhMod(current) || current.source.tag !== m.source.tag) return null
+      const updated: GhMod = { ...current, github: { ...configOf(current), assetPattern: pattern } }
+      await saveProfile(paths, {
+        ...profile,
+        mods: profile.mods.map((x) => (x.id === m.id ? updated : x))
+      })
+      return updated
+    })
+    return saved ?? m
+  }
 
   const lookup = (
     token: string | null,
@@ -417,6 +459,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     m: GhMod,
     latestOf: LatestOf
   ): Promise<{ mod: GhMod; latest: GhRelease }> {
+    m = await withCatalogPattern(game, profileId, m)
     const { owner, repo } = m.source
     try {
       return { mod: m, latest: await latestOf(owner, repo, followOf(m)) }
@@ -622,7 +665,7 @@ export function createGithubServices(ctx: GhContext): Pick<
     let accessError: unknown = null
     for (const m of mods.filter(isGhMod)) {
       const mode = configOf(m).updateMode
-      if (mode === 'pinned') continue
+      if (mode === 'pinned' || (await blockedOf(m)) !== null) continue
       try {
         const { mod: m2, latest } = await latestFor(game, profileId, m, latestOf)
         checked++
@@ -664,6 +707,8 @@ export function createGithubServices(ctx: GhContext): Pick<
     for (const m of mods.filter(isGhMod)) {
       if (!wanted.has(m.id) || !manualAllows(configOf(m).updateMode)) continue
       try {
+        const reason = await blockedOf(m)
+        if (reason !== null) throw blockedError(reason)
         const found = await latestFor(game, profileId, m, latestOf)
         if (!needsUpdate(found.mod, found.latest)) continue
         const mod = await updateMod(
@@ -773,6 +818,8 @@ export function createGithubServices(ctx: GhContext): Pick<
     const done: { name: string; tag: string }[] = []
     const fresh: string[] = []
     for (const m of mods.filter(isGhMod)) {
+      // A blocked repo's mod gets no updates and no update notices, whatever its mode.
+      if ((await blockedOf(m)) !== null) continue
       if (configOf(m).updateMode === 'notify') {
         try {
           const found = await latestFor(def.label, profileId, m, latestOf)
@@ -925,6 +972,8 @@ export function createGithubServices(ctx: GhContext): Pick<
     if (!def.supported) throw new Error(unsupportedLoaderMessage(def))
     const catalog = await ctx.getCatalog()
     const mod = await ghMod(game, profileId, modId)
+    const reason = await blockedOf(mod)
+    if (reason !== null) throw blockedError(reason)
     const { owner, repo } = mod.source
     const token = await loadToken(paths, deps.secrets)
     const release = await lookup(token, owner, repo, { tag })
@@ -959,8 +1008,20 @@ export function createGithubServices(ctx: GhContext): Pick<
     })
   }
 
+  async function blocked(game: string, profileId: string): Promise<GhBlocked> {
+    await ctx.requireGame(game)
+    const { mods } = await getProfile(paths, game, profileId)
+    const out: GhBlocked = {}
+    for (const m of mods.filter(isGhMod)) {
+      const reason = await blockedOf(m)
+      if (reason !== null) out[m.id] = reason
+    }
+    return out
+  }
+
   let running: Promise<void> | null = null
   return {
+    ghBlocked: blocked,
     ghSetToken: setToken,
     ghTokenStatus: tokenStatus,
     ghInstall: (game, profileId, url, asset, opts) =>

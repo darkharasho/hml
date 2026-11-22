@@ -1904,6 +1904,7 @@ describe('services', () => {
     let pid: string
     let clock: number
     let onDownload: (() => Promise<void>) | null
+    let blocklist: { entries: { names: string[]; reason: string }[] }
 
     const slug = (o: string, r: string): string => `${o}/${r}`.toLowerCase()
     const publish = (
@@ -1957,6 +1958,7 @@ describe('services', () => {
       repos = new Map()
       calls = []
       onDownload = null
+      blocklist = { entries: [] }
       ghFetch = vi.fn(async (url: string) => {
         const u = new URL(url)
         if (u.host === 'api.github.com') {
@@ -1987,6 +1989,8 @@ describe('services', () => {
           const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
           return { ok: true, status: 200, headers: new Headers(), arrayBuffer: async () => buf }
         }
+        if (url === 'https://share.test/v1/catalog/blocklist')
+          return new Response(JSON.stringify(blocklist))
         return deps.fetch(url)
       }) as never
       clock = Date.now()
@@ -2420,6 +2424,140 @@ describe('services', () => {
       expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })
     })
 
+    describe('blocked repos', () => {
+      test('are skipped by checks and auto-updates whatever their mode, and never removed', async () => {
+        await setup()
+        for (const [o, r] of [
+          ['evil', 'one'],
+          ['evil', 'two'],
+          ['good', 'ok']
+        ])
+          publish(o, r, 'v1.0.0', { 'a.zip': zipOf(`${o}${r}`, '1.0.0') })
+        // Installed by pasted URL, not from the catalog.
+        await api.ghInstall('repo', pid, 'https://github.com/evil/one')
+        await api.ghInstall('repo', pid, 'https://github.com/Evil/Two')
+        await api.ghSetUpdateMode('repo', pid, 'Evil-Two', 'notify')
+        await api.ghInstall('repo', pid, 'https://github.com/good/ok')
+        for (const [o, r] of [
+          ['evil', 'one'],
+          ['evil', 'two'],
+          ['good', 'ok']
+        ])
+          publish(o, r, 'v2.0.0', { 'a.zip': zipOf(`${o}${r}`, '2.0.0') })
+        blocklist = { entries: [{ names: ['evil'], reason: 'malware' }] }
+        clock += 11 * 60_000 // past the install-time lookup's memo window
+
+        expect((await api.ghCheckUpdates('repo', pid)).map((u) => u.modId)).toEqual(['good-ok'])
+        expect(await api.ghBlocked('repo', pid)).toEqual({
+          'evil-one': 'malware',
+          'Evil-Two': 'malware'
+        })
+        emitted.length = 0
+        await api.ghAutoUpdateAll()
+        expect(emitted.filter((e) => e.type === 'github-updates-available')).toEqual([])
+        const mods = await modsOf()
+        expect(mods.map((m) => [m.id, m.source.kind === 'github' && m.source.tag])).toEqual([
+          ['evil-one', 'v1.0.0'],
+          ['Evil-Two', 'v1.0.0'],
+          ['good-ok', 'v2.0.0']
+        ])
+        await expect(api.ghUpdate('repo', pid, ['evil-one'])).rejects.toThrow(
+          'Blocked by HML: malware'
+        )
+        await expect(api.ghInstallRelease('repo', pid, 'evil-one', 'v2.0.0')).rejects.toThrow(
+          'Blocked by HML: malware'
+        )
+        expect((await modsOf()).map((m) => m.id)).toEqual(['evil-one', 'Evil-Two', 'good-ok'])
+      })
+
+      test('ghBlocked is empty with an unreachable blocklist (fails open)', async () => {
+        await setup()
+        publish('evil', 'one', 'v1.0.0', { 'a.zip': zipOf('E', '1.0.0') })
+        await api.ghInstall('repo', pid, 'evil/one')
+        blocklist = null as never
+        expect(await api.ghBlocked('repo', pid)).toEqual({})
+      })
+    })
+
+    describe('catalog asset pattern refresh', () => {
+      const cacheIndex = (mods: unknown[]): void => {
+        const file = deps.paths.catalogCache('repo')
+        mkdirSync(path.dirname(file), { recursive: true })
+        writeFileSync(
+          file,
+          JSON.stringify({ fetchedAt: new Date(clock).toISOString(), etag: null, mods })
+        )
+      }
+      const withPattern = async (id: string, assetPattern: string): Promise<void> => {
+        const p = await getProfile(deps.paths, 'repo', pid)
+        await saveProfile(deps.paths, {
+          ...p,
+          mods: p.mods.map((m) =>
+            m.id === id ? { ...m, github: { ...m.github!, assetPattern } } : m
+          )
+        })
+      }
+      const patternOf = async (id: string): Promise<string | null | undefined> =>
+        (await modsOf()).find((m) => m.id === id)?.github?.assetPattern
+
+      test('checkUpdates saves the cached entry pattern; a changed tagPrefix is ignored', async () => {
+        await setup()
+        publish('owner', 'repo', 'v1.0.0', { 'Old-1.0.0.zip': zipOf('Thing', '1.0.0') })
+        publish('owner', 'other', 'v1.0.0', { 'Old-1.0.0.zip': zipOf('Other', '1.0.0') })
+        await api.ghInstall('repo', pid, 'owner/repo')
+        await api.ghInstall('repo', pid, 'owner/other')
+        await withPattern('owner-repo', 'Old-{version}.zip')
+        await withPattern('owner-other', 'Old-{version}.zip')
+        cacheIndex([
+          null,
+          {
+            key: 'owner/repo/thing',
+            owner: 'Owner',
+            repo: 'Repo',
+            id: 'thing',
+            assetPattern: 'New-{version}.zip'
+          },
+          {
+            key: 'owner/other/o',
+            owner: 'owner',
+            repo: 'other',
+            id: 'o',
+            tagPrefix: 'o-v',
+            assetPattern: 'New-{version}.zip'
+          }
+        ])
+        publish('owner', 'repo', 'v2.0.0', { 'New-2.0.0.zip': zipOf('Thing', '2.0.0') })
+        clock += 11 * 60_000
+        await api.ghCheckUpdates('repo', pid)
+        expect(await patternOf('owner-repo')).toBe('New-{version}.zip')
+        expect(await patternOf('owner-other')).toBe('Old-{version}.zip')
+      })
+
+      test('the auto-update refreshes it too and installs the renamed asset', async () => {
+        await setup()
+        publish('owner', 'repo', 'v1.0.0', { 'Old-1.0.0.zip': zipOf('Thing', '1.0.0') })
+        await api.ghInstall('repo', pid, 'owner/repo')
+        await withPattern('owner-repo', 'Old-{version}.zip')
+        cacheIndex([
+          {
+            key: 'owner/repo/thing',
+            owner: 'owner',
+            repo: 'repo',
+            id: 'thing',
+            assetPattern: 'New-{version}.zip'
+          }
+        ])
+        publish('owner', 'repo', 'v2.0.0', {
+          'New-2.0.0.zip': zipOf('Thing', '2.0.0'),
+          'Other-2.0.0.zip': zipOf('Nope', '2.0.0')
+        })
+        await api.ghAutoUpdateAll()
+        const mod = (await modsOf())[0]
+        expect(mod.source).toMatchObject({ tag: 'v2.0.0', asset: 'New-2.0.0.zip' })
+        expect(mod.github?.assetPattern).toBe('New-{version}.zip')
+      })
+    })
+
     /** Marks a profile as following a sync code. */
     const follow = async (id: string): Promise<void> => {
       const p = await getProfile(deps.paths, 'repo', id)
@@ -2605,7 +2743,9 @@ describe('services', () => {
         getCatalog: () => catalog,
         requireGame: async (label) => (await catalog).games.find((g) => g.label === label)!,
         serialize: (_g, _p, fn) => fn(),
-        isGameRunning: async (def) => running.has(def.label)
+        isGameRunning: async (def) => running.has(def.label),
+        blockedReason: async () => null,
+        cachedEntry: async () => null
       })
       await gh.ghAutoUpdateAll()
       expect((await modsOf())[0].source).toMatchObject({ tag: 'v1.0.0' })

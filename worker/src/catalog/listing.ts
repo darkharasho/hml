@@ -1,6 +1,12 @@
 // Pure: decides what one crawled repo lists. No node:* or Electron imports (bundled into the Worker).
 import type { CatalogEntry, RepoStatus } from '../../../src/shared/ghCatalog'
-import { matchesAssetPattern, samePrefix, tagPrefix, tagVersion } from '../../../src/shared/ghTag'
+import {
+  matchesAssetPattern,
+  normPrefix,
+  samePrefix,
+  tagPrefix,
+  tagVersion
+} from '../../../src/shared/ghTag'
 import { validateManifest, type ManifestMod } from '../../../src/shared/hmlManifest'
 
 export interface CrawledRelease {
@@ -27,11 +33,6 @@ export interface CrawledRepo {
 }
 
 const MAX_WARNINGS = 20
-
-/** Manifest prefixes may include the separator and `v` (`a-v`); tagPrefix() strips them from tags. */
-function normPrefix(p: string): string {
-  return p.replace(/[-_/@]v?$/i, '') || p
-}
 
 function rawUrl(r: CrawledRepo, path: string): string {
   const segs = path.split('/').map(encodeURIComponent).join('/')

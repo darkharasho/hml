@@ -1,3 +1,5 @@
+import type { CatalogEntry } from './ghCatalog'
+
 export interface InstallRule {
   route: string
   defaultFileExtensions: string[]
@@ -146,6 +148,26 @@ export interface InstalledMod {
    */
   held?: true
 }
+
+/** Installed GitHub mods whose repo or owner HML blocks: mod id → the block's reason. */
+export type GhBlocked = Record<string, string>
+
+/** What installing a GitHub catalog mod takes. */
+export interface CatInstallPlan {
+  /** GitHub mods to install, each after its dependencies, the target last; installed ones omitted. */
+  mods: CatalogEntry[]
+  /** Thunderstore dependency strings (`Owner-Name-1.2.3`) of the target and its GitHub deps. */
+  thunderstore: string[]
+  /** Dependency strings that can't be resolved: unparseable, unlisted, ambiguous or blocked. */
+  unavailable: string[]
+  /** Owners among `mods` the user hasn't agreed to install from yet. */
+  untrustedOwners: string[]
+}
+
+export type CatInstallResult =
+  | { kind: 'installed'; installed: InstalledMod[] }
+  | { kind: 'needs-confirm'; owners: string[] }
+  | { kind: 'blocked'; reason: string }
 
 /** What copyModsToProfile did. */
 export interface CopyModsResult {

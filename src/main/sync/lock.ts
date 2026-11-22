@@ -15,6 +15,7 @@ export const FOLLOWER_LOCKED = [
   'ghSetUpdateMode',
   'ghSetPrereleases',
   'ghInstallRelease',
+  'catInstall',
   'nxInstall',
   'nxUpdate',
   'installLoader'

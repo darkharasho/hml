@@ -1,11 +1,14 @@
 import type {
   NxTarget,
   AddCustomGameInput,
+  CatInstallPlan,
+  CatInstallResult,
   ConfigFile,
   CopyModsResult,
   CustomGameUpdate,
   GameDef,
   GameDetection,
+  GhBlocked,
   GhInstallRequest,
   GhInstallResult,
   GhPrereleaseResult,
@@ -159,6 +162,8 @@ export interface HmlApi {
   /** Saves (after verifying) or, with null/empty, removes the GitHub token. Never returns it. */
   ghSetToken(token: string | null): Promise<{ login: string | null }>
   ghTokenStatus(): Promise<{ set: boolean; encryptionAvailable: boolean }>
+  /** The profile's GitHub mods whose repo or owner HML blocks: mod id → reason. */
+  ghBlocked(game: string, profileId: string): Promise<GhBlocked>
   /** Persists a Nexus-only game (validated against Nexus Mods) so it can be opened like any game. */
   addNexusGame(domain: string): Promise<GameSummary>
   /** The game's Nexus domain (override, cache, or live lookup); null when not on Nexus Mods. */
@@ -207,6 +212,21 @@ export interface HmlApi {
   catReadme(game: string, key: string): Promise<string>
   /** The Worker's crawl status of `owner/repo`; null when unknown or unreachable. */
   catStatus(ownerRepo: string): Promise<RepoStatus | null>
+  /**
+   * What installing catalog mod `key` takes: its GitHub deps in install order (the mod last,
+   * installed ones left out), Thunderstore deps, unavailable deps and owners to confirm.
+   */
+  catPlanInstall(game: string, profileId: string, key: string): Promise<CatInstallPlan>
+  /**
+   * Installs catalog mod `key` with its dependencies once every untrusted owner is among
+   * `confirmedOwners` (saved as trusted); else installs nothing and names the owners to confirm.
+   */
+  catInstall(
+    game: string,
+    profileId: string,
+    key: string,
+    confirmedOwners: string[]
+  ): Promise<CatInstallResult>
   /**
    * Reads a share code or a picked `.hml` file and holds it for importShare; null when the file
    * dialog is cancelled. r2modman codes and `.r2z` files import into `game`, the open game.
@@ -329,6 +349,7 @@ const METHOD_TABLE = {
   ghInstallRelease: true,
   ghSetToken: true,
   ghTokenStatus: true,
+  ghBlocked: true,
   addNexusGame: true,
   nxGetDomain: true,
   nxSetDomain: true,
@@ -350,6 +371,8 @@ const METHOD_TABLE = {
   catList: true,
   catReadme: true,
   catStatus: true,
+  catPlanInstall: true,
+  catInstall: true,
   previewShare: true,
   shareModDetails: true,
   importShare: true,

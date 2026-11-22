@@ -1,10 +1,12 @@
 import type { CatalogEntry, CatListResult, RepoStatus } from '../../shared/ghCatalog'
 import { OWNER_RE, REPO_RE } from '../../shared/ghCatalog'
+import { normPrefix, samePrefix } from '../../shared/ghTag'
 import type { AppPaths } from '../store/paths'
 import { readJson } from '../store/json'
 import {
   blockedReason as blockedReasonOf,
   loadCatalogIndex,
+  validEntries,
   type CatalogClientOptions
 } from './client'
 
@@ -23,7 +25,10 @@ export interface CatalogServices {
   catList(game: string, force?: boolean): Promise<CatListResult>
   catReadme(game: string, key: string): Promise<string>
   catStatus(ownerRepo: string): Promise<RepoStatus | null>
-  /** Disk cache only, no fetch. `prefix` is the entry's tagPrefix ('' when it has none). */
+  /**
+   * Disk cache only, no fetch. `prefix` is the installed tag's prefix ('' for a repo of one mod);
+   * it matches an entry's manifest tagPrefix with or without its separator (`a` and `a-v`).
+   */
   cachedEntry(
     game: string,
     owner: string,
@@ -35,12 +40,14 @@ export interface CatalogServices {
 }
 
 export function createCatalogServices(deps: CatalogServiceDeps): CatalogServices {
+  const blocklistState = { failedAt: null as number | null }
   const client = (game: string): CatalogClientOptions => ({
     fetch: deps.fetch,
     base: deps.shareBaseUrl,
     now: deps.now ?? Date.now,
     indexFile: deps.paths.catalogCache(game),
-    blocklistFile: deps.paths.catalogBlocklist
+    blocklistFile: deps.paths.catalogBlocklist,
+    blocklistState
   })
 
   const list = (game: string, force?: boolean): Promise<CatListResult> =>
@@ -59,12 +66,13 @@ export function createCatalogServices(deps: CatalogServiceDeps): CatalogServices
     if (!cache || !Array.isArray(cache.mods)) return null
     const o = owner.toLowerCase()
     const r = repo.toLowerCase()
+    const want = normPrefix(prefix)
     return (
-      (cache.mods as CatalogEntry[]).find(
+      validEntries(cache.mods).find(
         (m) =>
           m.owner.toLowerCase() === o &&
           m.repo.toLowerCase() === r &&
-          (m.tagPrefix ?? '') === prefix
+          samePrefix(typeof m.tagPrefix === 'string' ? normPrefix(m.tagPrefix) : '', want)
       ) ?? null
     )
   }
@@ -112,7 +120,7 @@ export function createCatalogServices(deps: CatalogServiceDeps): CatalogServices
       () => null
     )
     if (cache && Array.isArray(cache.mods))
-      return { mods: cache.mods as CatalogEntry[], fetchedAt: null, offline: false }
+      return { mods: validEntries(cache.mods), fetchedAt: null, offline: false }
     return list(game)
   }
 }

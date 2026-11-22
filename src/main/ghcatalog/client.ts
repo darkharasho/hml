@@ -2,6 +2,8 @@ import type { CatalogEntry, CatListResult, ServedBlocklist } from '../../shared/
 import { readJson, writeJsonAtomic } from '../store/json'
 
 export const CATALOG_MAX_AGE_MS = 30 * 60_000
+/** After a failed blocklist refresh, the network isn't tried again for this long. */
+export const BLOCKLIST_RETRY_MS = 5 * 60_000
 const TIMEOUT_MS = 20_000
 
 export interface CatalogClientOptions {
@@ -12,6 +14,11 @@ export interface CatalogClientOptions {
   /** Cache file of this game's index. */
   indexFile: string
   blocklistFile: string
+  /**
+   * When the last blocklist refresh failed, shared across calls so an offline check doesn't wait
+   * on the network every time. Without it every call may try.
+   */
+  blocklistState?: { failedAt: number | null }
 }
 
 interface IndexCache {
@@ -51,6 +58,17 @@ async function jsonBody(res: Response): Promise<unknown> {
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
+/** The entries that are objects with a string key, owner and repo; anything else is dropped. */
+export function validEntries(mods: unknown[]): CatalogEntry[] {
+  return mods.filter(
+    (m): m is CatalogEntry =>
+      isObject(m) &&
+      typeof m.key === 'string' &&
+      typeof m.owner === 'string' &&
+      typeof m.repo === 'string'
+  )
+}
+
 function validCache(c: unknown): c is IndexCache {
   return (
     isObject(c) &&
@@ -70,7 +88,7 @@ export async function loadCatalogIndex(
   force = false
 ): Promise<CatListResult> {
   const stored = await readJson<unknown>(o.indexFile).catch(() => null)
-  const cache = validCache(stored) ? stored : null
+  const cache = validCache(stored) ? { ...stored, mods: validEntries(stored.mods) } : null
   const cached = (offline: boolean): CatListResult =>
     cache
       ? { mods: cache.mods, fetchedAt: cache.fetchedAt, offline }
@@ -101,7 +119,7 @@ export async function loadCatalogIndex(
     const next: IndexCache = {
       fetchedAt,
       etag: res.headers.get('etag'),
-      mods: body.mods as CatalogEntry[]
+      mods: validEntries(body.mods)
     }
     await writeJsonAtomic(o.indexFile, next, { pretty: false })
     return { mods: next.mods, fetchedAt, offline: false }
@@ -122,6 +140,9 @@ async function loadBlocklist(o: CatalogClientOptions): Promise<ServedBlocklist |
       : null
   const now = o.now()
   if (cache && now - Date.parse(cache.fetchedAt) < CATALOG_MAX_AGE_MS) return cache.list
+  const state = o.blocklistState
+  if (state?.failedAt != null && now - state.failedAt < BLOCKLIST_RETRY_MS)
+    return cache?.list ?? null
 
   const res = await get(o, `${root(o)}/blocklist`)
   if (res?.ok) {
@@ -132,11 +153,13 @@ async function loadBlocklist(o: CatalogClientOptions): Promise<ServedBlocklist |
         fetchedAt: new Date(now).toISOString(),
         list
       } satisfies BlocklistCache).catch(() => undefined)
+      if (state) state.failedAt = null
       return list
     }
   } else {
     void res?.body?.cancel().catch(() => undefined)
   }
+  if (state) state.failedAt = now
   return cache?.list ?? null
 }
 
