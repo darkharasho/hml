@@ -3,6 +3,7 @@ import {
   buildStatus,
   listRepo,
   MAX_ASSET_MATCHES_PER_REPO,
+  matchUnits,
   newMatchBudget,
   type CrawledRelease,
   type CrawledRepo
@@ -225,7 +226,36 @@ describe('asset matching cost', () => {
     const { status } = listRepo(r, known, NOW)
     expect(performance.now() - started).toBeLessThan(50)
     expect(status.listed).toEqual([])
-    expect(status.rejected).toBe('no-matching-asset')
+    // Adjacent tokens are now refused by the schema, before any asset is matched.
+    expect(status.rejected).toMatch(/^invalid-manifest: mods\.0\.assetPattern: must have text/)
+  })
+
+  it('a separated pattern over 100-character names stays fast', () => {
+    const r = repo({
+      manifest: man(mod({ assetPattern: 'a{version}.{version}b' })),
+      releases: releases((i) => `a${'1.'.repeat(47)}1${String(i).padStart(3, '0')}!`)
+    })
+    expect(r.releases[0].assets[0].name).toHaveLength(100)
+    const started = performance.now()
+    expect(listRepo(r, known, NOW).status.rejected).toBe('no-matching-asset')
+    expect(performance.now() - started).toBeLessThan(50)
+  })
+
+  it('charges a match one unit per 25 characters of the name', () => {
+    expect([1, 25, 26, 50, 51, 100].map(matchUnits)).toEqual([1, 1, 2, 2, 3, 4])
+    const long = (i: number): string => `Mod-${String(i).padStart(92, '0')}.zip`
+    expect(long(0)).toHaveLength(100)
+    const r = repo({
+      manifest: man(mod({ assetPattern: 'Mod-{version}.zip' })),
+      releases: releases(long)
+    })
+    const budget = newMatchBudget()
+    const s = listRepo(r, known, NOW, budget).status
+    expect(budget.seen.size).toBe(MAX_ASSET_MATCHES_PER_REPO / 4)
+    expect(s.rejected).toBe('no-matching-asset')
+    expect(s.warnings[0]).toBe(
+      `asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} units (25 name characters each)`
+    )
   })
 
   it('lists a mod whose first page of releases is all distinct matching assets', () => {
@@ -259,7 +289,7 @@ describe('asset matching cost', () => {
     const s = listRepo(r, known, NOW).status
     expect(s.listed.map((m) => m.id)).toEqual(['a'])
     expect(s.warnings).toEqual([
-      `asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} names`,
+      `asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} units (25 name characters each)`,
       'b: not listed (no-matching-asset)'
     ])
   })
@@ -284,6 +314,8 @@ describe('asset matching cost', () => {
     }
     const s = listRepo(more, known, NOW, budget).status
     expect(s.rejected).toBe('no-matching-asset')
-    expect(s.warnings[0]).toBe(`asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} names`)
+    expect(s.warnings[0]).toBe(
+      `asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} units (25 name characters each)`
+    )
   })
 })

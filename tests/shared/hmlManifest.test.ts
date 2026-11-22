@@ -89,6 +89,15 @@ describe('validateManifest', () => {
       'invalid-manifest: mods.0.assetPattern: must contain at most 2 {version} tokens'
     )
   })
+  it('rejects {version} tokens with nothing between them', () => {
+    expect(one({ assetPattern: 'a{version}.{version}b.zip' }).ok).toBe(true)
+    for (const assetPattern of ['1{version}{version}1', '{version}{version}.zip']) {
+      const r = one({ assetPattern })
+      expect(!r.ok && r.error).toBe(
+        'invalid-manifest: mods.0.assetPattern: must have text between {version} tokens, like {version}-{version}'
+      )
+    }
+  })
   it('caps games, dependencies and tagPrefix', () => {
     const games = (n: number, len = 4): string[] =>
       Array.from({ length: n }, (_, i) => `nexus-${String(i).padStart(len, 'x')}`)

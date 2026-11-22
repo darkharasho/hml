@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { MAX_PATTERN_TOKENS } from './ghTag'
+import { hasAdjacentTokens, MAX_PATTERN_TOKENS } from './ghTag'
 
 export const MANIFEST_MAX_BYTES = 65536
 
@@ -58,6 +58,10 @@ const assetPattern = z
   .refine(
     (p) => p.split('{version}').length - 1 <= MAX_PATTERN_TOKENS,
     `must contain at most ${MAX_PATTERN_TOKENS} {version} tokens`
+  )
+  .refine(
+    (p) => !hasAdjacentTokens(p),
+    'must have text between {version} tokens, like {version}-{version}'
   )
 
 const modSchema = z.object({

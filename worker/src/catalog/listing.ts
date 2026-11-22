@@ -37,12 +37,17 @@ export interface CrawledRepo {
 const MAX_WARNINGS = 20
 
 /**
- * assetPattern matches one repo may run, across all its mods and its release follow-ups: one per
- * distinct asset name and pattern (a full first page of 20 releases × 15 assets for one mod).
- * At the 100-character name cap, 300 hostile matches cost about 7 ms in node. Mods left when it
- * runs out are rejected with no-matching-asset.
+ * assetPattern match units one repo may spend, across all its mods and its release follow-ups.
+ * A match costs one unit per 25 characters of the name (matchUnits), and each distinct name and
+ * pattern is matched once. 300 units cover a full first page (20 releases × 15 assets) of names
+ * up to 25 characters, or 75 names of 100. Worst case for 300 units in node: about 1 ms (patterns
+ * with text between their tokens, names up to 100 characters). Mods left when it runs out are
+ * rejected with no-matching-asset.
  */
 export const MAX_ASSET_MATCHES_PER_REPO = 300
+
+/** Budget units one match of a name costs: matching time grows faster than the name's length. */
+export const matchUnits = (len: number): number => Math.max(1, Math.ceil(len / 25))
 
 /** A repo's assetPattern match budget, with the results so far (re-matching a name is free). */
 export interface MatchBudget {
@@ -64,8 +69,9 @@ function budgetedMatcher(pattern: string, budget: MatchBudget): (name: string) =
     const key = `${pattern}\0${name}`
     const known = budget.seen.get(key)
     if (known !== undefined) return known
-    if (budget.left <= 0) throw SPENT
-    budget.left--
+    const cost = matchUnits(name.length)
+    if (budget.left < cost) throw SPENT
+    budget.left -= cost
     const hit = match(name)
     budget.seen.set(key, hit)
     return hit
@@ -189,7 +195,10 @@ export function listRepo(
       res = listMod(r, mod, single, budget)
     } catch (e) {
       if (e !== SPENT) throw e
-      if (!spent) warnings.push(`asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} names`)
+      if (!spent)
+        warnings.push(
+          `asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} units (25 name characters each)`
+        )
       spent = true
       res = { reason: 'no-matching-asset' }
     }

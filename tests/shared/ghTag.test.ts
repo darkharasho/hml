@@ -59,6 +59,10 @@ describe('matchesAssetPattern', () => {
   test('never matches a pattern with more than 2 tokens', () => {
     expect(matchesAssetPattern('{version}-{version}-{version}.zip', '1-2-3.zip')).toBe(false)
   })
+  test('never matches a pattern with adjacent {version} tokens', () => {
+    expect(matchesAssetPattern('Mod-{version}{version}.zip', 'Mod-12.zip')).toBe(false)
+    expect(matchesAssetPattern('Mod-{version}.{version}.zip', 'Mod-1.2.zip')).toBe(true)
+  })
   test('never matches a name over 100 characters', () => {
     const name = (n: number): string => `Mod-1.0${'0'.repeat(n - 11)}.zip`
     expect(name(100)).toHaveLength(100)

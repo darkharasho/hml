@@ -88,11 +88,12 @@ pages, retries, release follow-ups and the schema fetch; `wallMs` is wall time, 
 warns when the search total passes GitHub's 1,000-result cap.
 
 CPU: a blocked repo is never listed (its status is `rejected: blocked` with no warnings). Asset
-names over 100 characters never match an `assetPattern`, and each repo gets at most 300
-`assetPattern` matches across its mods and release follow-ups (`MAX_ASSET_MATCHES_PER_REPO`;
-results are cached per repo, so re-listing after a follow-up re-matches only new names). Mods left
-when it runs out are rejected with `no-matching-asset` and a warning. At the 100-character cap,
-300 worst-case matches cost about 7 ms in node.
+names over 100 characters never match an `assetPattern`, and a pattern with touching `{version}`
+tokens is invalid (and never matches). Each repo gets 300 match units across its mods and release
+follow-ups (`MAX_ASSET_MATCHES_PER_REPO`): a match costs `ceil(length / 25)` units, and results are
+cached per repo, so re-listing after a follow-up re-matches only new names. Mods left when it runs
+out are rejected with `no-matching-asset` and a warning. Worst case measured in node for a full
+budget: about 1 ms.
 
 KV keys (all in `PROFILES`):
 

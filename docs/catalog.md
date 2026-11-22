@@ -82,7 +82,7 @@ Each entry in `mods`:
 | `description` | Yes | 1 to 250 characters. |
 | `games` | Yes | 1 to 20 game labels, each up to 64 characters. See [Game labels](#game-labels). |
 | `tagPrefix` | When `mods` has more than one entry | 1 to 64 characters. The text before the version in your release tags. |
-| `assetPattern` | No | 1 to 200 characters, with at most 2 `{version}` tokens. Picks the release asset by name. `{version}` matches a version number. Without it, HML takes the first `.zip` asset, and installs that same file. |
+| `assetPattern` | No | 1 to 200 characters, with at most 2 `{version}` tokens and some text between them (`{version}-{version}` works, `{version}{version}` doesn't). Picks the release asset by name. `{version}` matches a version number. Without it, HML takes the first `.zip` asset, and installs that same file. |
 | `icon` | No | An `https://` URL or a path in the repo. Defaults to your GitHub avatar. |
 | `readme` | No | A path in the repo. URLs are not allowed. Defaults to `README.md`. |
 | `categories` | No | Up to 5 labels, each 1 to 32 characters. Defaults to none. |
@@ -115,8 +115,8 @@ HML lists a mod from its newest non-draft release that has a matching asset. A s
 - With a single mod and no `tagPrefix`, every release counts.
 - With a `tagPrefix`, only releases whose tag has that prefix count. The match ignores case, and a trailing separator or `v` in the prefix is fine (`infinite-energy-v` works).
 - The asset is the first `.zip`, or the first one that matches `assetPattern`.
-- `assetPattern` never matches an asset file name over 100 characters, so those assets are ignored. This applies to the catalog and to installs and updates in HML.
-- The catalog checks at most 300 asset names against `assetPattern` per repo, counting each distinct name once per pattern. That covers 20 releases with 15 assets each. When a repo runs out, the mods not yet checked are rejected with `no-matching-asset`, and the status shows the warning `asset matching stopped after 300 names`.
+- `assetPattern` never matches an asset file name over 100 characters, so those assets are ignored. A pattern with two touching `{version}` tokens never matches either, including one HML saved for an install before this rule. This applies to the catalog and to installs and updates in HML.
+- The catalog has a budget of 300 units per repo for checking asset names against `assetPattern`. Checking a name costs one unit per 25 characters (a 25-character name costs 1, a 100-character name costs 4), and each distinct name is checked once per pattern. 300 units cover 20 releases with 15 assets each when names are 25 characters or shorter. When a repo runs out, the mods not yet checked are rejected with `no-matching-asset`, and the status shows the warning `asset matching stopped after 300 units (25 name characters each)`.
 - HML reads a repo's 20 newest releases. If a mod with a `tagPrefix` has none among them, it reads up to 100 older ones (two pages of 50). The crawl reads at most 5 such extra pages per run, so when many monorepos crawled together need them, some mods can stay unlisted with `no-releases`. A new release of the mod fixes that.
 
 ## How listing works
@@ -159,7 +159,7 @@ When a repo is rejected, `hml validate owner/repo` shows one of these reasons.
 | `no-manifest` | There is no `hml.json` at the repo root of the default branch. | Add the file and push it to the default branch. |
 | `invalid-manifest: <path>: <problem>` | The file isn't valid JSON, is over 64 KB, or breaks a rule in the field table. `<path>` is the field, like `mods.0.id`. `(root)` means the file as a whole. | Fix the field named in the message. Run `hml validate` locally. |
 | `no-releases` | No non-draft release matches the mod. In a monorepo, none has the mod's `tagPrefix`. | Publish a release. Check that its tag starts with the `tagPrefix`. |
-| `no-matching-asset` | The releases have no asset that fits: no `.zip`, or none that matches `assetPattern`. Asset names over 100 characters never match. It is also the reason when the repo used up its 300 asset-name checks. | Attach a `.zip` to the release, or fix `assetPattern`. Keep asset names to 100 characters, and attach fewer assets per release. |
+| `no-matching-asset` | The releases have no asset that fits: no `.zip`, or none that matches `assetPattern`. Asset names over 100 characters never match. It is also the reason when the repo used up its asset-matching budget of 300 units. | Attach a `.zip` to the release, or fix `assetPattern`. Keep asset names short (25 characters or fewer is cheapest), and attach fewer assets per release. |
 | `unknown-games` | None of a mod's `games` labels is a known game. Warnings name the labels that weren't known. | Use a Thunderstore community slug or a `nexus-` label. |
 | `blocked` | HML's maintainer blocklist includes the repo. The crawl doesn't read a blocked repo's `hml.json` or releases, so its status has no warnings. | See [Blocked mods](#blocked-mods). |
 
