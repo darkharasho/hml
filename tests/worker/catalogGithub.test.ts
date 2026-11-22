@@ -21,9 +21,22 @@ describe('fetchSearchPage', () => {
     expect(h['content-type']).toBe('application/json')
     expect(JSON.parse(init.body as string)).toEqual({
       query: SEARCH_QUERY,
-      variables: { cursor: 'CUR' }
+      variables: { cursor: 'CUR', first: 30 }
     })
     expect(f).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends first=30 by default and honors an explicit page size', async () => {
+    const vars = (f: typeof fetch): unknown =>
+      JSON.parse(
+        ((f as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit).body as string
+      ).variables
+    const f1 = ok(page)
+    await fetchSearchPage(f1, 't', null)
+    expect(vars(f1)).toMatchObject({ first: 30 })
+    const f2 = ok(page)
+    await fetchSearchPage(f2, 't', null, 15)
+    expect(vars(f2)).toMatchObject({ first: 15 })
   })
 
   it('maps repos, skipping malformed nodes', async () => {

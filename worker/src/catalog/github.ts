@@ -2,8 +2,8 @@
 import { MANIFEST_MAX_BYTES } from '../../../src/shared/hmlManifest'
 import type { CrawledRelease, CrawledRepo } from './listing'
 
-export const SEARCH_QUERY = `query($cursor: String) {
-  search(query: "topic:hml-mod archived:false fork:true", type: REPOSITORY, first: 100, after: $cursor) {
+export const SEARCH_QUERY = `query($cursor: String, $first: Int!) {
+  search(query: "topic:hml-mod archived:false fork:true", type: REPOSITORY, first: $first, after: $cursor) {
     repositoryCount
     pageInfo { hasNextPage endCursor }
     nodes {
@@ -17,19 +17,21 @@ export const SEARCH_QUERY = `query($cursor: String) {
         owner { id login avatarUrl }
         defaultBranchRef { name }
         object(expression: "HEAD:hml.json") { ... on Blob { text byteSize } }
-        releases(first: 30, orderBy: {field: CREATED_AT, direction: DESC}) {
+        releases(first: 20, orderBy: {field: CREATED_AT, direction: DESC}) {
           nodes {
             tagName
             isDraft
             isPrerelease
             publishedAt
-            releaseAssets(first: 20) { nodes { name size downloadCount } }
+            releaseAssets(first: 15) { nodes { name size downloadCount } }
           }
         }
       }
     }
   }
 }`
+
+export const DEFAULT_PAGE_SIZE = 30
 
 export class GhGraphqlError extends Error {
   constructor(
@@ -109,7 +111,8 @@ function mapRepo(n: unknown): CrawledRepo | null {
 export async function fetchSearchPage(
   fetchFn: typeof fetch,
   token: string,
-  cursor: string | null
+  cursor: string | null,
+  pageSize = DEFAULT_PAGE_SIZE
 ): Promise<{ repos: CrawledRepo[]; nextCursor: string | null; total: number }> {
   const res = await fetchFn('https://api.github.com/graphql', {
     method: 'POST',
@@ -118,7 +121,7 @@ export async function fetchSearchPage(
       'user-agent': 'hml-catalog',
       'content-type': 'application/json'
     },
-    body: JSON.stringify({ query: SEARCH_QUERY, variables: { cursor } })
+    body: JSON.stringify({ query: SEARCH_QUERY, variables: { cursor, first: pageSize } })
   })
   if (!res.ok) throw new GhGraphqlError(`GitHub GraphQL HTTP ${res.status}`, res.status)
   let body: unknown
