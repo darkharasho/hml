@@ -21,7 +21,6 @@ export function tagVersion(tag: string): string {
   return (prefix ? tag.slice(prefix.length + 1) : tag).replace(/^v/i, '')
 }
 
-/** True when two prefixes name the same mod (GitHub tags are case-sensitive, names aren't). */
 /**
  * A catalog manifest's `tagPrefix` as tagPrefix() gives it from a tag: manifests may include the
  * separator and `v` (`a-v`), which tagPrefix() strips.
@@ -30,6 +29,7 @@ export function normPrefix(p: string): string {
   return p.replace(/[-_/@]v?$/i, '') || p
 }
 
+/** True when two prefixes name the same mod (GitHub tags are case-sensitive, names aren't). */
 export const samePrefix = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
 
 /** The installed id of a GitHub mod: `owner-repo`, plus the tag prefix in a monorepo. */

@@ -148,6 +148,8 @@ export interface GhInstallOptions {
    * pinning it (links pasted into Add from GitHub; share imports keep their tag).
    */
   followNewestTag?: boolean
+  /** A GitHub catalog install: marks the config so checks refresh its asset pattern. */
+  catalog?: boolean
 }
 
 export function createGithubServices(ctx: GhContext): Pick<
@@ -182,10 +184,12 @@ export function createGithubServices(ctx: GhContext): Pick<
 
   /**
    * The mod with its saved asset pattern refreshed from the game's cached catalog entry, so an
-   * author renaming their assets doesn't break updates. Only the entry with the installed tag's
-   * prefix counts: a changed tagPrefix is a different mod.
+   * author renaming their assets doesn't break updates. Only catalog installs: a URL install keeps
+   * the file the user picked. Only the entry with the installed tag's prefix counts: a changed
+   * tagPrefix is a different mod. Nothing is queued or written when the pattern is unchanged.
    */
   async function withCatalogPattern(game: string, profileId: string, m: GhMod): Promise<GhMod> {
+    if (configOf(m).catalog !== true) return m
     const entry = await ctx
       .cachedEntry(game, m.source.owner, m.source.repo, tagPrefix(m.source.tag))
       .catch(() => null)
@@ -194,7 +198,14 @@ export function createGithubServices(ctx: GhContext): Pick<
     const saved = await serialize(game, profileId, async () => {
       const profile = await getProfile(paths, game, profileId)
       const current = profile.mods.find((x) => x.id === m.id)
-      if (!current || !isGhMod(current) || current.source.tag !== m.source.tag) return null
+      if (
+        !current ||
+        !isGhMod(current) ||
+        current.source.tag !== m.source.tag ||
+        configOf(current).catalog !== true ||
+        configOf(current).assetPattern === pattern
+      )
+        return null
       const updated: GhMod = { ...current, github: { ...configOf(current), assetPattern: pattern } }
       await saveProfile(paths, {
         ...profile,
@@ -634,7 +645,12 @@ export function createGithubServices(ctx: GhContext): Pick<
         provides: opts.provides,
         config: (previous) =>
           opts.assetPattern !== undefined
-            ? { updateMode: 'auto', assetPattern: opts.assetPattern, track: opts.track }
+            ? {
+                updateMode: 'auto',
+                assetPattern: opts.assetPattern,
+                track: opts.track,
+                ...(opts.catalog === true ? { catalog: true as const } : {})
+              }
             : {
                 updateMode: pinned
                   ? 'pinned'
@@ -647,7 +663,8 @@ export function createGithubServices(ctx: GhContext): Pick<
                     : (previous?.github?.assetPattern ?? null),
                 ...((opts.track ?? previous?.github?.track)
                   ? { track: opts.track ?? previous?.github?.track }
-                  : { prereleases })
+                  : { prereleases }),
+                ...(opts.catalog === true ? { catalog: true as const } : {})
               }
       })
       progress('Done', total)

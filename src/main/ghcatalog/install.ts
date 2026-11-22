@@ -189,7 +189,8 @@ export function createCatalogInstaller(deps: CatalogInstallDeps): CatalogInstall
           {
             tagPrefix: prefix || undefined,
             assetPattern: typeof m.assetPattern === 'string' ? m.assetPattern : undefined,
-            followNewestTag: true
+            followNewestTag: true,
+            catalog: true
           }
         )
         if (r.kind !== 'installed') {

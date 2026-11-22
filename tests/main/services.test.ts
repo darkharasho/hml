@@ -2488,43 +2488,35 @@ describe('services', () => {
           JSON.stringify({ fetchedAt: new Date(clock).toISOString(), etag: null, mods })
         )
       }
-      const withPattern = async (id: string, assetPattern: string): Promise<void> => {
-        const p = await getProfile(deps.paths, 'repo', pid)
-        await saveProfile(deps.paths, {
-          ...p,
-          mods: p.mods.map((m) =>
-            m.id === id ? { ...m, github: { ...m.github!, assetPattern } } : m
-          )
-        })
-      }
       const patternOf = async (id: string): Promise<string | null | undefined> =>
         (await modsOf()).find((m) => m.id === id)?.github?.assetPattern
 
-      test('checkUpdates saves the cached entry pattern; a changed tagPrefix is ignored', async () => {
+      const entryOf = (
+        repo: string,
+        assetPattern: string,
+        tagPrefix?: string,
+        owner = 'owner'
+      ): object => ({
+        key: `owner/${repo}/${repo}`,
+        owner,
+        repo,
+        id: repo,
+        assetPattern,
+        ...(tagPrefix ? { tagPrefix } : {})
+      })
+
+      test('a catalog install follows the cached pattern; a changed tagPrefix is ignored', async () => {
         await setup()
         publish('owner', 'repo', 'v1.0.0', { 'Old-1.0.0.zip': zipOf('Thing', '1.0.0') })
         publish('owner', 'other', 'v1.0.0', { 'Old-1.0.0.zip': zipOf('Other', '1.0.0') })
-        await api.ghInstall('repo', pid, 'owner/repo')
-        await api.ghInstall('repo', pid, 'owner/other')
-        await withPattern('owner-repo', 'Old-{version}.zip')
-        await withPattern('owner-other', 'Old-{version}.zip')
+        cacheIndex([entryOf('repo', 'Old-{version}.zip'), entryOf('other', 'Old-{version}.zip')])
+        for (const key of ['owner/repo/repo', 'owner/other/other'])
+          expect((await api.catInstall('repo', pid, key, ['owner'])).kind).toBe('installed')
+        expect((await modsOf()).map((m) => m.github?.catalog)).toEqual([true, true])
         cacheIndex([
           null,
-          {
-            key: 'owner/repo/thing',
-            owner: 'Owner',
-            repo: 'Repo',
-            id: 'thing',
-            assetPattern: 'New-{version}.zip'
-          },
-          {
-            key: 'owner/other/o',
-            owner: 'owner',
-            repo: 'other',
-            id: 'o',
-            tagPrefix: 'o-v',
-            assetPattern: 'New-{version}.zip'
-          }
+          entryOf('repo', 'New-{version}.zip', undefined, 'Owner'),
+          entryOf('other', 'New-{version}.zip', 'o-v')
         ])
         publish('owner', 'repo', 'v2.0.0', { 'New-2.0.0.zip': zipOf('Thing', '2.0.0') })
         clock += 11 * 60_000
@@ -2533,20 +2525,35 @@ describe('services', () => {
         expect(await patternOf('owner-other')).toBe('Old-{version}.zip')
       })
 
+      test('a URL install keeps the pattern of the file the user picked', async () => {
+        await setup()
+        publish('owner', 'lite', 'v1.0.0', {
+          'Mod-1.0.0.zip': zipOf('Mod', '1.0.0'),
+          'Mod-Lite-1.0.0.zip': zipOf('ModLite', '1.0.0')
+        })
+        await api.ghInstall('repo', pid, 'owner/lite', 'Mod-Lite-1.0.0.zip')
+        expect(await patternOf('owner-lite')).toBe('Mod-Lite-{version}.zip')
+        const before = readFileSync(
+          path.join(deps.paths.profileDir('repo', pid), 'hml-profile.json'),
+          'utf8'
+        )
+        cacheIndex([entryOf('lite', 'Mod-{version}.zip')])
+        clock += 11 * 60_000
+        await api.ghCheckUpdates('repo', pid)
+        await api.ghAutoUpdateAll()
+        expect(await patternOf('owner-lite')).toBe('Mod-Lite-{version}.zip')
+        expect((await modsOf())[0].github?.catalog).toBeUndefined()
+        expect(
+          readFileSync(path.join(deps.paths.profileDir('repo', pid), 'hml-profile.json'), 'utf8')
+        ).toBe(before)
+      })
+
       test('the auto-update refreshes it too and installs the renamed asset', async () => {
         await setup()
         publish('owner', 'repo', 'v1.0.0', { 'Old-1.0.0.zip': zipOf('Thing', '1.0.0') })
-        await api.ghInstall('repo', pid, 'owner/repo')
-        await withPattern('owner-repo', 'Old-{version}.zip')
-        cacheIndex([
-          {
-            key: 'owner/repo/thing',
-            owner: 'owner',
-            repo: 'repo',
-            id: 'thing',
-            assetPattern: 'New-{version}.zip'
-          }
-        ])
+        cacheIndex([entryOf('repo', 'Old-{version}.zip')])
+        await api.catInstall('repo', pid, 'owner/repo/repo', ['owner'])
+        cacheIndex([entryOf('repo', 'New-{version}.zip')])
         publish('owner', 'repo', 'v2.0.0', {
           'New-2.0.0.zip': zipOf('Thing', '2.0.0'),
           'Other-2.0.0.zip': zipOf('Nope', '2.0.0')

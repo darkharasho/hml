@@ -213,14 +213,14 @@ describe('catInstall', () => {
         'p',
         'https://github.com/bob/b',
         undefined,
-        { tagPrefix: undefined, assetPattern: undefined, followNewestTag: true }
+        { tagPrefix: undefined, assetPattern: undefined, followNewestTag: true, catalog: true }
       ],
       [
         'repo',
         'p',
         'https://github.com/alice/a',
         undefined,
-        { tagPrefix: 'a', assetPattern: 'A-{version}.zip', followNewestTag: true }
+        { tagPrefix: 'a', assetPattern: 'A-{version}.zip', followNewestTag: true, catalog: true }
       ]
     ])
     expect(h.tsInstall.mock.calls).toEqual([['repo', 'p', 'BepInEx-BepInExPack']])

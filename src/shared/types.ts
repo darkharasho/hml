@@ -429,6 +429,11 @@ export interface GhModConfig {
   installedPrerelease?: boolean
   /** The installed pre-release's publish date, set with installedPrerelease. */
   installedPublishedAt?: string
+  /**
+   * Installed from the GitHub catalog: update checks refresh assetPattern from the cached catalog
+   * entry. Absent on URL installs, whose pattern comes from the file the user picked.
+   */
+  catalog?: true
 }
 /** What turning a GitHub mod's pre-releases on or off found. */
 export interface GhPrereleaseResult {
