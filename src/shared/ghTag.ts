@@ -1,3 +1,5 @@
+import { compareVersions } from './version'
+
 /**
  * Monorepo release tags: a repo that publishes several mods tags each release with the mod's
  * name before its version (`infinite-energy-v0.1.0`, `faerie-flight/1.2`, `@scope/pkg@2.0.0`).
@@ -51,4 +53,22 @@ const VERSION_SRC = '[a-z]?\\d+(?:[._-]\\d+)*(?:[._-]?(?:alpha|beta|rc|pre|previ
 export function matchesAssetPattern(pattern: string, name: string): boolean {
   const src = pattern.split('{version}').map(escapeRegExp).join(VERSION_SRC)
   return new RegExp(`^${src}$`, 'i').test(name)
+}
+
+const VERSION_LIKE = /^v?\d+(\.\d+)*$/i
+
+/** Two tags of one monorepo mod as their versions; other tags unchanged. */
+export function versionsOf(a: string, b: string): [string, string] {
+  const pa = tagPrefix(a)
+  return pa && samePrefix(pa, tagPrefix(b)) ? [tagVersion(a), tagVersion(b)] : [a, b]
+}
+
+/** True when `latestTag` is newer: version-like tags compare numerically, others when they differ. */
+export function isNewerTag(latestTag: string, currentTag: string): boolean {
+  const [latest, current] = versionsOf(latestTag, currentTag)
+  if (VERSION_LIKE.test(latest) && VERSION_LIKE.test(current)) {
+    const strip = (t: string): string => t.replace(/^v/i, '')
+    return compareVersions(strip(latest), strip(current)) > 0
+  }
+  return latest !== current
 }

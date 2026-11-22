@@ -11,6 +11,7 @@ import {
   relativeTime,
   UNSUPPORTED_LOADER
 } from '../tsView'
+import { GithubBrowse } from './GithubBrowse'
 import { NexusBrowse } from './NexusBrowse'
 import { DeprecatedBadge, PackageDetail, PackageIcon, ProgressLine } from './PackageDetail'
 import { Button, Icon } from './ui'
@@ -35,12 +36,13 @@ interface Page extends Omit<TsSearchResult, 'items'> {
 
 const SOURCES: { value: OnlineSource; label: string }[] = [
   { value: 'thunderstore', label: 'Thunderstore' },
-  { value: 'nexus', label: 'Nexus Mods' }
+  { value: 'nexus', label: 'Nexus Mods' },
+  { value: 'github', label: 'GitHub' }
 ]
 
 /**
- * The Online tab. Games with a Thunderstore listing get a Thunderstore | Nexus Mods switch;
- * Nexus-only games browse Nexus Mods directly.
+ * The Online tab: a switch between the game's catalogues (Thunderstore, Nexus Mods, and the
+ * GitHub catalog every game has). A game with only the GitHub catalog browses it directly.
  */
 export function Browse({ game }: { game: string }): React.JSX.Element {
   const packageIndex = useStore((s) => s.currentGame?.packageIndex ?? null)
@@ -52,7 +54,7 @@ export function Browse({ game }: { game: string }): React.JSX.Element {
   const hasListing = online.includes('thunderstore')
   const offered = SOURCES.filter((s) => online.includes(s.value))
   // A remembered choice that is no longer offered falls back to the first source that is.
-  const source: OnlineSource = chosen && online.includes(chosen) ? chosen : (online[0] ?? 'nexus')
+  const source: OnlineSource = chosen && online.includes(chosen) ? chosen : (online[0] ?? 'github')
   // Each source mounts on first visit and then stays mounted, so its search survives switching.
   const [opened, setOpened] = useState<OnlineSource[]>([source])
   if (!opened.includes(source)) setOpened([...opened, source])
@@ -90,6 +92,11 @@ export function Browse({ game }: { game: string }): React.JSX.Element {
       {online.includes('nexus') && opened.includes('nexus') && (
         <div className={source === 'nexus' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
           <NexusBrowse game={game} leading={switcher} />
+        </div>
+      )}
+      {opened.includes('github') && (
+        <div className={source === 'github' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+          <GithubBrowse game={game} leading={switcher} />
         </div>
       )}
     </>

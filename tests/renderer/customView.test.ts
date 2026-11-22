@@ -86,27 +86,27 @@ describe('platform and runner helpers', () => {
       o as unknown as Parameters<typeof sourcesFor>[0]
 
     test('a custom game with no Nexus domain makes GitHub the primary source', () => {
-      expect(sourcesFor(asGame(custom), null)).toEqual({ online: [], githubPrimary: true })
+      expect(sourcesFor(asGame(custom), null)).toEqual({ online: ['github'], githubPrimary: true })
     })
     test('a catalog game offers Thunderstore and, with a domain, Nexus', () => {
       expect(sourcesFor(asGame(catalog), null)).toEqual({
-        online: ['thunderstore'],
+        online: ['thunderstore', 'github'],
         githubPrimary: false
       })
       expect(sourcesFor(asGame(catalog), 'repo')).toEqual({
-        online: ['thunderstore', 'nexus'],
+        online: ['thunderstore', 'nexus', 'github'],
         githubPrimary: false
       })
     })
     test('a Nexus-only game offers Nexus before its domain has loaded', () => {
       expect(sourcesFor(asGame({ label: 'nexus-skyrim', packageIndex: null }), null)).toEqual({
-        online: ['nexus'],
+        online: ['nexus', 'github'],
         githubPrimary: false
       })
     })
-    test('a custom game with a Nexus domain offers Nexus only', () => {
+    test('a custom game with a Nexus domain offers Nexus and GitHub', () => {
       expect(sourcesFor(asGame(custom), 'somegame')).toEqual({
-        online: ['nexus'],
+        online: ['nexus', 'github'],
         githubPrimary: false
       })
     })

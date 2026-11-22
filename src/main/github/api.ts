@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto'
 import { compareVersions } from '../../shared/version'
-import { samePrefix, tagPrefix, tagVersion } from '../../shared/ghTag'
+import { isNewerTag, samePrefix, tagPrefix, tagVersion, versionsOf } from '../../shared/ghTag'
 import { GH_RATE_LIMIT_PREFIX, GH_REJECTED_TOKEN_PREFIX } from '../../shared/messages'
 import { readJson, writeJsonAtomic } from '../store/json'
 import type { GhTrack } from '../../shared/types'
 import type { GhReleaseAsset } from './assets'
+
+export { isNewerTag }
 
 export interface GhRelease {
   tag: string
@@ -377,23 +379,6 @@ export async function fetchLogin(opts: { fetch: typeof fetch; token: string }): 
   throwCommonError(res, Date.now())
   if (!res.ok) throw new Error(`GitHub returned HTTP ${res.status} for your account.`)
   return String(((await res.json()) as { login: unknown }).login)
-}
-
-const VERSION_LIKE = /^v?\d+(\.\d+)*$/i
-
-/** Two tags of one monorepo mod as their versions; other tags unchanged. */
-function versionsOf(a: string, b: string): [string, string] {
-  const pa = tagPrefix(a)
-  return pa && samePrefix(pa, tagPrefix(b)) ? [tagVersion(a), tagVersion(b)] : [a, b]
-}
-
-export function isNewerTag(latestTag: string, currentTag: string): boolean {
-  const [latest, current] = versionsOf(latestTag, currentTag)
-  if (VERSION_LIKE.test(latest) && VERSION_LIKE.test(current)) {
-    const strip = (t: string): string => t.replace(/^v/i, '')
-    return compareVersions(strip(latest), strip(current)) > 0
-  }
-  return latest !== current
 }
 
 const SEMVER_LIKE = /^v?(\d+(?:\.\d+)*)(?:-([0-9a-z.-]+))?(?:\+[0-9a-z.-]+)?$/i

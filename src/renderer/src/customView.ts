@@ -43,16 +43,21 @@ export function runnerIndexOf(runners: Runner[], current: Runner | null | undefi
   return i < 0 ? 0 : i
 }
 
-/** Which online catalogues a game can browse. With none, GitHub is the primary way to add mods. */
+/**
+ * Which online catalogues a game can browse; the GitHub catalog always comes last. With neither
+ * Thunderstore nor Nexus Mods, GitHub is the primary way to add mods.
+ */
 export function sourcesFor(
   game: Pick<GameSummary, 'packageIndex' | 'label'>,
   nexusDomain: string | null
-): { online: ('thunderstore' | 'nexus')[]; githubPrimary: boolean } {
-  const online: ('thunderstore' | 'nexus')[] = []
+): { online: ('thunderstore' | 'nexus' | 'github')[]; githubPrimary: boolean } {
+  const online: ('thunderstore' | 'nexus' | 'github')[] = []
   if (game.packageIndex) online.push('thunderstore')
   // Nexus-only games always have a domain; don't wait for the lookup to show it.
   if (nexusDomain || game.label.startsWith('nexus-')) online.push('nexus')
-  return { online, githubPrimary: online.length === 0 }
+  const githubPrimary = online.length === 0
+  online.push('github')
+  return { online, githubPrimary }
 }
 
 const SHORT_LOADER_LABELS: Record<Exclude<LoaderChoice, 'none'>, string> = {

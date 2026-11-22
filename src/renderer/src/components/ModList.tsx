@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import type {
   ConfigFile,
+  GhBlocked,
   GhUpdate,
   InstalledMod,
   ModSource,
@@ -97,6 +98,8 @@ function useModIcons(
   return icons.scope === scope ? icons.urls : NO_ICON_MAP
 }
 
+const NO_BLOCKED: GhBlocked = {}
+
 export function ModList(): React.JSX.Element | null {
   const profile = useCurrentProfile()
   const busy = useStore((s) => s.busy)
@@ -141,6 +144,26 @@ export function ModList(): React.JSX.Element | null {
       live = false
     }
   }, [gameLabel, profileId, modCount, configNonce])
+  // GitHub mods whose repo or owner HML blocks, looked up again whenever the GitHub mods change.
+  const ghKey =
+    profile?.mods
+      .filter((m) => m.source.kind === 'github')
+      .map((m) => m.id)
+      .join('\n') ?? ''
+  const [blockedList, setBlockedList] = useState<{ key: string; map: GhBlocked } | null>(null)
+  const blockedKey = `${profileKey}\n${ghKey}`
+  const blocked = blockedList?.key === blockedKey ? blockedList.map : NO_BLOCKED
+  useEffect(() => {
+    if (!gameLabel || !profileId || !ghKey) return
+    let live = true
+    api.ghBlocked(gameLabel, profileId).then(
+      (map) => live && setBlockedList({ key: blockedKey, map }),
+      () => {}
+    )
+    return () => {
+      live = false
+    }
+  }, [gameLabel, profileId, ghKey, blockedKey])
   // Browse mounts on first visit and then stays mounted, so search and filters survive tab switches.
   const [onlineOpened, setOnlineOpened] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -369,7 +392,7 @@ export function ModList(): React.JSX.Element | null {
         <EmptyState
           onPick={() => void installFromFile()}
           onGithub={openGithub}
-          onBrowse={hasOnline ? browseOnline : undefined}
+          onBrowse={githubPrimary ? undefined : browseOnline}
           supported={game.supported}
           busy={busy || locked}
           locked={locked}
@@ -464,6 +487,7 @@ export function ModList(): React.JSX.Element | null {
                   icons={icons[m.id] ?? NO_ICONS}
                   update={updateById.get(m.id)}
                   ghUpdate={ghUpdateById.get(m.id)}
+                  blocked={blocked[m.id]}
                   nxUpdate={nxUpdateById.get(m.id)}
                   supported={game.supported}
                   locked={locked}
@@ -595,11 +619,14 @@ function ModRow({
   supported,
   locked,
   wontSync,
+  blocked,
   onOpen,
   config,
   onEditConfig
 }: {
   mod: InstalledMod
+  /** Why HML blocks this GitHub mod's repo or owner; it no longer updates. */
+  blocked?: string
   /** The profile follows a sync code: its mods can't be changed here. */
   locked: boolean
   /** A local mod on a profile that publishes a sync code. */
@@ -864,6 +891,25 @@ function ModRow({
         >
           {updating ? 'Updating…' : `Update to ${latest}`}
         </Button>
+      )}
+      {blocked !== undefined && (
+        <span className="flex shrink-0 items-center gap-2">
+          <span
+            className="max-w-64 truncate rounded bg-danger/10 px-1.5 py-0.5 text-[11px] font-medium text-danger"
+            title={`Blocked by HML: ${blocked}`}
+          >
+            Blocked by HML: {blocked}
+          </span>
+          <Button
+            variant="danger"
+            className="h-7 px-2.5 text-xs"
+            disabled={locked}
+            title={locked ? SYNC_LOCKED_NOTE : undefined}
+            onClick={() => void askUninstall()}
+          >
+            Remove
+          </Button>
+        </span>
       )}
       {wontSync && (
         <span

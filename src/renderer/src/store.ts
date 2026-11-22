@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { CatalogEntry } from '../../shared/ghCatalog'
 import type { GameSummary } from '../../shared/ipc'
 import type {
   DeploymentStatus,
@@ -8,6 +9,7 @@ import type {
   GhUpdateMode,
   HmlEvent,
   AddCustomGameInput,
+  CatInstallResult,
   CustomGameUpdate,
   InstalledMod,
   LaunchMode,
@@ -24,6 +26,7 @@ import type {
 import { api, errorMessage } from './api'
 import { isGhAccessError } from '../../shared/messages'
 import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
+import { catInstallToast } from './ghCatalogView'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import {
   NX_MAX_UPDATE_TABS,
@@ -55,7 +58,7 @@ export interface Toast {
   action?: ToastAction
 }
 /** Which catalogue the Online tab browses. */
-export type OnlineSource = 'thunderstore' | 'nexus'
+export type OnlineSource = 'thunderstore' | 'nexus' | 'github'
 
 interface State {
   ready: boolean
@@ -79,6 +82,8 @@ interface State {
   ghUpdating: string[]
   /** Number of running GitHub installs (the Add from GitHub dialog). */
   ghInstalling: number
+  /** Keys of GitHub catalog mods being installed. */
+  catInstalling: string[]
   /** GitHub account of a token saved in this session; null when unknown or removed. */
   ghLogin: string | null
   /** Nexus mod ids being installed or updated. */
@@ -161,6 +166,15 @@ interface State {
   /** Throws on failure so the GitHub dialog can show the error inline. */
   ghInstall(url: string, asset?: string, opts?: GhInstallRequest): Promise<GhInstallResult>
   ghUpdate(updates: GhUpdate[]): Promise<void>
+  /**
+   * Installs a GitHub catalog mod with its dependencies once `confirmedOwners` covers every
+   * untrusted owner. Toasts the outcome and failures; null when it failed or was already running.
+   */
+  catInstall(
+    entry: CatalogEntry,
+    confirmedOwners: string[],
+    unavailable: string[]
+  ): Promise<CatInstallResult | null>
   ghSetUpdateMode(modId: string, mode: GhUpdateMode): Promise<void>
   /** Holds a Thunderstore or Nexus mod at its version, or lets it update again. */
   setModHeld(modId: string, held: boolean): Promise<void>
@@ -255,7 +269,10 @@ export const useStore = create<State>()((set, get) => {
 
   /** The progress line is kept only while some install or update is running. */
   const progressIdle = (s: State): boolean =>
-    s.tsInstalling.length === 0 && s.ghUpdating.length === 0 && s.ghInstalling === 0
+    s.tsInstalling.length === 0 &&
+    s.ghUpdating.length === 0 &&
+    s.ghInstalling === 0 &&
+    s.catInstalling.length === 0
 
   async function persist(patch: (s: Settings) => Settings): Promise<void> {
     // Read fresh settings so main-process changes (game path overrides) are never clobbered.
@@ -546,6 +563,7 @@ export const useStore = create<State>()((set, get) => {
     ghUpdates: [],
     ghUpdating: [],
     ghInstalling: 0,
+    catInstalling: [],
     ghLogin: null,
     nxInstalling: [],
     nxUpdates: [],
@@ -980,6 +998,48 @@ export const useStore = create<State>()((set, get) => {
         get().toast('success', ghInstallToast(result.mod, result.replaced))
         await refreshWarnings()
         await get().checkUpdates()
+      }
+      return result
+    },
+
+    async catInstall(entry, confirmedOwners, unavailable) {
+      const { currentGame, currentProfile } = get()
+      if (!currentGame || !currentProfile || get().catInstalling.includes(entry.key)) return null
+      set((s) => ({ catInstalling: [...s.catInstalling, entry.key] }))
+      let result: CatInstallResult
+      try {
+        result = await tracked(async () => {
+          try {
+            return await api.catInstall(
+              currentGame.label,
+              currentProfile,
+              entry.key,
+              confirmedOwners
+            )
+          } finally {
+            // GitHub mods installed before a failing Thunderstore dependency are recorded.
+            await reloadProfiles().catch(() => {})
+          }
+        })
+      } catch (e) {
+        fail(e)
+        return null
+      } finally {
+        set((s) => {
+          const catInstalling = s.catInstalling.filter((k) => k !== entry.key)
+          return {
+            catInstalling,
+            progress: progressIdle({ ...s, catInstalling }) ? null : s.progress
+          }
+        })
+        await refreshWarnings()
+      }
+      if (result.kind === 'installed') {
+        const t = catInstallToast(entry, result.installed, unavailable)
+        get().toast(t.kind, t.message)
+        await get().checkUpdates()
+      } else if (result.kind === 'blocked') {
+        get().toast('error', `Blocked by HML: ${result.reason}`)
       }
       return result
     },
