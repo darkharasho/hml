@@ -84,12 +84,12 @@ Each entry in `mods`:
 | `tagPrefix` | When `mods` has more than one entry | Non-empty. The text before the version in your release tags. |
 | `assetPattern` | No | Non-empty. Picks the release asset by name. `{version}` matches a version number. Without it, HML takes the first `.zip` asset. |
 | `icon` | No | An `https://` URL or a path in the repo. Defaults to your GitHub avatar. |
-| `readme` | No | A path in the repo or an `https://` URL. Defaults to `README.md`. |
+| `readme` | No | A path in the repo. URLs are not allowed. Defaults to `README.md`. |
 | `categories` | No | Up to 5 labels, each 1 to 32 characters. Defaults to none. |
 | `dependencies` | No | A list of mods to install first. Defaults to none. See [Dependencies](#dependencies). |
 | `nsfw` | No | `true` or `false`. Defaults to `false`. |
 
-Repo paths must be relative. They can't start with `/`, contain `\`, contain `..`, or start with a scheme like `file:`. They can be up to 300 characters. Icon URLs can be up to 500 characters.
+Repo paths (`readme`, and `icon` when it isn't a URL) must be relative. They can't start with `/`, contain `\`, contain `..`, or start with a scheme like `file:`. They can be up to 300 characters. Icon URLs can be up to 500 characters.
 
 ### Game labels
 
