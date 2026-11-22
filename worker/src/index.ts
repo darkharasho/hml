@@ -4,7 +4,6 @@ import { handleSync, type CacheLike } from './sync'
 import { runCrawl } from './catalog/crawl'
 import { CATALOG_PREFIX, handleCatalog } from './catalog/routes'
 
-export { MAX_BYTES, TTL_SECONDS }
 export type { CacheLike }
 
 export interface KvLike {

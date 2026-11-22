@@ -1,7 +1,8 @@
 import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { CROCKFORD, newCode, normalizeCode } from '../../worker/src/code'
-import worker, { createHandler, MAX_BYTES, TTL_SECONDS, type Env } from '../../worker/src/index'
+import { MAX_BYTES, TTL_SECONDS } from '../../worker/src/http'
+import worker, { createHandler, type Env } from '../../worker/src/index'
 
 function makeEnv(
   success = true,

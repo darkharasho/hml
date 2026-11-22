@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { CROCKFORD, newSyncCode, normalizeCode, normalizeSyncCode } from '../../worker/src/code'
-import { createHandler, TTL_SECONDS, type CacheLike, type Env } from '../../worker/src/index'
+import { TTL_SECONDS } from '../../worker/src/http'
+import { createHandler, type CacheLike, type Env } from '../../worker/src/index'
 
 interface Entry {
   value: Uint8Array
