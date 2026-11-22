@@ -1864,7 +1864,8 @@ describe('services', () => {
       'serveArt',
       'cancelLaunchWatches',
       'syncTick',
-      'syncFocusCheck'
+      'syncFocusCheck',
+      'catStatusStrict'
     ]
     const keys = Object.keys(createServices(deps)).filter((k) => !mainOnly.includes(k))
     expect([...HML_METHODS].sort()).toEqual(keys.sort())
@@ -2445,7 +2446,8 @@ describe('services', () => {
         ])
           publish(o, r, 'v2.0.0', { 'a.zip': zipOf(`${o}${r}`, '2.0.0') })
         blocklist = { entries: [{ names: ['evil'], reason: 'malware' }] }
-        clock += 11 * 60_000 // past the install-time lookup's memo window
+        // Past the install-time lookup's memo window and the blocklist cached at install.
+        clock += 31 * 60_000
 
         expect((await api.ghCheckUpdates('repo', pid)).map((u) => u.modId)).toEqual(['good-ok'])
         expect(await api.ghBlocked('repo', pid)).toEqual({
@@ -2468,6 +2470,18 @@ describe('services', () => {
           'Blocked by HML: malware'
         )
         expect((await modsOf()).map((m) => m.id)).toEqual(['evil-one', 'Evil-Two', 'good-ok'])
+      })
+
+      test('refuse an install by URL before looking up or downloading anything', async () => {
+        await setup()
+        publish('evil', 'one', 'v1.0.0', { 'a.zip': zipOf('E', '1.0.0') })
+        blocklist = { entries: [{ names: ['evil'], reason: 'malware' }] }
+        calls.length = 0
+        await expect(api.ghInstall('repo', pid, 'https://github.com/Evil/one')).rejects.toThrow(
+          'Blocked by HML: malware'
+        )
+        expect(calls).toEqual([])
+        expect(await modsOf()).toEqual([])
       })
 
       test('ghBlocked is empty with an unreachable blocklist (fails open)', async () => {
@@ -4503,6 +4517,7 @@ describe('share import', () => {
   let hml: Uint8Array
   let ghDown: boolean
   let ghLimited: boolean
+  let catBlocklist: { entries: { names: string[]; reason: string }[] }
   let nexusDown: boolean
   let ownModVersions: string[]
   let ownModDeps: string[]
@@ -4624,6 +4639,8 @@ describe('share import', () => {
     }
     if (u.host === 'cf-files.nexusmods.com')
       return new Response(zipOf('CoolMod', '1.0.0') as BodyInit)
+    if (url === 'https://share.test/v1/catalog/blocklist')
+      return new Response(JSON.stringify(catBlocklist))
     if (url === `https://share.test/v1/profiles/${CODE}`) return new Response(hml as BodyInit)
     if (url === `https://thunderstore.io/api/experimental/legacyprofile/get/${R2_CODE}/`) {
       return new Response(`#r2modman\n${Buffer.from(r2z).toString('base64')}`)
@@ -4683,6 +4700,7 @@ describe('share import', () => {
     premium = true
     ghDown = false
     ghLimited = false
+    catBlocklist = { entries: [] }
     nexusDown = false
     ownModVersions = ['2.0.0', '1.0.0']
     ownModDeps = ['Dep-Lib-1.0.0']
@@ -5025,6 +5043,15 @@ describe('share import', () => {
     expect(r.installed).toBe(2)
     expect(r.unresolved.map((u) => u.reason)).toEqual([
       "Couldn't reach GitHub. Check your connection and try again."
+    ])
+    expect(r.profile.mods.map((m) => m.id).sort()).toEqual(['Dep-Lib', 'Own-Mod'])
+  })
+
+  test('a blocked GitHub mod is left unresolved with the block reason', async () => {
+    catBlocklist = { entries: [{ names: ['owner/thing'], reason: 'malware' }] }
+    const r = await importCode([ts('Own-Mod', '1.0.0'), gh('v1.0.0')])
+    expect(r.unresolved.map((u) => [u.name, u.reason])).toEqual([
+      ['Thing', 'Blocked by HML: malware']
     ])
     expect(r.profile.mods.map((m) => m.id).sort()).toEqual(['Dep-Lib', 'Own-Mod'])
   })

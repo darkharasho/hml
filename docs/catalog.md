@@ -167,7 +167,7 @@ For a repo with several mods, a mod that fails stays out and the others are stil
 
 HML does not review mods from GitHub. Users install them at their own risk. The first time a user installs from a new author, HML asks them to confirm.
 
-HML keeps a blocklist. A blocked mod disappears from the catalog. If a user has it installed, HML shows "Blocked by HML: {reason}" and stops updating it.
+HML keeps a blocklist. A blocked mod disappears from the catalog. If a user has it installed, HML shows "Blocked by HML: {reason}" and stops updating it. HML also refuses to install it, whether from the catalog, a pasted GitHub link, a share code or a synced profile.
 
 ## Blocked mods
 

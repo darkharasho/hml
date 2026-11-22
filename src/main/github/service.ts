@@ -548,8 +548,11 @@ export function createGithubServices(ctx: GhContext): Pick<
     }
     const def = await ctx.requireGame(game)
     if (!def.supported) throw new Error(unsupportedLoaderMessage(def))
-    const catalog = await ctx.getCatalog()
     const { owner, repo } = ref
+    // Every install path (pasted URL, share import, sync apply, catalog) stops at a block.
+    const blocked = await ctx.blockedReason(owner, repo).catch(() => null)
+    if (blocked !== null) throw blockedError(blocked)
+    const catalog = await ctx.getCatalog()
     const total = 3
     const progress = (message: string, done: number): void =>
       deps.emit({ type: 'progress', message, done, total })
