@@ -113,7 +113,9 @@ describe('validateManifest', () => {
       error: 'invalid-manifest: mods.0.readme: must be a relative repo path'
     })
     const r = one({ icon: 'javascript:alert(1)' })
-    expect(!r.ok && r.error).toBe('invalid-manifest: mods.0.icon: must be an https URL or repo path')
+    expect(!r.ok && r.error).toBe(
+      'invalid-manifest: mods.0.icon: must be an https URL or repo path'
+    )
   })
   it('applies defaults', () => {
     const r = one()
