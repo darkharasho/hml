@@ -15,7 +15,8 @@ export function defaultSettings(): Settings {
     gameColors: true,
     updateNotifications: true,
     favoriteGames: [],
-    nexusPagesInBrowser: false
+    nexusPagesInBrowser: false,
+    trustedCatalogOwners: []
   }
 }
 
@@ -60,7 +61,10 @@ export function normalizeSettings(stored: unknown): Settings {
     nexusPagesInBrowser:
       typeof stored.nexusPagesInBrowser === 'boolean'
         ? stored.nexusPagesInBrowser
-        : defaults.nexusPagesInBrowser
+        : defaults.nexusPagesInBrowser,
+    trustedCatalogOwners: Array.isArray(stored.trustedCatalogOwners)
+      ? [...new Set(stored.trustedCatalogOwners.filter((x): x is string => typeof x === 'string'))]
+      : defaults.trustedCatalogOwners
   }
 }
 

@@ -106,6 +106,7 @@ import { createEntryInstaller, type ShareInstallers } from './share/entries'
 import { applyRevision } from './sync/apply'
 import { lockFollowers } from './sync/lock'
 import { createSyncServices } from './sync/service'
+import { createCatalogServices } from './ghcatalog/service'
 import { gameByDomain, getMod } from './nexus/api'
 import { parseNxm, type HandlerPort, type NexusFileRef } from './nexus/nxm'
 import { findInstalledMod, providesPackage } from '../shared/modIdentity'
@@ -1366,6 +1367,13 @@ export function createServices(deps: ServiceDeps): Services {
   })
   late.sync = syncApi
 
+  const catalogApi = createCatalogServices({
+    paths,
+    fetch: deps.fetch,
+    shareBaseUrl: deps.shareBaseUrl,
+    now
+  })
+
   const shareApi = createShareServices({
     deps,
     getCatalog,
@@ -1602,6 +1610,9 @@ export function createServices(deps: ServiceDeps): Services {
     stopSync: syncApi.stopSync,
     detachSync: syncApi.detachSync,
     syncNow: syncApi.syncNow,
+    catList: catalogApi.catList,
+    catReadme: catalogApi.catReadme,
+    catStatus: catalogApi.catStatus,
     syncTick: () => syncApi.tick(),
     syncFocusCheck: () => syncApi.focusCheck(),
     ...customApi,

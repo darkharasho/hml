@@ -18,6 +18,9 @@ export interface AppPaths {
   /** Thunderstore package icon URLs by fullName, for games without a package index. */
   tsIconCache: string
   tsIndexCache(label: string): string
+  /** GitHub catalog index of one game. */
+  catalogCache(label: string): string
+  catalogBlocklist: string
   /** Parent of every per-game dir. */
   gamesDir: string
   gameDir(label: string): string
@@ -48,6 +51,8 @@ export function makePaths(root: string): AppPaths {
     steamArtCache: path.join(root, 'cache', 'steam-art.json'),
     tsIconCache: path.join(root, 'cache', 'thunderstore-icons.json'),
     tsIndexCache: (label) => path.join(root, 'cache', 'thunderstore', `${label}.json`),
+    catalogCache: (label) => path.join(root, 'cache', 'ghcatalog', `${label}.json`),
+    catalogBlocklist: path.join(root, 'cache', 'ghcatalog-blocklist.json'),
     gamesDir,
     gameDir,
     profilesDir,

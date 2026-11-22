@@ -41,6 +41,7 @@ import type {
   UpdateSummary
 } from './types'
 import type { ModDeps } from './modDeps'
+import type { CatListResult, RepoStatus } from './ghCatalog'
 
 export interface GameSummary extends GameDef {
   installDir: string | null
@@ -200,6 +201,12 @@ export interface HmlApi {
    * Owner: publishes now. Never throws; the result says what happened.
    */
   syncNow(game: string, profileId: string): Promise<SyncNowResult>
+  /** The GitHub mod catalog for a game: cached up to 30 minutes, the cached copy when offline. */
+  catList(game: string, force?: boolean): Promise<CatListResult>
+  /** Raw README markdown of a catalog entry (raw.githubusercontent.com only, capped at 1 MB). */
+  catReadme(game: string, key: string): Promise<string>
+  /** The Worker's crawl status of `owner/repo`; null when unknown or unreachable. */
+  catStatus(ownerRepo: string): Promise<RepoStatus | null>
   /**
    * Reads a share code or a picked `.hml` file and holds it for importShare; null when the file
    * dialog is cancelled. r2modman codes and `.r2z` files import into `game`, the open game.
@@ -340,6 +347,9 @@ const METHOD_TABLE = {
   stopSync: true,
   detachSync: true,
   syncNow: true,
+  catList: true,
+  catReadme: true,
+  catStatus: true,
   previewShare: true,
   shareModDetails: true,
   importShare: true,

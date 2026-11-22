@@ -64,7 +64,8 @@ describe('settings store', () => {
       gameColors: true,
       updateNotifications: true,
       favoriteGames: [],
-      nexusPagesInBrowser: false
+      nexusPagesInBrowser: false,
+      trustedCatalogOwners: []
     })
   })
 
@@ -80,7 +81,8 @@ describe('settings store', () => {
       gameColors: true,
       updateNotifications: true,
       favoriteGames: [],
-      nexusPagesInBrowser: false
+      nexusPagesInBrowser: false,
+      trustedCatalogOwners: []
     }
     await saveSettings(paths, s)
     expect(await loadSettings(paths)).toEqual(s)
@@ -107,7 +109,8 @@ describe('settings store', () => {
       gameColors: true,
       updateNotifications: true,
       favoriteGames: [],
-      nexusPagesInBrowser: false
+      nexusPagesInBrowser: false,
+      trustedCatalogOwners: []
     })
   })
 
@@ -124,7 +127,8 @@ describe('settings store', () => {
       gameColors: true,
       updateNotifications: true,
       favoriteGames: [],
-      nexusPagesInBrowser: false
+      nexusPagesInBrowser: false,
+      trustedCatalogOwners: []
     })
   })
 })
@@ -148,7 +152,8 @@ describe('resolveGameDir', () => {
     gameColors: true,
     updateNotifications: true,
     favoriteGames: [],
-    nexusPagesInBrowser: false
+    nexusPagesInBrowser: false,
+    trustedCatalogOwners: []
   }
 
   test('override beats steam detection', async () => {

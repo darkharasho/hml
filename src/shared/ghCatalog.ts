@@ -76,3 +76,10 @@ export interface ServedBlocklist {
   /** names are lowercase `owner` or `owner/repo`, including aliases */
   entries: { names: string[]; reason: string }[]
 }
+
+/** What the app's catalog list returns: the index, when it was fetched, and whether the Worker was unreachable. */
+export interface CatListResult {
+  mods: CatalogEntry[]
+  fetchedAt: string | null
+  offline: boolean
+}

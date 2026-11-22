@@ -1054,7 +1054,8 @@ describe('services', () => {
       gameColors: true,
       updateNotifications: true,
       favoriteGames: [],
-      nexusPagesInBrowser: false
+      nexusPagesInBrowser: false,
+      trustedCatalogOwners: []
     })
   })
 

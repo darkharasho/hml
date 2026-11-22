@@ -113,6 +113,8 @@ export interface Settings {
   favoriteGames: string[]
   /** Open free accounts' Nexus Mods download pages in the browser instead of HML's own window. */
   nexusPagesInBrowser: boolean
+  /** GitHub owners whose catalog mods the user already agreed to install from. */
+  trustedCatalogOwners: string[]
 }
 
 export type ModSource =
