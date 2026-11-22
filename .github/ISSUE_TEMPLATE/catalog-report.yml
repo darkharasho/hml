@@ -1,0 +1,35 @@
+name: Report a GitHub catalog mod
+description: Report a mod listed in HML's GitHub catalog.
+title: 'Report: owner/repo'
+labels: ['catalog-report']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to report a mod in HML's GitHub catalog. To appeal a block, open a regular issue instead.
+  - type: input
+    id: repo
+    attributes:
+      label: Repo URL
+      description: The GitHub repo of the mod.
+      placeholder: https://github.com/owner/repo
+    validations:
+      required: true
+  - type: dropdown
+    id: problem
+    attributes:
+      label: What's wrong
+      options:
+        - Malware
+        - Stolen or reuploaded
+        - Broken
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What you saw, and how we can check it.
+    validations:
+      required: false

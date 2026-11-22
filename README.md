@@ -67,6 +67,7 @@ HML works like [r2modman](https://github.com/ebkr/r2modmanPlus), with a modern i
 - Opt in to prereleases per mod
 - Updates arrive automatically when the repo publishes a new release
 - Also used to install and switch BepInEx builds for your own games
+- Authors can list a mod in the Online tab: see the [catalog guide](docs/catalog.md)
 
 </td>
 </tr>
