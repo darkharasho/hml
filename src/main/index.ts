@@ -28,6 +28,8 @@ import { createNexusPagesWindow } from './nexus/pagesWindow'
 import { GH_CHECK_INTERVAL_MS } from './github/service'
 import { SYNC_FOLLOW_POLL_MS, SYNC_POLL_MS } from './sync/service'
 import { makePaths } from './store/paths'
+import { loadCatalog } from './catalog/catalog'
+import { isKnownGameLabel } from '../shared/hmlManifest'
 import { resolveSnapshotPath } from './snapshotPath'
 import { ART_SCHEME } from './art/protocol'
 import icon from '../../resources/icon.png?asset'
@@ -208,6 +210,15 @@ function cliPort(svc: Services, emit: (e: HmlEvent) => void): CliPort {
         if (g) out.push({ label: g.label, displayName: g.displayName })
       }
       return out.sort((a, b) => a.displayName.localeCompare(b.displayName))
+    },
+    catStatus: svc.catStatusStrict,
+    async knownGameLabel(label) {
+      const catalog = await loadCatalog(
+        makePaths(app.getPath('userData')),
+        globalThis.fetch,
+        serviceDeps().snapshotPath
+      )
+      return isKnownGameLabel(label, new Set(catalog.games.map((g) => g.label)))
     },
     emit
   }

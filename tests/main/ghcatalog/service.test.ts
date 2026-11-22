@@ -88,6 +88,23 @@ describe('catStatus', () => {
   })
 })
 
+describe('catStatusStrict', () => {
+  it('returns null only for 404 and throws when the Worker is unreachable or failing', async () => {
+    const nf = await seed(
+      (async () => new Response('{}', { status: 404 })) as unknown as typeof fetch
+    )
+    expect(await nf.catStatusStrict('a/b')).toBeNull()
+    const down = await seed((async () => {
+      throw new Error('down')
+    }) as unknown as typeof fetch)
+    await expect(down.catStatusStrict('a/b')).rejects.toThrow('down')
+    const bad = await seed(
+      (async () => new Response('x', { status: 500 })) as unknown as typeof fetch
+    )
+    await expect(bad.catStatusStrict('a/b')).rejects.toThrow('HTTP 500')
+  })
+})
+
 describe('cachedEntry', () => {
   it('reads the disk cache only, matching tagPrefix', async () => {
     const f = vi.fn()

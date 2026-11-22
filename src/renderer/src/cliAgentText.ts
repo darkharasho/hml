@@ -6,5 +6,6 @@ Install mod builds into HML (my mod manager) with the \`hml\` command. Don't cop
 - Prefer a Thunderstore-style package zip or folder with a manifest.json at its root; without one the folder name becomes the mod id.
 - Check with \`hml mods <game> --profile Dev --json\`. Start the game with \`hml launch <game> --profile Dev\` only when I ask.
 - Exit code 0 means success; 1 means the operation failed and 2 means wrong usage. \`hml help\` lists everything.
+- For a mod published from a GitHub repo (hml.json plus the hml-mod topic): \`hml validate\` checks the manifest in the current folder, and \`hml validate owner/repo\` shows whether the catalog lists it.
 - If \`hml\` isn't found, tell me to install it from HML's Settings → Command line instead of falling back to copying files.
 `

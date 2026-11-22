@@ -1,4 +1,7 @@
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { OWNER_RE, REPO_RE, type RepoStatus } from '../../shared/ghCatalog'
+import { validateManifest } from '../../shared/hmlManifest'
 import type { HmlApi } from '../../shared/ipc'
 import type { HmlEvent, InstalledMod, ProfileManifest } from '../../shared/types'
 
@@ -18,6 +21,10 @@ export type CliPort = Pick<
   knownGames(): Promise<{ label: string; displayName: string }[]>
   /** Tells an open HML window a profile changed (a no-op without a window). */
   emit(e: HmlEvent): void
+  /** The catalog Worker's status for a repo: null when it hasn't been crawled, throws when unreachable. */
+  catStatus(ownerRepo: string): Promise<RepoStatus | null>
+  /** Whether a manifest game label is a Thunderstore community HML knows or a `nexus-` label. */
+  knownGameLabel(label: string): Promise<boolean>
 }
 
 export interface CliResult {
@@ -40,6 +47,7 @@ Commands:
   enable <game> <mod-id>             Enable a mod
   disable <game> <mod-id>            Disable a mod
   launch <game> [--vanilla]          Start the game with the profile's mods (or without any)
+  validate [path|owner/repo]         Check an hml.json, or a repo's GitHub catalog listing
   help                               This text
 
 Options:
@@ -47,6 +55,10 @@ Options:
   --json               Print machine-readable JSON instead of text.
 
 <game> is a game id from \`hml games\` (like "repo" or "lethal-company") or its name.
+
+Publishing a mod to the GitHub catalog:
+  Put an hml.json at your repo's root and give the repo the hml-mod topic. \`hml validate\` checks
+  the file in the current folder (or a path); \`hml validate owner/repo\` shows the listing status.
 
 Installing a mod you are developing:
   Point install at a build folder or zip laid out like a Thunderstore package: a manifest.json
@@ -96,6 +108,24 @@ export function parseCliArgs(argv: string[]): Parsed {
 export function findCliArgs(argv: string[]): string[] | null {
   const i = argv.indexOf('--cli')
   return i === -1 ? null : argv.slice(i + 1)
+}
+
+const isOwnerRepo = (s: string): boolean => {
+  const [owner, repo, ...extra] = s.split('/')
+  return extra.length === 0 && OWNER_RE.test(owner ?? '') && REPO_RE.test(repo ?? '')
+}
+
+/** Every game label the manifest text mentions (best effort; validation reports bad shapes). */
+function manifestGames(text: string): string[] {
+  try {
+    const mods = (JSON.parse(text) as { mods?: { games?: unknown }[] }).mods
+    const labels = (Array.isArray(mods) ? mods : []).flatMap((m) =>
+      Array.isArray(m?.games) ? m.games.filter((g): g is string => typeof g === 'string') : []
+    )
+    return [...new Set(labels)]
+  } catch {
+    return []
+  }
 }
 
 const lower = (s: string): string => s.toLowerCase()
@@ -307,6 +337,64 @@ export async function runCli(port: CliPort, argv: string[], cwd: string): Promis
           `Launched ${game.displayName} ${profile ? `with ${profile.name}` : 'without mods'}`,
           { game: game.label, profile: profile?.id ?? null, mode: p.vanilla ? 'vanilla' : 'modded' }
         )
+      }
+
+      case 'validate': {
+        if (args.length > 1) throw new CliError('Usage: hml validate [path|owner/repo]')
+        const arg = args[0]
+        const target = path.resolve(cwd, arg ?? '.')
+        const st = await fs.stat(target).catch(() => null)
+        if (!st && arg !== undefined && isOwnerRepo(arg)) {
+          const status = await port.catStatus(arg)
+          if (!status) {
+            throw new Error(
+              'Not in the catalog yet. Add the hml-mod topic; the catalog updates every 30 minutes.'
+            )
+          }
+          const lines = [`${status.owner}/${status.repo} last crawled ${status.crawledAt}`]
+          if (status.rejected) {
+            lines.push(`Rejected: ${status.rejected}`)
+          } else {
+            lines.push(
+              status.listed.length
+                ? 'Listed:\n' +
+                    status.listed.map((m) => `  ${m.id}  (${m.games.join(', ')})`).join('\n')
+                : 'Crawled, but no mods are listed.'
+            )
+          }
+          for (const w of status.warnings) lines.push(`Warning: ${w}`)
+          if (status.rejected) {
+            return {
+              code: 1,
+              stdout: json ? JSON.stringify(status, null, 2) + '\n' : '',
+              stderr: json ? '' : `hml: ${lines.join('\n')}\n`
+            }
+          }
+          return out(lines.join('\n'), status)
+        }
+        if (!st && arg !== undefined) throw new Error(`No such file or folder: ${arg}`)
+        const file = st?.isDirectory() ? path.join(target, 'hml.json') : target
+        const text = await fs.readFile(file, 'utf8').catch(() => null)
+        if (text === null)
+          throw new Error(`No hml.json in ${st?.isDirectory() ? target : path.dirname(target)}`)
+        const labels = new Map<string, boolean>()
+        for (const l of manifestGames(text)) labels.set(l, await port.knownGameLabel(l))
+        const result = validateManifest(text, (l) => labels.get(l) ?? false)
+        if (!result.ok) {
+          return {
+            code: 1,
+            stdout: json ? JSON.stringify(result, null, 2) + '\n' : '',
+            stderr: json ? '' : `hml: ${result.error}\n`
+          }
+        }
+        const res = out(
+          result.mods.map((m) => `${m.id}  ${m.name}  (${m.games.join(', ')})`).join('\n'),
+          result
+        )
+        return {
+          ...res,
+          stderr: json ? '' : result.warnings.map((w) => `hml: warning: ${w}\n`).join('')
+        }
       }
 
       default:

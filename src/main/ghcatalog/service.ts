@@ -25,6 +25,8 @@ export interface CatalogServices {
   catList(game: string, force?: boolean): Promise<CatListResult>
   catReadme(game: string, key: string): Promise<string>
   catStatus(ownerRepo: string): Promise<RepoStatus | null>
+  /** Like catStatus, but null means only "not crawled" (404); an unreachable Worker throws. */
+  catStatusStrict(ownerRepo: string): Promise<RepoStatus | null>
   /**
    * Disk cache only, no fetch. `prefix` is the installed tag's prefix ('' for a repo of one mod);
    * it matches an entry's manifest tagPrefix with or without its separator (`a` and `a-v`).
@@ -95,23 +97,29 @@ export function createCatalogServices(deps: CatalogServiceDeps): CatalogServices
       return readCapped(res, MAX_README_BYTES)
     },
 
-    async catStatus(ownerRepo: string): Promise<RepoStatus | null> {
-      const [owner, repo, ...extra] = ownerRepo.split('/')
-      if (extra.length > 0 || !OWNER_RE.test(owner ?? '') || !REPO_RE.test(repo ?? '')) return null
-      try {
-        const res = await deps.fetch(
-          `${deps.shareBaseUrl.replace(/\/+$/, '')}/v1/catalog/status/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
-          { signal: AbortSignal.timeout(TIMEOUT_MS) }
-        )
-        if (!res.ok) {
-          void res.body?.cancel().catch(() => undefined)
-          return null
-        }
-        const body = (await res.json()) as unknown
-        return typeof body === 'object' && body !== null ? (body as RepoStatus) : null
-      } catch {
+    catStatus: (ownerRepo) => status(ownerRepo, false),
+    catStatusStrict: (ownerRepo) => status(ownerRepo, true)
+  }
+
+  async function status(ownerRepo: string, strict: boolean): Promise<RepoStatus | null> {
+    const [owner, repo, ...extra] = ownerRepo.split('/')
+    if (extra.length > 0 || !OWNER_RE.test(owner ?? '') || !REPO_RE.test(repo ?? '')) return null
+    try {
+      const res = await deps.fetch(
+        `${deps.shareBaseUrl.replace(/\/+$/, '')}/v1/catalog/status/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+        { signal: AbortSignal.timeout(TIMEOUT_MS) }
+      )
+      if (!res.ok) {
+        void res.body?.cancel().catch(() => undefined)
+        if (strict && res.status !== 404)
+          throw new Error(`The catalog answered HTTP ${res.status}.`)
         return null
       }
+      const body = (await res.json()) as unknown
+      return typeof body === 'object' && body !== null ? (body as RepoStatus) : null
+    } catch (e) {
+      if (strict) throw e
+      return null
     }
   }
 

@@ -1,3 +1,4 @@
+import type { RepoStatus } from '../shared/ghCatalog'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
@@ -260,6 +261,8 @@ async function assertZipOrFolder(file: string): Promise<void> {
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 export type Services = HmlApi & {
+  /** catStatus that throws when the Worker is unreachable (null only means not crawled). */
+  catStatusStrict(ownerRepo: string): Promise<RepoStatus | null>
   ghAutoUpdateAll(): Promise<void>
   /** Checks every profile for mod updates, publishes the counts and notifies of new ones. */
   runBackgroundChecks(): Promise<void>
@@ -1633,6 +1636,7 @@ export function createServices(deps: ServiceDeps): Services {
     catList: catalogApi.catList,
     catReadme: catalogApi.catReadme,
     catStatus: catalogApi.catStatus,
+    catStatusStrict: catalogApi.catStatusStrict,
     catPlanInstall: catalogInstaller.catPlanInstall,
     catInstall: catalogInstaller.catInstall,
     syncTick: () => syncApi.tick(),
