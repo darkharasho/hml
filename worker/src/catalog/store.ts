@@ -9,6 +9,8 @@ export const COUNTS_REFRESH_MS = 6 * 3_600_000
 export const KEY_STATE = 'catalog:state'
 export const KEY_STATUS = 'catalog:status'
 export const KEY_BLOCKLIST = 'catalog:blocklist'
+/** The crawl's BlockState (GitHub ids of blocked names), written only when it changes. */
+export const KEY_BLOCKS = 'catalog:blocks'
 export const KEY_GAMES = 'catalog:games'
 export const indexKey = (game: string): string => `catalog:index:${game}`
 

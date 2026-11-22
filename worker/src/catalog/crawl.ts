@@ -6,11 +6,12 @@
 import type { CatalogEntry, CatalogIndex, RepoStatus } from '../../../src/shared/ghCatalog'
 import { isKnownGameLabel } from '../../../src/shared/hmlManifest'
 import type { Env, KvLike } from '../index'
-import { isBlocked, updateBlockState, type BlockState } from './blocklist'
+import { isBlocked, parseBlockState, updateBlockState, type BlockState } from './blocklist'
 import { fetchSearchPage, GhGraphqlError } from './github'
 import { buildStatus } from './listing'
 import {
   isObj,
+  KEY_BLOCKS,
   KEY_GAMES,
   KEY_STATE,
   KEY_STATUS,
@@ -39,7 +40,6 @@ export interface CrawlState {
   /** This pass's statuses so far, keyed lowercase `owner/repo`. */
   pass: Record<string, RepoStatus>
   total: number
-  blocks: BlockState
   /** Games that got a non-empty index at the end of the last pass. */
   indexed: string[]
   /** Consecutive runs that failed, or were killed, at the stored cursor. */
@@ -57,11 +57,14 @@ export function parseState(v: unknown): CrawlState {
     cursor: typeof s.cursor === 'string' ? s.cursor : null,
     pass: isObj(s.pass) ? (s.pass as CrawlState['pass']) : {},
     total: typeof s.total === 'number' ? s.total : 0,
-    blocks:
-      isObj(s.blocks) && isObj(s.blocks.ids) ? (s.blocks as unknown as BlockState) : { ids: {} },
     indexed: Array.isArray(s.indexed) ? s.indexed.filter((g) => typeof g === 'string') : [],
     failures: typeof s.failures === 'number' ? s.failures : 0
   }
+}
+
+/** The block ids a crawl state stored before they got their own key (catalog:blocks). */
+export function legacyBlocks(state: unknown): BlockState | null {
+  return isObj(state) ? parseBlockState(state.blocks) : null
 }
 
 /** Thunderstore community slugs that have an r2modman (mod loader) entry. */
@@ -211,6 +214,16 @@ export async function runCrawl(
   const stored = await readStored<unknown>(kv, KEY_STATE)
   const state = parseState(stored.value)
   let stateHash = stored.hash
+  const blocksStored = await readStored<unknown>(kv, KEY_BLOCKS)
+  let blocksHash = blocksStored.hash
+  let blocks = parseBlockState(blocksStored.value)
+  if (!blocks) {
+    // First run since block ids moved out of catalog:state: keep them before the state drops them.
+    blocks = legacyBlocks(stored.value) ?? { ids: {} }
+    const w = await writeIfChanged(kv, KEY_BLOCKS, blocks, blocksHash)
+    if (w.written) writes++
+    blocksHash = w.hash
+  }
 
   // Earlier runs at this cursor all failed or were killed before finishing: don't fetch it again.
   let stalled = state.failures >= MAX_FAILURES
@@ -234,11 +247,11 @@ export async function runCrawl(
     state.failures = 0
     repos += page.repos.length
     state.total = page.total
-    state.blocks = updateBlockState(entries, state.blocks, page.repos)
+    blocks = updateBlockState(entries, blocks, page.repos)
     const crawledAt = new Date(now()).toISOString()
     for (const r of page.repos) {
       const status = buildStatus(r, isKnown, crawledAt)
-      const blocked = isBlocked(r, entries, state.blocks)
+      const blocked = isBlocked(r, entries, blocks)
       state.pass[`${r.owner}/${r.repo}`.toLowerCase()] = blocked
         ? { ...status, listed: [], rejected: 'blocked' }
         : status
@@ -249,6 +262,8 @@ export async function runCrawl(
       break
     }
   }
+
+  if (await putIfChanged(kv, KEY_BLOCKS, blocks, blocksHash)) writes++
 
   if (stalled) {
     // One page keeps failing: end the pass with what we have, keeping last pass's other repos.

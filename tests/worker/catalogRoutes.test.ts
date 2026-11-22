@@ -84,6 +84,51 @@ describe('/v1/catalog', () => {
     })
   })
 
+  it('serves the blocklist without reading the crawl state', async () => {
+    const { env, mem } = await crawled()
+    const read: string[] = []
+    const kv = env.PROFILES
+    const spy: typeof kv = {
+      ...kv,
+      get: ((key: string, type: 'text') => (read.push(key), kv.get(key, type))) as typeof kv.get,
+      getWithMetadata: ((key: string, type: 'text') => (
+        read.push(key),
+        kv.getWithMetadata(key, type)
+      )) as typeof kv.getWithMetadata
+    }
+    const res = await h.fetch(get('/blocklist'), { ...env, PROFILES: spy })
+    expect(await res.json()).toEqual({
+      entries: [{ names: ['evil/bad', 'evil/renamed'], reason: 'malware' }]
+    })
+    expect(read.sort()).toEqual(['catalog:blocklist', 'catalog:blocks'])
+    expect(mem.store.has('catalog:blocks')).toBe(true)
+  })
+
+  it('serves rename aliases from a crawl state written before the blocks key', async () => {
+    const mem = memKv()
+    mem.set('catalog:blocklist', [{ target: 'evil/bad', reason: 'malware', at: '2026-01-01' }])
+    const ids = {
+      'repo:9': {
+        kind: 'repo',
+        reason: 'malware',
+        names: ['evil/bad', 'evil/x'],
+        target: 'evil/bad'
+      }
+    }
+    mem.set('catalog:state', {
+      cursor: null,
+      pass: {},
+      total: 0,
+      blocks: { ids },
+      indexed: [],
+      failures: 0
+    })
+    const { env } = makeCatalogEnv(mem)
+    expect(await (await h.fetch(get('/blocklist'), env)).json()).toEqual({
+      entries: [{ names: ['evil/bad', 'evil/x'], reason: 'malware' }]
+    })
+  })
+
   it('serves an empty blocklist when none is stored', async () => {
     const { env } = makeCatalogEnv()
     expect(await (await h.fetch(get('/blocklist'), env)).json()).toEqual({ entries: [] })

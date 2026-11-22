@@ -67,8 +67,7 @@ function listMod(
   const latest = usable.find((rel) => !rel.prerelease) ?? usable[0]
   const asset = installable(latest)!
   let downloads = 0
-  for (const rel of usable)
-    for (const a of rel.assets) if (fits(a.name)) downloads += a.downloads
+  for (const rel of usable) for (const a of rel.assets) if (fits(a.name)) downloads += a.downloads
   return {
     key: `${r.owner}/${r.repo}/${mod.id}`,
     owner: r.owner,

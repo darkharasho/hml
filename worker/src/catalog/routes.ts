@@ -3,9 +3,9 @@ import type { CatalogIndex, RepoStatus } from '../../../src/shared/ghCatalog'
 import { manifestJsonSchema } from '../../../src/shared/hmlManifest'
 import { err } from '../http'
 import type { Env } from '../index'
-import { serveBlocklist } from './blocklist'
-import { parseState } from './crawl'
-import { indexKey, KEY_STATE, KEY_STATUS, readBlocklist, readStored } from './store'
+import { parseBlockState, serveBlocklist } from './blocklist'
+import { legacyBlocks } from './crawl'
+import { indexKey, KEY_BLOCKS, KEY_STATE, KEY_STATUS, readBlocklist, readStored } from './store'
 
 export const CATALOG_PREFIX = '/v1/catalog'
 const GAME_RE = /^[a-z0-9-]{1,64}$/
@@ -43,11 +43,14 @@ async function repoStatus(env: Env, owner: string, repo: string): Promise<Respon
 }
 
 async function blocklist(env: Env): Promise<Response> {
-  const [entries, state] = await Promise.all([
+  const [entries, stored] = await Promise.all([
     readBlocklist(env.PROFILES),
-    readStored<unknown>(env.PROFILES, KEY_STATE)
+    readStored<unknown>(env.PROFILES, KEY_BLOCKS)
   ])
-  return json(serveBlocklist(entries, parseState(state.value).blocks))
+  let blocks = parseBlockState(stored.value)
+  // Until the first crawl after an upgrade writes catalog:blocks, the ids live in the crawl state.
+  if (!blocks) blocks = legacyBlocks((await readStored<unknown>(env.PROFILES, KEY_STATE)).value)
+  return json(serveBlocklist(entries, blocks ?? { ids: {} }))
 }
 
 /** `path` is the URL pathname, starting with CATALOG_PREFIX. */

@@ -8,6 +8,13 @@ export interface BlockState {
   ids: Record<string, { kind: 'owner' | 'repo'; reason: string; names: string[]; target?: string }>
 }
 
+/** A stored BlockState, or null when `v` isn't one. */
+export function parseBlockState(v: unknown): BlockState | null {
+  const isObj = (o: unknown): o is Record<string, unknown> =>
+    typeof o === 'object' && o !== null && !Array.isArray(o)
+  return isObj(v) && isObj(v.ids) ? (v as unknown as BlockState) : null
+}
+
 const kindOf = (target: string): 'owner' | 'repo' => (target.includes('/') ? 'repo' : 'owner')
 const keyFor = (kind: 'owner' | 'repo', r: CrawledRepo): string =>
   kind === 'repo' ? `repo:${r.id}` : `owner:${r.ownerId}`

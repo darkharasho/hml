@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CatalogIndex, RepoStatus } from '../../src/shared/ghCatalog'
 import { CRAWL_PAGES_PER_RUN, runCrawl, type CrawlState } from '../../worker/src/catalog/crawl'
+import type { BlockState } from '../../worker/src/catalog/blocklist'
 import { createHandler } from '../../worker/src/index'
 import { fakeFetch, makeCatalogEnv, memKv, repoNode, type MemKv } from './catalogFakes'
 
@@ -93,8 +94,36 @@ describe('runCrawl', () => {
     expect(index(mem, 'repo')!.mods.map((m) => m.repo)).toEqual(['good'])
     const status = mem.json<Record<string, RepoStatus>>('catalog:status')!
     expect(status['evil/bad']).toMatchObject({ listed: [], rejected: 'blocked' })
-    const state = mem.json<CrawlState>('catalog:state')!
-    expect(Object.keys(state.blocks.ids)).toEqual(['owner:O-evil'])
+    const blocks = mem.json<BlockState>('catalog:blocks')!
+    expect(Object.keys(blocks.ids)).toEqual(['owner:O-evil'])
+    expect(mem.json<Record<string, unknown>>('catalog:state')!).not.toHaveProperty('blocks')
+    mem.puts.length = 0
+    await runCrawl(env, fakeFetch(pages).fetchFn, () => T0 + HOUR)
+    expect(mem.puts).not.toContain('catalog:blocks')
+  })
+
+  it('carries block ids over from a crawl state written before the blocks key', async () => {
+    const mem = seeded()
+    mem.set('catalog:blocklist', [{ target: 'evil/bad', reason: 'malware', at: '2026-01-01' }])
+    const ids = {
+      'repo:2': { kind: 'repo', reason: 'malware', names: ['evil/bad'], target: 'evil/bad' }
+    }
+    mem.set('catalog:state', {
+      cursor: null,
+      pass: {},
+      total: 0,
+      blocks: { ids },
+      indexed: [],
+      failures: 0
+    })
+    const { env } = makeCatalogEnv(mem)
+    await runCrawl(env, fakeFetch([[repoNode(2, 'evil', 'renamed')]]).fetchFn, () => T0)
+    const status = mem.json<Record<string, RepoStatus>>('catalog:status')!
+    expect(status['evil/renamed']).toMatchObject({ rejected: 'blocked' })
+    expect(mem.json<BlockState>('catalog:blocks')!.ids['repo:2'].names).toEqual([
+      'evil/bad',
+      'evil/renamed'
+    ])
   })
 
   it('puts a multi-game mod in every game index', async () => {
