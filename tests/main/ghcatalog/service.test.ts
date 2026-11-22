@@ -158,3 +158,25 @@ describe('cachedEntry with a malformed cache', () => {
     expect(await svc.cachedEntry('repo', 'a', 'b', '')).toBeNull()
   })
 })
+
+describe('game labels', () => {
+  it('never builds a cache path from a label outside [a-z0-9-]{1,64}', async () => {
+    const f = vi.fn(async (..._a: unknown[]) => new Response(JSON.stringify({ mods: [] })))
+    const svc = await seed(f as unknown as typeof fetch)
+    const paths = makePaths(dir)
+    // A cache file the traversal label would reach.
+    await writeJsonAtomic(path.join(dir, 'cache', 'x.json'), {
+      fetchedAt: new Date(1000).toISOString(),
+      etag: null,
+      mods: [{ key: 'a/b/m', owner: 'a', repo: 'b', id: 'm', readme: RAW }]
+    })
+    expect(paths.catalogCache('../x')).toBe(path.join(dir, 'cache', 'x.json'))
+    for (const bad of ['../x', 'Repo', 'a/b', '', 'x'.repeat(65)]) {
+      expect(await svc.catList(bad, true)).toEqual({ mods: [], fetchedAt: null, offline: false })
+      expect(await svc.cachedEntry(bad, 'a', 'b', '')).toBeNull()
+      await expect(svc.catReadme(bad, 'a/b/m')).rejects.toThrow()
+    }
+    expect(f).not.toHaveBeenCalled()
+    expect((await svc.catList('repo')).mods.length).toBeGreaterThan(0)
+  })
+})

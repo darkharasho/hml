@@ -11,6 +11,9 @@ import {
 } from './client'
 
 const README_HOST = 'https://raw.githubusercontent.com/'
+/** A game label the catalog can index (the Worker's rule); others never reach a cache path. */
+const GAME_RE = /^[a-z0-9-]{1,64}$/
+const NO_CATALOG: CatListResult = { mods: [], fetchedAt: null, offline: false }
 const MAX_README_BYTES = 1024 * 1024
 const TIMEOUT_MS = 20_000
 
@@ -52,8 +55,8 @@ export function createCatalogServices(deps: CatalogServiceDeps): CatalogServices
     blocklistState
   })
 
-  const list = (game: string, force?: boolean): Promise<CatListResult> =>
-    loadCatalogIndex(client(game), game, force === true)
+  const list = async (game: string, force?: boolean): Promise<CatListResult> =>
+    GAME_RE.test(game) ? loadCatalogIndex(client(game), game, force === true) : { ...NO_CATALOG }
 
   /** Reads the disk cache only; never fetches. */
   async function cachedEntry(
@@ -62,6 +65,7 @@ export function createCatalogServices(deps: CatalogServiceDeps): CatalogServices
     repo: string,
     prefix: string
   ): Promise<CatalogEntry | null> {
+    if (!GAME_RE.test(game)) return null
     const cache = await readJson<{ mods?: unknown }>(deps.paths.catalogCache(game)).catch(
       () => null
     )
@@ -125,6 +129,7 @@ export function createCatalogServices(deps: CatalogServiceDeps): CatalogServices
   }
 
   async function cachedMods(game: string): Promise<CatListResult> {
+    if (!GAME_RE.test(game)) return { ...NO_CATALOG }
     const cache = await readJson<{ mods?: unknown }>(deps.paths.catalogCache(game)).catch(
       () => null
     )
