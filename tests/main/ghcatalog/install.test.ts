@@ -213,14 +213,26 @@ describe('catInstall', () => {
         'p',
         'https://github.com/bob/b',
         undefined,
-        { tagPrefix: undefined, assetPattern: undefined, followNewestTag: true, catalog: true }
+        {
+          tagPrefix: undefined,
+          assetPattern: undefined,
+          prereleases: false,
+          followNewestTag: true,
+          catalog: true
+        }
       ],
       [
         'repo',
         'p',
         'https://github.com/alice/a',
         undefined,
-        { tagPrefix: 'a', assetPattern: 'A-{version}.zip', followNewestTag: true, catalog: true }
+        {
+          tagPrefix: 'a',
+          assetPattern: 'A-{version}.zip',
+          prereleases: false,
+          followNewestTag: true,
+          catalog: true
+        }
       ]
     ])
     expect(h.tsInstall.mock.calls).toEqual([['repo', 'p', 'BepInEx-BepInExPack']])
@@ -231,6 +243,27 @@ describe('catInstall', () => {
       expect.objectContaining({ repo: 'a' }),
       { kind: 'thunderstore', fullName: 'BepInEx-BepInExPack' }
     ])
+  })
+
+  it('follows pre-releases for a mod the catalog lists from a pre-release', async () => {
+    const latest = { tag: 'v0.1.0-beta', prerelease: true, assetName: 'a.zip' }
+    const h = harness([entry('o', 'a', 'a', { latest } as Partial<CatalogEntry>)])
+    h.trusted = ['o']
+    await createCatalogInstaller(h.deps).catInstall('repo', 'p', 'o/a/a', [])
+    expect(h.ghInstallWith.mock.calls[0][4]).toMatchObject({ prereleases: true })
+  })
+
+  it("asks for the catalog's asset by name when the mod has no assetPattern", async () => {
+    const latest = { tag: 'v1.0.0', prerelease: false, assetName: 'Mod-Lite-1.0.0.zip' }
+    const h = harness([
+      entry('o', 'a', 'a', { latest } as Partial<CatalogEntry>),
+      entry('o', 'b', 'b', { latest, assetPattern: 'B-{version}.zip' } as Partial<CatalogEntry>)
+    ])
+    h.trusted = ['o']
+    const inst = createCatalogInstaller(h.deps)
+    await inst.catInstall('repo', 'p', 'o/a/a', [])
+    await inst.catInstall('repo', 'p', 'o/b/b', [])
+    expect(h.ghInstallWith.mock.calls.map((c) => c[3])).toEqual(['Mod-Lite-1.0.0.zip', undefined])
   })
 
   it('skips a Thunderstore dep the profile already has', async () => {

@@ -10,6 +10,7 @@ import {
   confirmOwnersBody,
   filterCatalog,
   findCatInstalled,
+  listedFromPrerelease,
   type CatSort
 } from '../ghCatalogView'
 import { useCurrentProfile, useStore, useSyncLocked } from '../store'
@@ -324,6 +325,18 @@ export function NsfwBadge(): React.JSX.Element {
   )
 }
 
+/** The catalog lists the mod from a pre-release: installing it follows pre-releases. */
+export function PrereleaseBadge(): React.JSX.Element {
+  return (
+    <span
+      className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-[11px] font-medium text-fg/80"
+      title="This mod only has pre-releases. HML installs and updates it with pre-releases."
+    >
+      Pre-release
+    </span>
+  )
+}
+
 /** The mod's icon; the owner's avatar when it has none, initials when neither loads. */
 export function CatIcon({
   entry,
@@ -369,6 +382,7 @@ function ResultRow({
             {entry.name}
           </button>
           <span className="shrink-0 truncate text-xs text-muted">by {entry.owner}</span>
+          {listedFromPrerelease(entry) && <PrereleaseBadge />}
           {entry.nsfw && <NsfwBadge />}
         </div>
         {installing ? (

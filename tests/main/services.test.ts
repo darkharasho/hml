@@ -2539,6 +2539,63 @@ describe('services', () => {
         expect(await patternOf('owner-other')).toBe('Old-{version}.zip')
       })
 
+      const plainEntry = (repo: string, latest: object): object => ({
+        key: `owner/${repo}/${repo}`,
+        owner: 'owner',
+        repo,
+        id: repo,
+        name: repo,
+        description: 'd',
+        categories: [],
+        latest
+      })
+
+      test('installs a mod the catalog lists from a pre-release only', async () => {
+        await setup()
+        publishPre('owner', 'pre', 'v0.1.0-beta', { 'Pre-0.1.0.zip': zipOf('Pre', '0.1.0') })
+        cacheIndex([
+          plainEntry('pre', { tag: 'v0.1.0-beta', prerelease: true, assetName: 'Pre-0.1.0.zip' })
+        ])
+        const r = await api.catInstall('repo', pid, 'owner/pre/pre', ['owner'])
+        expect(r.kind).toBe('installed')
+        const mod = (await modsOf())[0]
+        expect(mod.source).toMatchObject({ tag: 'v0.1.0-beta' })
+        expect(mod.github?.prereleases).toBe(true)
+      })
+
+      test("installs the catalog's asset from a release with several zips", async () => {
+        await setup()
+        publish('owner', 'multi', 'v1.0.0', {
+          'Mod-1.0.0.zip': zipOf('Mod', '1.0.0'),
+          'Mod-Lite-1.0.0.zip': zipOf('ModLite', '1.0.0')
+        })
+        cacheIndex([plainEntry('multi', { tag: 'v1.0.0', assetName: 'Mod-Lite-1.0.0.zip' })])
+        expect((await api.catInstall('repo', pid, 'owner/multi/multi', ['owner'])).kind).toBe(
+          'installed'
+        )
+        const mod = (await modsOf())[0]
+        expect(mod.source).toMatchObject({ asset: 'Mod-Lite-1.0.0.zip' })
+        expect(mod.github).toMatchObject({ catalog: true, assetPattern: 'Mod-Lite-{version}.zip' })
+      })
+
+      test('finds the asset by its pattern in a release newer than the catalog lists', async () => {
+        await setup()
+        publish('owner', 'multi', 'v1.0.0', {
+          'Mod-1.0.0.zip': zipOf('Mod', '1.0.0'),
+          'Mod-Lite-1.0.0.zip': zipOf('ModLite', '1.0.0')
+        })
+        publish('owner', 'multi', 'v1.1.0', {
+          'Mod-1.1.0.zip': zipOf('Mod', '1.1.0'),
+          'Mod-Lite-1.1.0.zip': zipOf('ModLite', '1.1.0')
+        })
+        cacheIndex([plainEntry('multi', { tag: 'v1.0.0', assetName: 'Mod-Lite-1.0.0.zip' })])
+        await api.catInstall('repo', pid, 'owner/multi/multi', ['owner'])
+        expect((await modsOf())[0].source).toMatchObject({
+          tag: 'v1.1.0',
+          asset: 'Mod-Lite-1.1.0.zip'
+        })
+      })
+
       test('a URL install keeps the pattern of the file the user picked', async () => {
         await setup()
         publish('owner', 'lite', 'v1.0.0', {

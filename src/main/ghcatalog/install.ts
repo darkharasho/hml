@@ -23,7 +23,7 @@ export interface CatalogInstallDeps {
     game: string,
     profileId: string,
     url: string,
-    asset: undefined,
+    asset: string | undefined,
     opts: GhInstallOptions
   ): ReturnType<HmlApi['ghInstall']>
   /** The Thunderstore install with its dependencies (tsInstall). */
@@ -41,6 +41,8 @@ export interface CatalogInstaller {
 }
 
 const lower = (s: string): string => s.toLowerCase()
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
 /** The resolver's identity of an entry: `owner/repo/id`, owner and repo lowercased. */
 const idOf = (e: CatalogEntry): string => `${lower(e.owner)}/${lower(e.repo)}/${String(e.id)}`
 /** The entry's tag prefix as installed tags give it ('' for a repo of one mod). */
@@ -181,14 +183,23 @@ export function createCatalogInstaller(deps: CatalogInstallDeps): CatalogInstall
       const installed: InstalledMod[] = []
       for (const m of plan.mods) {
         const prefix = prefixOf(m)
+        const pattern = typeof m.assetPattern === 'string' ? m.assetPattern : undefined
+        const latest = isObject(m.latest) ? m.latest : null
+        // Without a pattern, the asset the Worker listed, so app and catalog pick the same file.
+        const named =
+          pattern === undefined && typeof latest?.assetName === 'string'
+            ? latest.assetName
+            : undefined
         const r = await deps.ghInstallWith(
           game,
           profileId,
           `https://github.com/${m.owner}/${m.repo}`,
-          undefined,
+          named,
           {
             tagPrefix: prefix || undefined,
-            assetPattern: typeof m.assetPattern === 'string' ? m.assetPattern : undefined,
+            assetPattern: pattern,
+            // A mod listed from a pre-release has no stable release to install.
+            prereleases: latest?.prerelease === true,
             followNewestTag: true,
             catalog: true
           }

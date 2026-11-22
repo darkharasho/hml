@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { CatalogEntry } from '../../../shared/ghCatalog'
 import { api, errorMessage } from '../api'
-import { catReportUrl, catRepoUrl } from '../ghCatalogView'
+import { catReportUrl, catRepoUrl, listedFromPrerelease } from '../ghCatalogView'
 import { useStore } from '../store'
 import { compactCount, relativeTime } from '../tsView'
-import { CatIcon, CatInstallButton, NsfwBadge, type CatInstallFlow } from './GithubBrowse'
+import {
+  CatIcon,
+  CatInstallButton,
+  NsfwBadge,
+  PrereleaseBadge,
+  type CatInstallFlow
+} from './GithubBrowse'
 import { Markdown } from './Markdown'
 import { ProgressLine } from './PackageDetail'
 import { Button, Icon, Modal } from './ui'
@@ -107,8 +113,13 @@ export function GithubCatalogDetail({
             </span>
             <span>Repo created {relativeTime(entry.repoCreatedAt, now)}</span>
           </p>
-          {(entry.categories.length > 0 || entry.nsfw) && (
+          {(entry.categories.length > 0 || entry.nsfw || listedFromPrerelease(entry)) && (
             <ul className="mt-2 flex flex-wrap gap-1.5">
+              {listedFromPrerelease(entry) && (
+                <li className="flex">
+                  <PrereleaseBadge />
+                </li>
+              )}
               {entry.nsfw && (
                 <li className="flex">
                   <NsfwBadge />

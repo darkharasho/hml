@@ -9,6 +9,7 @@ import {
   confirmOwnersBody,
   filterCatalog,
   joinOwners,
+  listedFromPrerelease,
   type CatSort
 } from '../../src/renderer/src/ghCatalogView'
 
@@ -214,5 +215,13 @@ describe('catInstallToast', () => {
       kind: 'info',
       message: 'Tools is already installed'
     })
+  })
+})
+
+describe('listedFromPrerelease', () => {
+  it('is true only for an entry listed from a pre-release', () => {
+    const pre = entry({ key: 'a/b/c', latest: { prerelease: true } as CatalogEntry['latest'] })
+    expect(listedFromPrerelease(pre)).toBe(true)
+    expect(listedFromPrerelease(entry({ key: 'a/b/c' }))).toBe(false)
   })
 })

@@ -608,7 +608,13 @@ export function createGithubServices(ctx: GhContext): Pick<
       }
       chosen = await download(token, matching[0], onDownload)
     } else if (named !== undefined) {
-      const asset = release.assets.find((a) => a.name === named)
+      let asset = release.assets.find((a) => a.name === named)
+      if (!asset && opts.catalog === true) {
+        // The catalog named the file of the release it listed; a newer one has its own version.
+        const like = assetPattern(named, '')
+        const hits = release.assets.filter((a) => matchesAssetPattern(like, a.name))
+        if (hits.length === 1) asset = hits[0]
+      }
       if (!asset) throw new Error(`${release.tag} has no file named ${named}.`)
       chosen = await download(token, asset, onDownload)
     } else {

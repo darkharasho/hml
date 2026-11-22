@@ -82,7 +82,7 @@ Each entry in `mods`:
 | `description` | Yes | 1 to 250 characters. |
 | `games` | Yes | 1 to 20 game labels, each up to 64 characters. See [Game labels](#game-labels). |
 | `tagPrefix` | When `mods` has more than one entry | 1 to 64 characters. The text before the version in your release tags. |
-| `assetPattern` | No | 1 to 200 characters, with at most 2 `{version}` tokens. Picks the release asset by name. `{version}` matches a version number. Without it, HML takes the first `.zip` asset. |
+| `assetPattern` | No | 1 to 200 characters, with at most 2 `{version}` tokens. Picks the release asset by name. `{version}` matches a version number. Without it, HML takes the first `.zip` asset, and installs that same file. |
 | `icon` | No | An `https://` URL or a path in the repo. Defaults to your GitHub avatar. |
 | `readme` | No | A path in the repo. URLs are not allowed. Defaults to `README.md`. |
 | `categories` | No | Up to 5 labels, each 1 to 32 characters. Defaults to none. |
@@ -110,7 +110,7 @@ HML installs dependencies before your mod. A dependency it can't find is reporte
 
 ## Releases
 
-HML lists a mod from its newest non-draft release that has a matching asset. A stable release wins over a newer prerelease. If you only have prereleases, HML lists the newest one.
+HML lists a mod from its newest non-draft release that has a matching asset. A stable release wins over a newer prerelease. If you only have prereleases, HML lists the newest one with a Pre-release badge, and installing it follows your prereleases.
 
 - With a single mod and no `tagPrefix`, every release counts.
 - With a `tagPrefix`, only releases whose tag has that prefix count. The match ignores case, and a trailing separator or `v` in the prefix is fine (`infinite-energy-v` works).

@@ -70,6 +70,10 @@ export function findCatInstalled(
   )
 }
 
+/** True when the catalog lists the mod from a pre-release (it has no stable release). */
+export const listedFromPrerelease = (entry: CatalogEntry): boolean =>
+  entry.latest.prerelease === true
+
 export function catInstallState(
   entry: CatalogEntry,
   installed: InstalledMod[]
