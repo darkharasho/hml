@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HML, Haro's Mod Loader</title>
+<meta name="description" content="A desktop mod manager for Thunderstore, Nexus Mods and GitHub mods, with a separate mod profile for every way you play." />
+<meta property="og:title" content="HML, Haro's Mod Loader" />
+<meta property="og:description" content="Thunderstore, Nexus Mods and GitHub mods in one app, with a profile for every way you play." />
+<meta property="og:image" content="https://darkharasho.github.io/hml/img/games.webp" />
+<link rel="icon" href="img/icon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --tile: #0e1b20;
+    --deep: #0a1418;
+    --surface: #16262d;
+    --raised: #1c313a;
+    --line: #24404a;
+    --ember: #ff9a3c;
+    --mint: #e3ece9;
+    --muted: #8ea6a3;
+    --display: 'Chakra Petch', system-ui, sans-serif;
+    --body: 'Instrument Sans', system-ui, sans-serif;
+    --cut: 18px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--tile);
+    color: var(--mint);
+    font: 400 1.0625rem/1.6 var(--body);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  img { display: block; max-width: 100%; height: auto; }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
+  .wrap { width: min(1200px, 100% - 2.5rem); margin-inline: auto; }
+  h1, h2 { font-family: var(--display); font-weight: 700; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+  p { margin: 0; }
+
+  .cut {
+    clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: .6rem;
+    padding: .85rem 1.4rem;
+    font: 600 1rem var(--display);
+    text-decoration: none;
+    --cut: 10px;
+  }
+  .btn-ember { background: var(--ember); color: #1a0e02; }
+  .btn-ember:hover { background: #ffad5f; }
+  .btn-line { background: var(--raised); color: var(--mint); }
+  .btn-line:hover { background: var(--line); }
+
+  /* Header */
+  header { position: absolute; inset: 0 0 auto; z-index: 5; }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; padding-block: 1.25rem; }
+  .brand { display: flex; align-items: center; gap: .6rem; font: 700 1.25rem var(--display); color: var(--ember); text-decoration: none; }
+  .brand img { width: 34px; height: 34px; }
+  header nav { display: flex; gap: 1.5rem; font-size: .95rem; }
+  header nav a { text-decoration: none; color: var(--muted); }
+  header nav a:hover { color: var(--mint); }
+
+  /* Hero */
+  .hero { position: relative; padding-top: 8.5rem; isolation: isolate; }
+  .hero-hex {
+    position: absolute; z-index: -1; pointer-events: none;
+    width: 1100px; left: 50%; top: -260px; translate: -50% 0; opacity: .5;
+  }
+  .hero-copy { text-align: center; }
+  .hero h1 { font-size: clamp(2.6rem, 1.4rem + 5vw, 5.5rem); line-height: .98; max-width: 14ch; margin-inline: auto; }
+  .hero-sub { margin-top: 1.25rem; color: var(--muted); font-size: 1.15rem; }
+  .hero-cta { margin-top: 2rem; display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; }
+
+  .stage { position: relative; margin-top: 4rem; perspective: 2200px; height: clamp(300px, 52vw, 640px); }
+  .stage .shot { position: absolute; box-shadow: 0 40px 90px rgba(0, 0, 0, .55); }
+  .stage .back {
+    width: min(1040px, 92%); left: 50%; top: 0;
+    translate: -50% 0;
+    transform: rotateX(18deg) scale(.96);
+    transform-origin: 50% 0;
+  }
+  .stage .front {
+    width: min(620px, 56%); right: max(0px, calc(50% - 600px)); top: 30%;
+    transform: rotateY(-14deg) rotateX(6deg);
+  }
+  .stage::after {
+    content: ''; position: absolute; inset: auto 0 0; height: 45%;
+    background: linear-gradient(transparent, var(--tile));
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .stage .back { animation: rise 1.1s cubic-bezier(.2, .7, .2, 1) both; }
+    .stage .front { animation: slide 1.1s .25s cubic-bezier(.2, .7, .2, 1) both; }
+    @keyframes rise { from { opacity: 0; transform: rotateX(38deg) scale(.9); } }
+    @keyframes slide { from { opacity: 0; transform: translateX(80px) rotateY(-30deg) rotateX(6deg); } }
+  }
+
+  /* Sections */
+  section { padding-block: clamp(4rem, 9vw, 8rem); }
+  .head { max-width: 34rem; }
+  .head h2 { font-size: clamp(2rem, 1.3rem + 2.6vw, 3.4rem); line-height: 1.02; }
+  .head p { margin-top: 1rem; color: var(--muted); }
+  .center { text-align: center; margin-inline: auto; }
+
+  /* Sources diagram */
+  .flow { margin-top: 3.5rem; }
+  .flow svg { width: 100%; height: auto; overflow: visible; }
+  .flow .wire { fill: none; stroke: var(--line); stroke-width: 3; }
+  .flow .pulse { fill: none; stroke: var(--ember); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 18 400; }
+  @media (prefers-reduced-motion: no-preference) {
+    .flow .pulse { animation: flow 2.6s linear infinite; }
+    .flow .pulse.p2 { animation-delay: -.9s; }
+    .flow .pulse.p3 { animation-delay: -1.7s; }
+    @keyframes flow { from { stroke-dashoffset: 300; } to { stroke-dashoffset: -20; } }
+  }
+  @media (prefers-reduced-motion: reduce) { .flow .pulse { display: none; } }
+  .flow text { font-family: var(--display); fill: var(--mint); }
+
+  /* Showcase screenshot */
+  .showcase { position: relative; margin-top: 3rem; }
+  .showcase img { width: 100%; --cut: 26px; }
+
+  /* Profiles */
+  .split { display: grid; grid-template-columns: 1fr 1.1fr; gap: clamp(2rem, 6vw, 6rem); align-items: center; }
+  .zoom {
+    --cut: 26px; overflow: hidden; background: var(--surface);
+    aspect-ratio: 240 / 205; position: relative;
+  }
+  .zoom img { width: 533.33%; max-width: none; margin-top: -58%; }
+  .chips { margin-top: 2rem; display: flex; flex-wrap: wrap; gap: .5rem; }
+  .chip { padding: .45rem .85rem; background: var(--surface); color: var(--muted); font-size: .95rem; --cut: 8px; }
+  .chip b { color: var(--mint); font-weight: 600; }
+
+  /* Share code */
+  .share { background: var(--deep); border-block: 1px solid var(--line); }
+  .code { margin-top: 3rem; display: flex; justify-content: center; gap: clamp(.25rem, 1vw, .6rem); }
+  .code span {
+    width: clamp(1.7rem, 7vw, 5.2rem); aspect-ratio: .82; display: grid; place-items: center;
+    background: var(--surface); --cut: clamp(5px, 1.2vw, 12px);
+    font: 700 clamp(1.1rem, 4.6vw, 3.6rem) var(--display); color: var(--ember);
+  }
+  .code .gap { background: none; width: clamp(.4rem, 2vw, 1.6rem); }
+
+  /* Download */
+  .dl { display: grid; grid-template-columns: repeat(4, 1fr); gap: .75rem; margin-top: 3rem; }
+  .dl a {
+    background: var(--surface); padding: 1.6rem 1.4rem; text-decoration: none; --cut: 16px;
+    display: grid; gap: 1.6rem; align-content: space-between; min-height: 11rem;
+  }
+  .dl a:hover { background: var(--raised); }
+  .dl a.mine { background: var(--ember); color: #1a0e02; }
+  .dl a.mine .os-sub { color: #4a2a08; }
+  .dl svg { width: 34px; height: 34px; }
+  .os { font: 700 1.4rem var(--display); }
+  .os-sub { color: var(--muted); font-size: .9rem; }
+  #dl-version { margin-top: 1.25rem; color: var(--muted); font-size: .95rem; }
+
+  .term {
+    margin-top: 4rem; background: var(--deep); padding: 1.5rem 1.75rem; --cut: 16px;
+    font: 500 .98rem/1.9 ui-monospace, 'JetBrains Mono', monospace; color: var(--muted); overflow-x: auto;
+  }
+  .term div { white-space: pre; }
+  .term b { color: var(--ember); font-weight: 500; }
+  .term i { color: var(--mint); font-style: normal; }
+  .authors { margin-top: 1rem; color: var(--muted); font-size: .95rem; }
+
+  footer { border-top: 1px solid var(--line); padding-block: 2rem; color: var(--muted); font-size: .9rem; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+
+  @media (max-width: 860px) {
+    header nav a:not(.gh) { display: none; }
+    .split { grid-template-columns: 1fr; }
+    .dl { grid-template-columns: 1fr 1fr; }
+    .stage .front { top: 42%; width: 64%; right: 0; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="#"><img src="img/icon.svg" alt="" />HML</a>
+    <nav>
+      <a href="#sources">Sources</a>
+      <a href="#profiles">Profiles</a>
+      <a href="#download">Download</a>
+      <a class="gh" href="https://github.com/darkharasho/hml">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <svg class="hero-hex" viewBox="0 0 1100 1100" aria-hidden="true">
+      <defs>
+        <radialGradient id="glow" cx="50%" cy="55%" r="50%">
+          <stop offset="0" stop-color="#ff9a3c" stop-opacity=".22" />
+          <stop offset="1" stop-color="#ff9a3c" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="550" cy="600" r="520" fill="url(#glow)" />
+      <path d="M550 120 966 360v480L550 1080 134 840V360z" fill="none" stroke="#ff9a3c" stroke-opacity=".35" stroke-width="3" />
+      <path d="M550 220 879 410v380L550 980 221 790V410z" fill="none" stroke="#ff9a3c" stroke-opacity=".15" stroke-width="2" />
+    </svg>
+
+    <div class="wrap hero-copy">
+      <h1>Every mod. Every game. One loader.</h1>
+      <p class="hero-sub">Thunderstore, Nexus Mods and GitHub, side by side.</p>
+      <div class="hero-cta">
+        <a class="btn btn-ember cut" id="hero-dl" href="#download">Download HML</a>
+        <a class="btn btn-line cut" href="https://github.com/darkharasho/hml">View source</a>
+      </div>
+    </div>
+
+    <div class="stage" aria-hidden="true">
+      <img class="shot back cut" src="img/games.webp" alt="" width="2560" height="1600" />
+      <img class="shot front cut" src="img/profile.webp" alt="" width="2560" height="1600" />
+    </div>
+  </div>
+
+  <section id="sources">
+    <div class="wrap">
+      <div class="head center">
+        <h2>Three sources. One list.</h2>
+        <p>Search all of them from the same tab. GitHub mods update when the repo publishes a release.</p>
+      </div>
+
+      <div class="flow">
+        <svg viewBox="0 0 1000 360" role="img" aria-label="Mods from Thunderstore, Nexus Mods and GitHub flow into HML and out to your profiles">
+          <path class="wire" d="M210 60 C 380 60, 380 180, 470 180" />
+          <path class="wire" d="M210 180 L 470 180" />
+          <path class="wire" d="M210 300 C 380 300, 380 180, 470 180" />
+          <path class="wire" d="M560 180 C 650 180, 650 70, 780 70" />
+          <path class="wire" d="M560 180 L 780 180" />
+          <path class="wire" d="M560 180 C 650 180, 650 290, 780 290" />
+          <path class="pulse" d="M210 60 C 380 60, 380 180, 470 180" />
+          <path class="pulse p2" d="M210 180 L 470 180" />
+          <path class="pulse p3" d="M210 300 C 380 300, 380 180, 470 180" />
+          <path class="pulse p2" d="M560 180 C 650 180, 650 70, 780 70" />
+          <path class="pulse p3" d="M560 180 L 780 180" />
+          <path class="pulse" d="M560 180 C 650 180, 650 290, 780 290" />
+
+          <g>
+            <polygon points="16,32 210,32 210,74 196,88 16,88" fill="#16262d" />
+            <text x="40" y="69" font-size="24" font-weight="600">Thunderstore</text>
+            <polygon points="16,152 210,152 210,194 196,208 16,208" fill="#16262d" />
+            <text x="40" y="189" font-size="24" font-weight="600">Nexus Mods</text>
+            <polygon points="16,272 210,272 210,314 196,328 16,328" fill="#16262d" />
+            <path transform="translate(38 286) scale(1.2)" fill="#e3ece9" d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2 0 1.9 1.2 1.9 1.2 1 1.8 2.8 1.3 3.5 1 0-.8.4-1.3.7-1.6-2.700-.3-5.500-1.300-5.500-6 0-1.200.5-2.300 1.300-3.100-.2-.4-.6-1.600 0-3.200 0 0 1-.3 3.400 1.200a11.500 11.500 0 0 1 6 0c2.300-1.500 3.300-1.200 3.300-1.200.6 1.600.2 2.800 0 3.200.9.8 1.300 1.900 1.300 3.200 0 4.600-2.800 5.600-5.500 5.900.5.4.9 1 .9 2.200v3.300c0 .3.1.7.8.6A12 12 0 0 0 12 .3" />
+            <text x="80" y="309" font-size="24" font-weight="600">GitHub</text>
+          </g>
+
+          <g transform="translate(515 180)">
+            <path d="M0 -62 54 -31v62L0 62 -54 31v-62z" fill="#0e1b20" stroke="#ff9a3c" stroke-width="8" stroke-linejoin="round" />
+            <path d="M-17 -27h10v15h14v-15h10v54h-10v-25h-14v25h-10z" fill="#e3ece9" />
+          </g>
+
+          <g>
+            <polygon points="780,44 984,44 984,82 970,96 780,96" fill="#ff9a3c" />
+            <text x="802" y="78" font-size="22" font-weight="700" style="fill:#1a0e02">Default</text>
+            <polygon points="780,154 984,154 984,192 970,206 780,206" fill="#1c313a" />
+            <text x="802" y="188" font-size="22" font-weight="600">Vanilla+</text>
+            <polygon points="780,264 984,264 984,302 970,316 780,316" fill="#1c313a" />
+            <text x="802" y="298" font-size="22" font-weight="600">Chaos night</text>
+          </g>
+        </svg>
+      </div>
+
+      <div class="showcase">
+        <img class="cut" src="img/browse.webp" alt="HML's Online tab for R.E.P.O., listing Thunderstore mods with download counts and Install buttons" width="2560" height="1600" loading="lazy" />
+      </div>
+    </div>
+  </section>
+
+  <section id="profiles">
+    <div class="wrap split">
+      <div class="head">
+        <h2>A profile for every way you play.</h2>
+        <p>Keep a stable setup, a test setup and a chaos setup for the same game. Follow a friend's profile and HML keeps you in sync.</p>
+        <div class="chips">
+          <span class="chip cut"><b>Start vanilla</b> without uninstalling</span>
+          <span class="chip cut"><b>Update all</b> in one click</span>
+          <span class="chip cut">Works with <b>Steam and Proton</b></span>
+        </div>
+      </div>
+      <div class="zoom cut">
+        <img src="img/profile.webp" alt="HML's profile list for R.E.P.O.: Default, 0.4.0 with 7 updates, 0.5.0 syncing with 6 updates, and Dev" width="2560" height="1600" loading="lazy" />
+      </div>
+    </div>
+  </section>
+
+  <section class="share" id="share">
+    <div class="wrap">
+      <div class="center head">
+        <h2>Send your whole mod list as one code.</h2>
+        <p>Friends paste it and get the same mods at the same versions.</p>
+      </div>
+      <div class="code" role="img" aria-label="Example share code 7KQ2M X9D4T">
+        <span class="cut">7</span><span class="cut">K</span><span class="cut">Q</span><span class="cut">2</span><span class="cut">M</span>
+        <span class="gap"></span>
+        <span class="cut">X</span><span class="cut">9</span><span class="cut">D</span><span class="cut">4</span><span class="cut">T</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="wrap">
+      <div class="head">
+        <h2>Download HML</h2>
+      </div>
+      <div class="dl" id="dl">
+        <a class="cut" data-os="win" data-match="-setup.exe" href="https://github.com/darkharasho/hml/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5 10 4.5v7H3zM11 4.3 21 3v8.5H11zM3 12.5h7v7l-7-1zM11 12.5h10V21l-10-1.4z" /></svg>
+          <span><span class="os">Windows</span><br /><span class="os-sub">Installer, signed</span></span>
+        </a>
+        <a class="cut" data-os="linux" data-match=".AppImage" href="https://github.com/darkharasho/hml/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2c-2.2 0-3.600 1.900-3.600 4.600 0 1.400.3 2.300-.6 3.600C6.600 11.900 5 14 5 16.400c0 .7.2 1.300.5 1.800-.6.4-1.500.6-1.500 1.500 0 1.200 1.900 1.300 3.400 1.800 1.300.5 2.200.5 2.900-.3h3.400c.7.8 1.600.8 2.900.3 1.500-.5 3.400-.6 3.400-1.800 0-.9-.9-1.100-1.500-1.500.3-.5.5-1.100.5-1.800 0-2.400-1.600-4.500-2.800-6.200-.9-1.300-.6-2.200-.6-3.600C15.600 3.900 14.200 2 12 2zm-1.500 4.200c.5 0 .8.5.8 1.100s-.3 1.100-.8 1.100-.8-.5-.8-1.100.3-1.100.8-1.100zm3 0c.5 0 .8.5.8 1.100s-.3 1.100-.8 1.100-.8-.5-.8-1.100.3-1.100.8-1.100zM12 9.300c.9 0 2 .6 2 1s-1.100 1-2 1-2-.6-2-1 1.100-1 2-1z" /></svg>
+          <span><span class="os">Linux</span><br /><span class="os-sub">AppImage</span></span>
+        </a>
+        <a class="cut" data-os="mac-arm" data-match="-mac-arm64.dmg" href="https://github.com/darkharasho/hml/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.400 12.700c0-2.600 2.100-3.800 2.200-3.900-1.200-1.800-3.100-2-3.700-2-1.600-.2-3.100.9-3.900.9s-2-.9-3.400-.9c-1.700 0-3.300 1-4.200 2.600-1.800 3.100-.5 7.700 1.300 10.200.9 1.200 1.900 2.600 3.200 2.600 1.300-.1 1.800-.8 3.300-.8s2 .8 3.400.8 2.200-1.300 3.100-2.500c1-1.400 1.400-2.800 1.400-2.900 0 0-2.700-1-2.700-4.100zM13.900 5.100c.7-.9 1.200-2 1-3.200-1 0-2.300.7-3 1.500-.7.8-1.200 2-1.100 3.100 1.200.1 2.300-.6 3.100-1.400z" /></svg>
+          <span><span class="os">macOS</span><br /><span class="os-sub">Apple silicon</span></span>
+        </a>
+        <a class="cut" data-os="mac-x64" data-match="-mac-x64.dmg" href="https://github.com/darkharasho/hml/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.400 12.700c0-2.600 2.100-3.800 2.200-3.900-1.200-1.800-3.100-2-3.700-2-1.600-.2-3.100.9-3.900.9s-2-.9-3.400-.9c-1.700 0-3.300 1-4.200 2.600-1.800 3.100-.5 7.700 1.300 10.200.9 1.200 1.900 2.600 3.200 2.600 1.300-.1 1.800-.8 3.300-.8s2 .8 3.400.8 2.200-1.300 3.100-2.500c1-1.400 1.400-2.800 1.400-2.900 0 0-2.700-1-2.700-4.100zM13.900 5.100c.7-.9 1.200-2 1-3.200-1 0-2.300.7-3 1.500-.7.8-1.200 2-1.100 3.100 1.200.1 2.300-.6 3.100-1.400z" /></svg>
+          <span><span class="os">macOS</span><br /><span class="os-sub">Intel</span></span>
+        </a>
+      </div>
+      <p id="dl-version">Free and open source.</p>
+
+      <div class="term cut" role="img" aria-label="Command line example: hml install repo ./MyMod.zip --profile Dev">
+        <div><b>$</b> <i>hml install repo ./MyMod.zip --profile Dev</i></div>
+        <div>Installed MyMod 1.2.0</div>
+        <div><b>$</b> <i>hml launch repo --profile Dev</i></div>
+      </div>
+      <p class="authors">Making mods? Install test builds from your build script, and <a href="https://github.com/darkharasho/hml/blob/main/docs/catalog.md">list your GitHub repo</a> in HML.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>HML, Haro's Mod Loader. MIT licensed.</span>
+    <a href="https://github.com/darkharasho/hml">github.com/darkharasho/hml</a>
+  </div>
+</footer>
+
+<script>
+  const ua = navigator.userAgent
+  const os = /Windows/.test(ua) ? 'win' : /Mac/.test(ua) ? 'mac-arm' : /Linux|X11/.test(ua) && !/Android/.test(ua) ? 'linux' : null
+  const LABEL = { win: 'Windows', 'mac-arm': 'macOS', linux: 'Linux' }
+  if (os) {
+    document.querySelector(`#dl a[data-os="${os}"]`).classList.add('mine')
+    document.getElementById('hero-dl').textContent = `Download for ${LABEL[os]}`
+  }
+  fetch('https://api.github.com/repos/darkharasho/hml/releases/latest')
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(rel => {
+      document.getElementById('dl-version').textContent = `Version ${rel.tag_name.replace(/^v/, '')}. Free and open source.`
+      document.querySelectorAll('#dl a').forEach(a => {
+        const asset = rel.assets.find(x => x.name.endsWith(a.dataset.match))
+        if (asset) a.href = asset.browser_download_url
+      })
+      if (os) document.getElementById('hero-dl').href = document.querySelector(`#dl a[data-os="${os}"]`).href
+    })
+    .catch(() => { /* links already point at the releases page */ })
+</script>
+</body>
+</html>
