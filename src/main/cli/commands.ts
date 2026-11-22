@@ -384,7 +384,10 @@ export async function runCli(port: CliPort, argv: string[], cwd: string): Promis
           return {
             code: 1,
             stdout: json ? JSON.stringify(result, null, 2) + '\n' : '',
-            stderr: json ? '' : `hml: ${result.error}\n`
+            stderr: json
+              ? ''
+              : `hml: ${result.error}\n` +
+                (result.warnings ?? []).map((w) => `hml: warning: ${w}\n`).join('')
           }
         }
         const res = out(

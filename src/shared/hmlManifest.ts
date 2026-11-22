@@ -18,7 +18,9 @@ export interface ManifestMod {
 }
 
 export type ManifestResult =
-  { ok: true; mods: ManifestMod[]; warnings: string[] } | { ok: false; error: string }
+  | { ok: true; mods: ManifestMod[]; warnings: string[] }
+  /** `warnings` names the dropped labels of an `unknown-games` rejection. */
+  | { ok: false; error: string; warnings?: string[] }
 
 const isRelPath = (p: string): boolean =>
   !p.startsWith('/') && !p.includes('\\') && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(p)
@@ -127,7 +129,7 @@ export function validateManifest(
     const games = mod.games.filter((g) => isKnownGame(g))
     for (const g of mod.games)
       if (!isKnownGame(g)) warnings.push(`${mod.id}: unknown game "${g}" ignored`)
-    if (games.length === 0) return { ok: false, error: 'unknown-games' }
+    if (games.length === 0) return { ok: false, error: 'unknown-games', warnings }
     mods.push({ ...mod, games })
   }
   return { ok: true, mods, warnings }

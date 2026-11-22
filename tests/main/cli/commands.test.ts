@@ -187,6 +187,13 @@ describe('validate', () => {
     expect(r.stderr).toContain('unknown game "nope" ignored')
   })
 
+  it('names the unknown labels of an unknown-games rejection', async () => {
+    const r = await runCli(fakePort([]), ['validate'], dirWith(manifest(['nope'])))
+    expect(r.code).toBe(1)
+    expect(r.stderr).toContain('hml: unknown-games')
+    expect(r.stderr).toContain('unknown game "nope" ignored')
+  })
+
   it('exits 1 with the exact reason for an invalid file', async () => {
     const r = await runCli(fakePort([]), ['validate'], dirWith('{"schema":2}'))
     expect(r.code).toBe(1)

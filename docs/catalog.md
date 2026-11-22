@@ -157,10 +157,10 @@ When a repo is rejected, `hml validate owner/repo` shows one of these reasons.
 | `invalid-manifest: <path>: <problem>` | The file isn't valid JSON, is over 64 KB, or breaks a rule in the field table. `<path>` is the field, like `mods.0.id`. `(root)` means the file as a whole. | Fix the field named in the message. Run `hml validate` locally. |
 | `no-releases` | No non-draft release matches the mod. In a monorepo, none has the mod's `tagPrefix`. | Publish a release. Check that its tag starts with the `tagPrefix`. |
 | `no-matching-asset` | The releases have no asset that fits: no `.zip`, or none that matches `assetPattern`. | Attach a `.zip` to the release, or fix `assetPattern`. |
-| `unknown-games` | None of a mod's `games` labels is a known game. | Use a Thunderstore community slug or a `nexus-` label. |
+| `unknown-games` | None of a mod's `games` labels is a known game. Warnings name the labels that weren't known. | Use a Thunderstore community slug or a `nexus-` label. |
 | `blocked` | HML's maintainer blocklist includes the repo. | See [Blocked mods](#blocked-mods). |
 
-For a repo with several mods, a mod that fails stays out and the others are still listed. The status shows a warning like `faerie-flight: not listed (no-releases)`. The repo is rejected only when no mod can be listed.
+For a repo with several mods, a mod that fails stays out and the others are still listed. The status shows a warning like `faerie-flight: not listed (no-releases)`. The repo is rejected only when no mod can be listed. Its warnings then still give each mod's reason.
 
 ## Safety
 

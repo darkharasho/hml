@@ -48,8 +48,12 @@ describe('validateManifest', () => {
     expect(r.ok && r.warnings.join()).toContain('bogus')
     expect(r.ok && r.mods[0].games).toEqual(['repo'])
   })
-  it('rejects when no game is known', () => {
-    expect(one({ games: ['bogus'] })).toEqual({ ok: false, error: 'unknown-games' })
+  it('rejects when no game is known, with the unknown labels as warnings', () => {
+    expect(one({ games: ['bogus'] })).toEqual({
+      ok: false,
+      error: 'unknown-games',
+      warnings: ['a: unknown game "bogus" ignored']
+    })
   })
   it('accepts nexus labels', () => {
     expect(one({ games: ['nexus-skyrimspecialedition'] }).ok).toBe(true)

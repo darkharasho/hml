@@ -149,6 +149,27 @@ describe('buildStatus', () => {
     expect(s.listed.map((e) => e.id)).toEqual(['a'])
     expect(s.warnings.some((w) => w.includes('b'))).toBe(true)
   })
+  it('keeps the unknown labels as warnings when rejected with unknown-games', () => {
+    const s = buildStatus(repo({ manifest: man(mod({ games: ['zzz', 'yyy'] })) }), known, NOW)
+    expect(s.rejected).toBe('unknown-games')
+    expect(s.warnings).toEqual(['m: unknown game "zzz" ignored', 'm: unknown game "yyy" ignored'])
+  })
+  it("keeps each mod's reason when no mod of a monorepo is listed", () => {
+    const s = buildStatus(
+      repo({
+        manifest: man(mod({ id: 'a', tagPrefix: 'a' }), mod({ id: 'b', tagPrefix: 'b' })),
+        releases: [
+          rel('a-v1.0.0', '2026-01-01T00:00:00Z', {
+            assets: [{ name: 'a.txt', size: 1, downloads: 0 }]
+          })
+        ]
+      }),
+      known,
+      NOW
+    )
+    expect(s.rejected).toBe('no-matching-asset')
+    expect(s.warnings).toEqual(['a: not listed (no-matching-asset)', 'b: not listed (no-releases)'])
+  })
   it('passes manifest warnings through', () => {
     const s = buildStatus(repo({ manifest: man(mod({ games: ['repo', 'zzz'] })) }), known, NOW)
     expect(s.warnings.some((w) => w.includes('zzz'))).toBe(true)

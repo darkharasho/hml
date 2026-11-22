@@ -109,7 +109,13 @@ export function buildStatus(
   if (r.manifestTooLarge)
     return { ...base, listed: [], warnings: [], rejected: 'invalid-manifest: (root): too large' }
   const m = validateManifest(r.manifest, isKnownGame)
-  if (!m.ok) return { ...base, listed: [], warnings: [], rejected: m.error }
+  if (!m.ok)
+    return {
+      ...base,
+      listed: [],
+      warnings: (m.warnings ?? []).slice(0, MAX_WARNINGS),
+      rejected: m.error
+    }
   const warnings = [...m.warnings]
   const listed: CatalogEntry[] = []
   let firstReason: string | undefined
@@ -121,6 +127,7 @@ export function buildStatus(
       warnings.push(`${mod.id}: not listed (${res.reason})`)
     } else listed.push(res)
   }
-  if (listed.length === 0) return { ...base, listed, warnings: [], rejected: firstReason }
+  if (listed.length === 0)
+    return { ...base, listed, warnings: warnings.slice(0, MAX_WARNINGS), rejected: firstReason }
   return { ...base, listed, warnings: warnings.slice(0, MAX_WARNINGS) }
 }
