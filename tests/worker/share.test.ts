@@ -21,13 +21,22 @@ function makeEnv(
     PROFILES: {
       async get(key) {
         const v = store.get(key)
-        return v ? (v.slice().buffer as ArrayBuffer) : null
+        return (v ? v.slice().buffer : null) as never
       },
       async getWithMetadata() {
         return { value: null, metadata: null }
       },
       async put(key, value, opts) {
-        store.set(key, new Uint8Array(value instanceof Uint8Array ? value : new Uint8Array(value)))
+        store.set(
+          key,
+          new Uint8Array(
+            typeof value === 'string'
+              ? new TextEncoder().encode(value)
+              : value instanceof Uint8Array
+                ? value
+                : new Uint8Array(value)
+          )
+        )
         ttls.set(key, opts?.expirationTtl)
       }
     },
@@ -44,7 +53,9 @@ function makeEnv(
       }
     },
     SYNC_CHECK_LIMITER: { limit: async () => ({ success: true }) },
-    SYNC_PUBLISH_LIMITER: { limit: async () => ({ success: true }) }
+    SYNC_PUBLISH_LIMITER: { limit: async () => ({ success: true }) },
+    CATALOG_LIMITER: { limit: async () => ({ success: true }) },
+    GITHUB_TOKEN: ''
   }
   return { env, store, ttls, limitKeys, downloadKeys }
 }

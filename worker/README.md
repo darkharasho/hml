@@ -43,3 +43,49 @@ returns the zip, so a `304` or `410` never reads the body. The Worker also cache
 metadata for 60 seconds (`https://sync-meta.hml/<code>`, dropped on PUT and DELETE), but the Cache
 API only works on a custom domain; on `workers.dev` it does nothing and every check reads KV.
 Entries expire after one year, refreshed on every publish.
+
+## GitHub catalog
+
+A cron trigger (`*/30 * * * *`) crawls GitHub for repos with the `hml-mod` topic and an `hml.json`
+at the default branch root, and serves per-game indexes of the mods it lists. Set the token first
+(fine-grained, public repositories read-only):
+
+```
+npx wrangler@4 secret put GITHUB_TOKEN
+```
+
+Routes (`GET` only, 120 per minute per IP via `CATALOG_LIMITER`, `cache-control: public, max-age=300`;
+other methods get `405 method-not-allowed`, the limiter `429 rate-limited`):
+
+- `GET /v1/catalog/:game` (`[a-z0-9-]{1,64}`): `200 {"game", "builtAt", "mods": CatalogEntry[]}` with
+  an `ETag`; `304` when `If-None-Match` matches. A game without an index gets `200` with `mods: []`.
+- `GET /v1/catalog/status/:owner/:repo`: the repo's last crawl result (`listed`, `warnings`,
+  `rejected`), matched case-insensitively. `404 not-crawled` if the crawl hasn't seen it.
+- `GET /v1/catalog/blocklist`: `{"entries": [{"names": [...], "reason"}]}`. `names` are lowercase
+  `owner` or `owner/repo`, including names a blocked repo or owner had before a rename.
+- `GET /v1/catalog/schema.json`: the JSON Schema for `hml.json`.
+
+Free-tier budget: each run first refreshes the Thunderstore community list if it is missing or over
+24 hours old, and does nothing else that run. Otherwise it fetches at most 3 GraphQL search pages
+(a 502/504 is retried once at page size 15) and saves its cursor, so a pass spans several runs. The
+indexes and status map are written only when a pass finishes. Every catalog value carries the
+SHA-256 of its content in its KV metadata and is written only when that hash changes (`builtAt` and
+`crawledAt` don't count), so an unchanged pass writes nothing. Each run logs
+`{"catalog":"run","pages","repos","writes","ms"}`, and warns when the search total passes GitHub's
+1,000-result cap.
+
+KV keys (all in `PROFILES`):
+
+- `catalog:index:<game>`: the `CatalogIndex` served for that game.
+- `catalog:status`: lowercase `owner/repo` to `RepoStatus`, from the last finished pass.
+- `catalog:state`: crawl progress (`cursor`, the current pass's statuses, search `total`, the
+  blocklist's resolved GitHub ids, and the games indexed last pass).
+- `catalog:games`: `{"fetchedAt", "slugs"}`, Thunderstore communities with a mod loader.
+- `catalog:blocklist`: `BlockEntry[]`, edited by hand. `target` is `owner` or `owner/repo`
+  (case-insensitive); blocks follow renames once the crawl has seen the repo or owner. To edit:
+
+```
+npx wrangler@4 kv key put --binding PROFILES catalog:blocklist '[{"target":"owner/repo","reason":"malware","at":"2026-11-22"}]'
+```
+
+The new list takes effect on the next pass.

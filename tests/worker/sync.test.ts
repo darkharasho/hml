@@ -29,9 +29,9 @@ function makeEnv(limiterOk = true): {
     PROFILES: {
       async get(key) {
         const v = store.get(key)
-        return v ? (v.value.slice().buffer as ArrayBuffer) : null
+        return (v ? v.value.slice().buffer : null) as never
       },
-      async getWithMetadata(key: string, type: 'arrayBuffer' | 'stream') {
+      async getWithMetadata(key: string, type: 'arrayBuffer' | 'stream' | 'text') {
         kvReads.count++
         const v = store.get(key)
         if (!v) return { value: null, metadata: null }
@@ -53,7 +53,13 @@ function makeEnv(limiterOk = true): {
       },
       async put(key, value, opts) {
         store.set(key, {
-          value: new Uint8Array(value instanceof Uint8Array ? value : new Uint8Array(value)),
+          value: new Uint8Array(
+            typeof value === 'string'
+              ? new TextEncoder().encode(value)
+              : value instanceof Uint8Array
+                ? value
+                : new Uint8Array(value)
+          ),
           metadata: (opts?.metadata ?? null) as Entry['metadata'],
           ttl: opts?.expirationTtl
         })
@@ -62,7 +68,9 @@ function makeEnv(limiterOk = true): {
     UPLOAD_LIMITER: limiter,
     DOWNLOAD_LIMITER: limiter,
     SYNC_CHECK_LIMITER: limiter,
-    SYNC_PUBLISH_LIMITER: limiter
+    SYNC_PUBLISH_LIMITER: limiter,
+    CATALOG_LIMITER: limiter,
+    GITHUB_TOKEN: ''
   }
   const map = new Map<string, Response>()
   const cache: CacheLike = {

@@ -1,15 +1,18 @@
 import { newCode, normalizeCode } from './code'
 import { err, isZip, MAX_BYTES, readCapped, startsWithExport, TTL_SECONDS } from './http'
 import { handleSync, type CacheLike } from './sync'
+import { runCrawl } from './catalog/crawl'
+import { CATALOG_PREFIX, handleCatalog } from './catalog/routes'
 
 export { MAX_BYTES, TTL_SECONDS }
 export type { CacheLike }
 
 export interface KvLike {
   get(key: string, type: 'arrayBuffer'): Promise<ArrayBuffer | null>
+  get(key: string, type: 'text'): Promise<string | null>
   put(
     key: string,
-    value: ArrayBuffer | Uint8Array,
+    value: ArrayBuffer | Uint8Array | string,
     opts?: { expirationTtl?: number; metadata?: unknown }
   ): Promise<void>
   getWithMetadata<M>(
@@ -20,6 +23,17 @@ export interface KvLike {
     key: string,
     type: 'stream'
   ): Promise<{ value: ReadableStream | null; metadata: M | null }>
+  getWithMetadata<M>(
+    key: string,
+    type: 'text'
+  ): Promise<{ value: string | null; metadata: M | null }>
+}
+
+type Limiter = { limit(o: { key: string }): Promise<{ success: boolean }> }
+
+/** The parts of the Workers ScheduledController / ExecutionContext the cron handler uses. */
+export interface ExecCtx {
+  waitUntil(p: Promise<unknown>): void
 }
 
 export interface Env {
@@ -28,6 +42,9 @@ export interface Env {
   DOWNLOAD_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> }
   SYNC_CHECK_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> }
   SYNC_PUBLISH_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> }
+  CATALOG_LIMITER: Limiter
+  /** Fine-grained token, public read-only. `npx wrangler@4 secret put GITHUB_TOKEN`. */
+  GITHUB_TOKEN: string
 }
 
 const MAX_ATTEMPTS = 3
@@ -87,8 +104,12 @@ export function createHandler(
   cache?: CacheLike
 ): {
   fetch(req: Request, env: Env): Promise<Response>
+  scheduled(controller: unknown, env: Env, ctx: ExecCtx): void
 } {
   return {
+    scheduled(_controller: unknown, env: Env, ctx: ExecCtx): void {
+      ctx.waitUntil(runCrawl(env, (input, init) => fetch(input, init), Date.now))
+    },
     async fetch(req: Request, env: Env): Promise<Response> {
       const path = new URL(req.url).pathname
       if (path === SYNC_PREFIX || path.startsWith(`${SYNC_PREFIX}/`)) {
@@ -102,6 +123,7 @@ export function createHandler(
           raw
         )
       }
+      if (path.startsWith(`${CATALOG_PREFIX}/`)) return handleCatalog(req, env, path)
       if (path === PREFIX) {
         return req.method === 'POST' ? upload(req, env, rand) : err(405, 'method-not-allowed')
       }
