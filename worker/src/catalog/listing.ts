@@ -1,7 +1,7 @@
 // Pure: decides what one crawled repo lists. No node:* or Electron imports (bundled into the Worker).
 import type { CatalogEntry, RepoStatus } from '../../../src/shared/ghCatalog'
 import {
-  matchesAssetPattern,
+  assetMatcher,
   normPrefix,
   samePrefix,
   tagPrefix,
@@ -43,14 +43,7 @@ function resolveRepoUrl(r: CrawledRepo, v: string): string {
   return v.startsWith('https://') ? v : rawUrl(r, v)
 }
 
-function installable(
-  mod: ManifestMod,
-  rel: CrawledRelease
-): CrawledRelease['assets'][number] | undefined {
-  return rel.assets.find((a) =>
-    mod.assetPattern ? matchesAssetPattern(mod.assetPattern, a.name) : /\.zip$/i.test(a.name)
-  )
-}
+const isZip = (name: string): boolean => /\.zip$/i.test(name)
 
 const newestFirst = (a: CrawledRelease, b: CrawledRelease): number =>
   Date.parse(b.publishedAt) - Date.parse(a.publishedAt)
@@ -66,15 +59,16 @@ function listMod(
       mod.tagPrefix ? samePrefix(tagPrefix(rel.tag), normPrefix(mod.tagPrefix)) : single
     )
   if (mine.length === 0) return { reason: 'no-releases' }
-  const usable = mine.filter((rel) => installable(mod, rel)).sort(newestFirst)
+  const fits = mod.assetPattern ? assetMatcher(mod.assetPattern) : isZip
+  const installable = (rel: CrawledRelease): CrawledRelease['assets'][number] | undefined =>
+    rel.assets.find((a) => fits(a.name))
+  const usable = mine.filter((rel) => installable(rel)).sort(newestFirst)
   if (usable.length === 0) return { reason: 'no-matching-asset' }
   const latest = usable.find((rel) => !rel.prerelease) ?? usable[0]
-  const asset = installable(mod, latest)!
+  const asset = installable(latest)!
   let downloads = 0
   for (const rel of usable)
-    for (const a of rel.assets)
-      if (mod.assetPattern ? matchesAssetPattern(mod.assetPattern, a.name) : /\.zip$/i.test(a.name))
-        downloads += a.downloads
+    for (const a of rel.assets) if (fits(a.name)) downloads += a.downloads
   return {
     key: `${r.owner}/${r.repo}/${mod.id}`,
     owner: r.owner,

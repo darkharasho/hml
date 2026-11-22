@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MAX_PATTERN_TOKENS } from './ghTag'
 
 export const MANIFEST_MAX_BYTES = 65536
 
@@ -19,42 +20,55 @@ export interface ManifestMod {
 export type ManifestResult =
   { ok: true; mods: ManifestMod[]; warnings: string[] } | { ok: false; error: string }
 
+const isRelPath = (p: string): boolean =>
+  !p.startsWith('/') && !p.includes('\\') && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(p)
+const noDotDot = (p: string): boolean => !p.split('/').includes('..')
+const isHttpsUrl = (u: string): boolean => {
+  if (!u.startsWith('https://')) return false
+  try {
+    return new URL(u).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 const repoPath = z
   .string()
   .min(1)
   .max(300)
-  .refine(
-    (p) => !p.startsWith('/') && !p.includes('\\') && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(p),
-    'must be an https URL or relative repo path'
-  )
-  .refine((p) => !p.split('/').includes('..'), 'must not contain ..')
+  .refine(isRelPath, 'must be a relative repo path')
+  .refine(noDotDot, 'must not contain ..')
 
-const icon = z.union([
-  z
-    .string()
-    .max(500)
-    .refine((u) => {
-      if (!u.startsWith('https://')) return false
-      try {
-        return new URL(u).protocol === 'https:'
-      } catch {
-        return false
-      }
-    }, 'must be an https URL or repo path'),
-  repoPath
-])
+const icon = z
+  .string()
+  .min(1)
+  .max(500)
+  .refine(
+    (p) => isHttpsUrl(p) || (p.length <= 300 && isRelPath(p)),
+    'must be an https URL or repo path'
+  )
+  .refine((p) => isHttpsUrl(p) || noDotDot(p), 'must not contain ..')
+
+const assetPattern = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine(
+    (p) => p.split('{version}').length - 1 <= MAX_PATTERN_TOKENS,
+    `must contain at most ${MAX_PATTERN_TOKENS} {version} tokens`
+  )
 
 const modSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]{1,64}$/, 'must match [a-z0-9-]{1,64}'),
   name: z.string().min(1).max(64),
   description: z.string().min(1).max(250),
-  games: z.array(z.string().min(1)).min(1),
-  tagPrefix: z.string().min(1).optional(),
-  assetPattern: z.string().min(1).optional(),
+  games: z.array(z.string().min(1).max(64)).min(1).max(20),
+  tagPrefix: z.string().min(1).max(64).optional(),
+  assetPattern: assetPattern.optional(),
   icon: icon.optional(),
   readme: repoPath.optional(),
   categories: z.array(z.string().min(1).max(32)).max(5).default([]),
-  dependencies: z.array(z.string().min(1)).default([]),
+  dependencies: z.array(z.string().min(1).max(200)).max(50).default([]),
   nsfw: z.boolean().default(false)
 })
 

@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import { ghPackageId, samePrefix, tagPrefix, tagVersion } from '../../src/shared/ghTag'
+import {
+  ghPackageId,
+  matchesAssetPattern,
+  samePrefix,
+  tagPrefix,
+  tagVersion
+} from '../../src/shared/ghTag'
 
 describe('tagPrefix', () => {
   test.each([
@@ -41,4 +47,20 @@ test('ghPackageId adds a safe prefix only in a monorepo', () => {
   expect(ghPackageId('owner', 'repo', '')).toBe('owner-repo')
   expect(ghPackageId('owner', 'repo', 'infinite-energy')).toBe('owner-repo-infinite-energy')
   expect(ghPackageId('owner', 'repo', '@scope/pkg')).toBe('owner-repo-scope-pkg')
+})
+
+describe('matchesAssetPattern', () => {
+  test('matches up to 2 {version} tokens', () => {
+    expect(matchesAssetPattern('Mod-{version}.zip', 'Mod-1.2.3.zip')).toBe(true)
+    expect(matchesAssetPattern('Mod-{version}-{version}.zip', 'Mod-1.2-3.4.zip')).toBe(true)
+  })
+  test('never matches a pattern with more than 2 tokens', () => {
+    expect(matchesAssetPattern('{version}-{version}-{version}.zip', '1-2-3.zip')).toBe(false)
+  })
+  test('a hostile pattern returns quickly', () => {
+    const started = performance.now()
+    expect(matchesAssetPattern('{version}'.repeat(8), `${'1'.repeat(40)}.zipx`)).toBe(false)
+    expect(matchesAssetPattern('{version}{version}', `${'1'.repeat(255)}x`)).toBe(false)
+    expect(performance.now() - started).toBeLessThan(50)
+  })
 })

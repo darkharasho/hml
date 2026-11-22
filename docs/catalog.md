@@ -80,13 +80,13 @@ Each entry in `mods`:
 | `id` | Yes | Matches `^[a-z0-9-]{1,64}$`. Unique in the file. |
 | `name` | Yes | 1 to 64 characters. |
 | `description` | Yes | 1 to 250 characters. |
-| `games` | Yes | At least one game label. See [Game labels](#game-labels). |
-| `tagPrefix` | When `mods` has more than one entry | Non-empty. The text before the version in your release tags. |
-| `assetPattern` | No | Non-empty. Picks the release asset by name. `{version}` matches a version number. Without it, HML takes the first `.zip` asset. |
+| `games` | Yes | 1 to 20 game labels, each up to 64 characters. See [Game labels](#game-labels). |
+| `tagPrefix` | When `mods` has more than one entry | 1 to 64 characters. The text before the version in your release tags. |
+| `assetPattern` | No | 1 to 200 characters, with at most 2 `{version}` tokens. Picks the release asset by name. `{version}` matches a version number. Without it, HML takes the first `.zip` asset. |
 | `icon` | No | An `https://` URL or a path in the repo. Defaults to your GitHub avatar. |
 | `readme` | No | A path in the repo. URLs are not allowed. Defaults to `README.md`. |
 | `categories` | No | Up to 5 labels, each 1 to 32 characters. Defaults to none. |
-| `dependencies` | No | A list of mods to install first. Defaults to none. See [Dependencies](#dependencies). |
+| `dependencies` | No | Up to 50 mods to install first, each up to 200 characters. Defaults to none. See [Dependencies](#dependencies). |
 | `nsfw` | No | `true` or `false`. Defaults to `false`. |
 
 Repo paths (`readme`, and `icon` when it isn't a URL) must be relative. They can't start with `/`, contain `\`, contain `..`, or start with a scheme like `file:`. They can be up to 300 characters. Icon URLs can be up to 500 characters.

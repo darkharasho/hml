@@ -73,6 +73,44 @@ describe('validateManifest', () => {
       expect(!r.ok && r.error.startsWith('invalid-manifest')).toBe(true)
     }
   })
+  it('caps assetPattern at 200 characters', () => {
+    expect(one({ assetPattern: `${'a'.repeat(196)}.zip` }).ok).toBe(true)
+    const r = one({ assetPattern: `${'a'.repeat(197)}.zip` })
+    expect(!r.ok && r.error).toMatch(/^invalid-manifest: mods\.0\.assetPattern: /)
+  })
+  it('allows at most 2 {version} tokens in assetPattern', () => {
+    expect(one({ assetPattern: 'a-{version}-{version}.zip' }).ok).toBe(true)
+    const r = one({ assetPattern: 'a-{version}-{version}-{version}.zip' })
+    expect(!r.ok && r.error).toBe(
+      'invalid-manifest: mods.0.assetPattern: must contain at most 2 {version} tokens'
+    )
+  })
+  it('caps games, dependencies and tagPrefix', () => {
+    const games = (n: number, len = 4): string[] =>
+      Array.from({ length: n }, (_, i) => `nexus-${String(i).padStart(len, 'x')}`)
+    expect(one({ games: games(20) }).ok).toBe(true)
+    expect(one({ games: games(21) })).toMatchObject({ ok: false })
+    expect(one({ games: ['nexus-' + 'a'.repeat(58)] }).ok).toBe(true)
+    const long = one({ games: ['nexus-' + 'a'.repeat(59)] })
+    expect(!long.ok && long.error).toMatch(/^invalid-manifest: mods\.0\.games\.0: /)
+    const deps = (n: number): string[] => Array.from({ length: n }, (_, i) => `github:a/b${i}`)
+    expect(one({ dependencies: deps(50) }).ok).toBe(true)
+    const many = one({ dependencies: deps(51) })
+    expect(!many.ok && many.error).toMatch(/^invalid-manifest: mods\.0\.dependencies: /)
+    expect(one({ dependencies: [`github:a/${'b'.repeat(191)}`] }).ok).toBe(true)
+    expect(one({ dependencies: [`github:a/${'b'.repeat(192)}`] })).toMatchObject({ ok: false })
+    expect(one({ tagPrefix: 'p'.repeat(64) }).ok).toBe(true)
+    const pre = one({ tagPrefix: 'p'.repeat(65) })
+    expect(!pre.ok && pre.error).toMatch(/^invalid-manifest: mods\.0\.tagPrefix: /)
+  })
+  it('readme path errors name a repo path only; icon errors allow a URL', () => {
+    expect(one({ readme: 'https://x/R.md' })).toEqual({
+      ok: false,
+      error: 'invalid-manifest: mods.0.readme: must be a relative repo path'
+    })
+    const r = one({ icon: 'javascript:alert(1)' })
+    expect(!r.ok && r.error).toBe('invalid-manifest: mods.0.icon: must be an https URL or repo path')
+  })
   it('applies defaults', () => {
     const r = one()
     expect(r.ok && r.mods[0]).toMatchObject({ categories: [], dependencies: [], nsfw: false })

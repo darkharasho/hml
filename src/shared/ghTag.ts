@@ -50,9 +50,22 @@ function escapeRegExp(s: string): string {
  */
 const VERSION_SRC = '[a-z]?\\d+(?:[._-]\\d+)*(?:[._-]?(?:alpha|beta|rc|pre|preview)[._-]?\\d*)?'
 
+/**
+ * Most `{version}` tokens a pattern may hold (hml.json enforces the same). Adjacent tokens
+ * backtrack against each other, exponentially in their count, so a longer pattern never matches.
+ */
+export const MAX_PATTERN_TOKENS = 2
+
+/** A matcher for one pattern, compiled once (for matching many names). */
+export function assetMatcher(pattern: string): (name: string) => boolean {
+  const parts = pattern.split('{version}')
+  if (parts.length - 1 > MAX_PATTERN_TOKENS) return () => false
+  const re = new RegExp(`^${parts.map(escapeRegExp).join(VERSION_SRC)}$`, 'i')
+  return (name) => re.test(name)
+}
+
 export function matchesAssetPattern(pattern: string, name: string): boolean {
-  const src = pattern.split('{version}').map(escapeRegExp).join(VERSION_SRC)
-  return new RegExp(`^${src}$`, 'i').test(name)
+  return assetMatcher(pattern)(name)
 }
 
 const VERSION_LIKE = /^v?\d+(\.\d+)*$/i
