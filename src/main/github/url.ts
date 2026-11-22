@@ -1,12 +1,11 @@
+import { OWNER_RE, REPO_RE } from '../../shared/ghCatalog'
+
 export interface GhRef {
   owner: string
   repo: string
   tag?: string
   asset?: string
 }
-
-const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
-const REPO_RE = /^[A-Za-z0-9._-]{1,100}$/
 
 function decode(s: string): string | null {
   try {
