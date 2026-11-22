@@ -68,25 +68,34 @@ other methods get `405 method-not-allowed`, the limiter `429 rate-limited`):
 Free-tier budget: each run first refreshes the Thunderstore community list if it is missing or over
 24 hours old, and does nothing else that run. Otherwise it fetches at most 3 GraphQL search pages
 (sorted `created-asc` so pages are stable; a 502/504 is retried once at page size 15) and saves its
-cursor, so a pass spans several runs. The indexes and status map are written only when a pass
+cursor, so a pass spans several runs. When a repo has more than the 20 releases the search returns
+and a mod with a `tagPrefix` found none of its own, the run pages that repo's older releases (50 a
+page, at most 2 pages per repo and 5 follow-ups per run). A run makes at most 3 + 3 + 5 = 11
+outbound requests, or 1 on a schema refresh run. The indexes and status map are written only when a pass
 finishes. Catalog values carry KV metadata `{hash, stableHash, at}`: `hash` covers the content
 without `builtAt`/`crawledAt` (and is the index `ETag`), `stableHash` also leaves out star and
 download counts, and `at` is the write time. A value is rewritten when `stableHash` changes, or when
 only the counts changed and the stored value is over 6 hours old, so an unchanged pass writes
 nothing and busy mods cost at most 4 rewrites a day per key. Status keys are sorted, so crawl order
-never causes a write. If 3 runs in a row fail at the same cursor, the pass ends early: it is built
-from the repos crawled so far plus the previous `catalog:status` for the rest, the cursor resets,
-and the run logs `{"catalog":"stalled","cursor","failures"}` with `console.error`. Each run logs
-`{"catalog":"run","pages","repos","writes","ms"}`, and warns when the search total passes GitHub's
-1,000-result cap.
+never causes a write. Each run counts itself as failed in `catalog:state` before fetching, and a
+fetched page resets the count, so a run the platform kills (CPU or time limit) still counts. That
+costs `catalog:state` at most 2 writes a run (96 a day). If 3 runs in a row fail or are killed at the
+same cursor, the pass ends early without fetching that cursor again: it is built from the repos
+crawled so far plus the previous `catalog:status` for the rest, the cursor resets, and the run logs
+`{"catalog":"stalled","cursor","failures"}` with `console.error`. Each run logs
+`{"catalog":"run","pages","repos","subrequests","writes","wallMs"}` (`subrequests` counts search
+pages, retries, release follow-ups and the schema fetch; `wallMs` is wall time, not CPU time), and
+warns when the search total passes GitHub's 1,000-result cap.
 
 KV keys (all in `PROFILES`):
 
 - `catalog:index:<game>`: the `CatalogIndex` served for that game.
 - `catalog:status`: lowercase `owner/repo` to `RepoStatus`, from the last finished pass. A repo's
   `crawledAt` is when the stored status was last written, not when the repo was last crawled.
-- `catalog:state`: crawl progress (`cursor`, the current pass's statuses, search `total`, the
-  blocklist's resolved GitHub ids, the games indexed last pass, and consecutive `failures`).
+- `catalog:state`: crawl progress (`cursor`, the current pass's statuses, search `total`, the games
+  indexed last pass, and consecutive `failures`).
+- `catalog:blocks`: the blocklist's resolved GitHub ids (so blocks follow renames), written only
+  when they change. `/v1/catalog/blocklist` reads this and `catalog:blocklist`, not the crawl state.
 - `catalog:games`: `{"fetchedAt", "slugs"}`, Thunderstore communities with a mod loader.
 - `catalog:blocklist`: `BlockEntry[]`, edited by hand. `target` is `owner` or `owner/repo`
   (case-insensitive); blocks follow renames once the crawl has seen the repo or owner. To edit:
