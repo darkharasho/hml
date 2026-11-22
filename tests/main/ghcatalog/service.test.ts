@@ -17,6 +17,14 @@ afterEach(async () => {
 })
 
 const RAW = 'https://raw.githubusercontent.com/a/b/HEAD/README.md'
+/** An index entry with the fields every valid entry has. */
+const full = (o: Record<string, unknown>): Record<string, unknown> => ({
+  name: String(o.id),
+  description: 'd',
+  categories: [],
+  latest: { tag: 'v1.0.0' },
+  ...o
+})
 
 async function seed(fetchFn: typeof fetch): Promise<CatalogServices> {
   const paths = makePaths(dir)
@@ -27,7 +35,7 @@ async function seed(fetchFn: typeof fetch): Promise<CatalogServices> {
       { key: 'a/b/m', owner: 'a', repo: 'b', id: 'm', readme: RAW },
       { key: 'a/b/evil', owner: 'a', repo: 'b', id: 'evil', readme: 'https://evil.test/r.md' },
       { key: 'a/b/pre', owner: 'a', repo: 'b', id: 'pre', tagPrefix: 'pre-' }
-    ] as unknown as CatalogIndex['mods']
+    ].map(full) as unknown as CatalogIndex['mods']
   }
   await writeJsonAtomic(paths.catalogCache('repo'), {
     fetchedAt: new Date(1000).toISOString(),
@@ -123,7 +131,7 @@ describe('cachedEntry for a single-mod repo without a tagPrefix', () => {
     await writeJsonAtomic(paths.catalogCache('repo'), {
       fetchedAt: new Date(1000).toISOString(),
       etag: null,
-      mods: [{ key: 'a/tools/tools', owner: 'a', repo: 'tools', id: 'tools' }]
+      mods: [full({ key: 'a/tools/tools', owner: 'a', repo: 'tools', id: 'tools' })]
     })
     const svc = createCatalogServices({
       paths,
@@ -145,7 +153,7 @@ describe('cachedEntry with a malformed cache', () => {
         null,
         5,
         { owner: 'a' },
-        { key: 'a/b/e', owner: 'a', repo: 'b', id: 'e', tagPrefix: 'energy-v' }
+        full({ key: 'a/b/e', owner: 'a', repo: 'b', id: 'e', tagPrefix: 'energy-v' })
       ]
     })
     const svc = createCatalogServices({
@@ -168,7 +176,7 @@ describe('game labels', () => {
     await writeJsonAtomic(path.join(dir, 'cache', 'x.json'), {
       fetchedAt: new Date(1000).toISOString(),
       etag: null,
-      mods: [{ key: 'a/b/m', owner: 'a', repo: 'b', id: 'm', readme: RAW }]
+      mods: [full({ key: 'a/b/m', owner: 'a', repo: 'b', id: 'm', readme: RAW })]
     })
     expect(paths.catalogCache('../x')).toBe(path.join(dir, 'cache', 'x.json'))
     for (const bad of ['../x', 'Repo', 'a/b', '', 'x'.repeat(65)]) {

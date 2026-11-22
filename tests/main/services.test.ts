@@ -2515,6 +2515,10 @@ describe('services', () => {
         owner,
         repo,
         id: repo,
+        name: repo,
+        description: 'd',
+        categories: [],
+        latest: { tag: 'v1.0.0' },
         assetPattern,
         ...(tagPrefix ? { tagPrefix } : {})
       })

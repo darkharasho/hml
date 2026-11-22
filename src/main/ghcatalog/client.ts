@@ -58,14 +58,24 @@ async function jsonBody(res: Response): Promise<unknown> {
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** The entries that are objects with a string key, owner and repo; anything else is dropped. */
+/**
+ * The entries the UI can show without throwing: objects with a string key, owner, repo, name and
+ * description, a `latest` object with a string tag, and a categories array of strings. Anything
+ * else is dropped.
+ */
 export function validEntries(mods: unknown[]): CatalogEntry[] {
   return mods.filter(
     (m): m is CatalogEntry =>
       isObject(m) &&
       typeof m.key === 'string' &&
       typeof m.owner === 'string' &&
-      typeof m.repo === 'string'
+      typeof m.repo === 'string' &&
+      typeof m.name === 'string' &&
+      typeof m.description === 'string' &&
+      isObject(m.latest) &&
+      typeof m.latest.tag === 'string' &&
+      Array.isArray(m.categories) &&
+      m.categories.every((c) => typeof c === 'string')
   )
 }
 

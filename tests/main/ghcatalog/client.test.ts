@@ -20,7 +20,16 @@ afterEach(async () => {
 })
 
 const entry = (id: string): CatalogIndex['mods'][number] =>
-  ({ key: `a/b/${id}`, owner: 'a', repo: 'b', id, name: id }) as CatalogIndex['mods'][number]
+  ({
+    key: `a/b/${id}`,
+    owner: 'a',
+    repo: 'b',
+    id,
+    name: id,
+    description: 'd',
+    categories: [],
+    latest: { tag: 'v1.0.0' }
+  }) as unknown as CatalogIndex['mods'][number]
 const index = (...ids: string[]): CatalogIndex => ({
   game: 'repo',
   builtAt: '2026-01-01T00:00:00.000Z',
@@ -179,7 +188,14 @@ describe('malformed index entries', () => {
     'str',
     [],
     { key: 'a/b/nokey-owner', repo: 'b' },
-    { key: 1, owner: 'a', repo: 'b' }
+    { key: 1, owner: 'a', repo: 'b' },
+    { ...entry('no-latest'), latest: undefined },
+    { ...entry('latest-string'), latest: 'v1' },
+    { ...entry('no-tag'), latest: {} },
+    { ...entry('no-categories'), categories: undefined },
+    { ...entry('bad-category'), categories: ['ok', 3] },
+    { ...entry('no-name'), name: undefined },
+    { ...entry('no-description'), description: 7 }
   ]
 
   it('are dropped from a network body', async () => {
