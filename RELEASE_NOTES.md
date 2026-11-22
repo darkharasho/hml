@@ -1,5 +1,18 @@
 # Release Notes
 
+Version v1.10.0 — November 22, 2026
+
+## GitHub mods in the Online tab
+The Online tab has a GitHub source next to Thunderstore and Nexus Mods. It lists mods from public GitHub repos whose authors opted in, and you can search, install and update them like any other mod. Installing one also installs the Thunderstore mods it depends on. The list updates every 30 minutes.
+
+## For mod authors
+- To list your mod, add the `hml-mod` topic and an `hml.json` file to your repo, then publish a release with a .zip. The guide is at https://github.com/darkharasho/hml/blob/main/docs/catalog.md, or click How to list a mod in the GitHub tab.
+- `hml validate` checks your hml.json before you push. `hml validate owner/repo` shows what the catalog found in a listed repo and why anything was skipped.
+- A repo with several mods can give each one a tag prefix, so each mod gets its own releases.
+
+## Fixes
+- A repo removed from the catalog for abuse can't be installed another way either, whether by pasted URL, a share code or a synced profile. Mods you already have from it stop updating.
+
 Version v1.9.9 — November 20, 2026
 
 ## Fixes
