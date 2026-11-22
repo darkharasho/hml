@@ -117,6 +117,24 @@ describe('cachedEntry', () => {
   })
 })
 
+describe('cachedEntry for a single-mod repo without a tagPrefix', () => {
+  it("matches the repo's only entry whatever the installed tag's prefix", async () => {
+    const paths = makePaths(dir)
+    await writeJsonAtomic(paths.catalogCache('repo'), {
+      fetchedAt: new Date(1000).toISOString(),
+      etag: null,
+      mods: [{ key: 'a/tools/tools', owner: 'a', repo: 'tools', id: 'tools' }]
+    })
+    const svc = createCatalogServices({
+      paths,
+      fetch: vi.fn() as unknown as typeof fetch,
+      shareBaseUrl: 'https://w.test',
+      now: () => 1000
+    })
+    expect((await svc.cachedEntry('repo', 'a', 'tools', 'tools'))?.id).toBe('tools')
+  })
+})
+
 describe('cachedEntry with a malformed cache', () => {
   it('skips garbage entries and matches a manifest prefix with its separator', async () => {
     const paths = makePaths(dir)

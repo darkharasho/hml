@@ -162,6 +162,13 @@ describe('catInstallState', () => {
     expect(catInstallState(e, [ghMod('alice', 'mono', 'energy-v1.1.0')])).toBe('installed')
     expect(catInstallState(e, [ghMod('alice', 'mono', 'energy-v1.0.0')])).toBe('update')
   })
+  it('matches by repo alone when the entry has no tagPrefix but its tags have one', () => {
+    const e = entry({
+      key: 'alice/tools/tools',
+      latest: { tag: 'tools-v1.0.0' } as CatalogEntry['latest']
+    })
+    expect(catInstallState(e, [ghMod('alice', 'tools', 'tools-v1.0.0')])).toBe('installed')
+  })
   it('is none when nothing matches', () => {
     expect(catInstallState(entry({ key: 'a/b/c' }), [])).toBe('none')
   })

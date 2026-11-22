@@ -55,18 +55,21 @@ export function catCategories(mods: CatalogEntry[]): string[] {
   return [...seen.values()].sort((a, b) => a.localeCompare(b))
 }
 
-/** The profile's copy of a catalog mod: same repo and, in a monorepo, the same tag prefix. */
+/**
+ * The profile's copy of a catalog mod: same repo and, for an entry with a tagPrefix (a monorepo),
+ * the same tag prefix. A repo of one mod matches whatever prefix its tags have.
+ */
 export function findCatInstalled(
   entry: CatalogEntry,
   installed: InstalledMod[]
 ): (InstalledMod & { source: { kind: 'github'; tag: string } }) | undefined {
-  const prefix = normPrefix(entry.tagPrefix ?? '')
+  const prefix = typeof entry.tagPrefix === 'string' ? normPrefix(entry.tagPrefix) : null
   return installed.find(
     (m): m is InstalledMod & { source: { kind: 'github'; tag: string } } =>
       m.source.kind === 'github' &&
       m.source.owner.toLowerCase() === entry.owner.toLowerCase() &&
       m.source.repo.toLowerCase() === entry.repo.toLowerCase() &&
-      samePrefix(tagPrefix(m.source.tag), prefix)
+      (prefix === null || samePrefix(tagPrefix(m.source.tag), prefix))
   )
 }
 

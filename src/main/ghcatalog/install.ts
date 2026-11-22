@@ -58,7 +58,8 @@ const isInstalled = (mods: InstalledMod[], e: CatalogEntry): boolean =>
       m.source.kind === 'github' &&
       lower(m.source.owner) === lower(e.owner) &&
       lower(m.source.repo) === lower(e.repo) &&
-      samePrefix(tagPrefix(m.source.tag), prefixOf(e))
+      // A repo of one mod (no tagPrefix) may still tag with a prefix: the repo alone decides.
+      (typeof e.tagPrefix !== 'string' || samePrefix(tagPrefix(m.source.tag), prefixOf(e)))
   )
 /** `Owner-Name-1.2.3` → `Owner-Name`. */
 const tsFullName = (dep: string): string => dep.replace(/-\d+\.\d+\.\d+$/, '')

@@ -69,14 +69,15 @@ export function createCatalogServices(deps: CatalogServiceDeps): CatalogServices
     const o = owner.toLowerCase()
     const r = repo.toLowerCase()
     const want = normPrefix(prefix)
-    return (
-      validEntries(cache.mods).find(
-        (m) =>
-          m.owner.toLowerCase() === o &&
-          m.repo.toLowerCase() === r &&
-          samePrefix(typeof m.tagPrefix === 'string' ? normPrefix(m.tagPrefix) : '', want)
-      ) ?? null
+    const same = validEntries(cache.mods).filter(
+      (m) => m.owner.toLowerCase() === o && m.repo.toLowerCase() === r
     )
+    const exact = same.find((m) =>
+      samePrefix(typeof m.tagPrefix === 'string' ? normPrefix(m.tagPrefix) : '', want)
+    )
+    // A repo of one mod (no tagPrefix) whose tags still carry a prefix.
+    const only = same.length === 1 && typeof same[0].tagPrefix !== 'string' ? same[0] : null
+    return exact ?? only
   }
 
   return {

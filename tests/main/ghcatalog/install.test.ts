@@ -174,6 +174,14 @@ describe('catPlanInstall', () => {
     expect(plan.mods.map((m) => m.id)).toEqual(['a'])
   })
 
+  it('counts a single-mod repo with prefixed tags as installed when the entry has no tagPrefix', async () => {
+    const a = entry('o', 'a', 'a', { dependencies: ['github:o/b'] })
+    const h = harness([a, entry('o', 'b', 'b')])
+    h.installed = [ghMod('o', 'b', 'b-v1.0.0')]
+    const plan = await createCatalogInstaller(h.deps).catPlanInstall('repo', 'p', 'o/a/a')
+    expect(plan.mods.map((m) => m.id)).toEqual(['a'])
+  })
+
   it('throws for a key not in the catalog', async () => {
     await expect(
       createCatalogInstaller(harness([]).deps).catPlanInstall('repo', 'p', 'o/a/a')
