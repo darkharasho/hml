@@ -8,7 +8,7 @@ import { isKnownGameLabel } from '../../../src/shared/hmlManifest'
 import type { Env, KvLike } from '../index'
 import { isBlocked, parseBlockState, updateBlockState, type BlockState } from './blocklist'
 import { fetchMoreReleases, fetchSearchPage, GhGraphqlError } from './github'
-import { listRepo, type CrawledRepo } from './listing'
+import { listRepo, newMatchBudget, type CrawledRepo } from './listing'
 import {
   isObj,
   KEY_BLOCKS,
@@ -120,7 +120,8 @@ async function statusWithFollowUps(
   budget: { followUps: number }
 ): Promise<RepoStatus> {
   let r = repo
-  let { status, moreReleases } = listRepo(r, isKnown, crawledAt)
+  const matches = newMatchBudget() // one per repo: follow-ups re-list it
+  let { status, moreReleases } = listRepo(r, isKnown, crawledAt, matches)
   let cursor = r.releasesCursor
   for (
     let n = 0;
@@ -132,7 +133,7 @@ async function statusWithFollowUps(
       const more = await fetchMoreReleases(fetchFn, token, r.owner, r.repo, cursor)
       r = { ...r, releases: [...r.releases, ...more.releases] }
       cursor = more.nextCursor ?? undefined
-      ;({ status, moreReleases } = listRepo(r, isKnown, crawledAt))
+      ;({ status, moreReleases } = listRepo(r, isKnown, crawledAt, matches))
     } catch (e) {
       console.warn(
         `catalog: releases follow-up failed for ${r.owner}/${r.repo}: ${(e as Error).message}`
@@ -315,8 +316,15 @@ export async function runCrawl(
     for (const r of page.repos) {
       const key = `${r.owner}/${r.repo}`.toLowerCase()
       if (isBlocked(r, entries, blocks)) {
-        const { status } = listRepo(r, isKnown, crawledAt)
-        state.pass[key] = { ...status, listed: [], rejected: 'blocked' }
+        // Never listed: a blocked repo's manifest and assets cost no CPU.
+        state.pass[key] = {
+          owner: r.owner,
+          repo: r.repo,
+          crawledAt,
+          listed: [],
+          warnings: [],
+          rejected: 'blocked'
+        }
       } else {
         state.pass[key] = await statusWithFollowUps(
           fetchFn,

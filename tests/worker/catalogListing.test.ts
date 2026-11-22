@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildStatus,
   listRepo,
+  MAX_ASSET_MATCHES_PER_REPO,
+  newMatchBudget,
   type CrawledRelease,
   type CrawledRepo
 } from '../../worker/src/catalog/listing'
@@ -194,5 +196,94 @@ describe('listRepo', () => {
     expect(listRepo(both, known, NOW).moreReleases).toBe(false)
     const plain = repo({ releases: [rel('v1', '2026-02-01T00:00:00Z', { draft: true })] })
     expect(listRepo(plain, known, NOW).moreReleases).toBe(false)
+  })
+})
+
+describe('asset matching cost', () => {
+  const HOSTILE = '1{version}{version}1'
+  /** 20 releases of 15 distinct asset names each: a full first page of releases. */
+  const releases = (name: (i: number) => string): CrawledRelease[] =>
+    Array.from({ length: 20 }, (_, r) =>
+      rel(`v1.0.${r}`, `2026-02-${String(r + 1).padStart(2, '0')}T00:00:00Z`, {
+        assets: Array.from({ length: 15 }, (_, a) => ({
+          name: name(r * 15 + a),
+          size: 1,
+          downloads: 1
+        }))
+      })
+    )
+  const hostileRepo = (len: number): CrawledRepo =>
+    repo({
+      manifest: man(mod({ assetPattern: HOSTILE })),
+      releases: releases((i) => `${'1'.repeat(len - 4)}${String(i).padStart(3, '0')}x`)
+    })
+
+  it.each([250, 100])('a hostile pattern over %i-character names stays fast', (len) => {
+    const r = hostileRepo(len)
+    expect(r.releases[0].assets[0].name).toHaveLength(len)
+    const started = performance.now()
+    const { status } = listRepo(r, known, NOW)
+    expect(performance.now() - started).toBeLessThan(50)
+    expect(status.listed).toEqual([])
+    expect(status.rejected).toBe('no-matching-asset')
+  })
+
+  it('lists a mod whose first page of releases is all distinct matching assets', () => {
+    expect(MAX_ASSET_MATCHES_PER_REPO).toBe(300)
+    const r = repo({
+      manifest: man(mod({ assetPattern: 'Mod-{version}.zip' })),
+      releases: releases((i) => `Mod-${i}.zip`)
+    })
+    const s = listRepo(r, known, NOW).status
+    expect(s.listed).toHaveLength(1)
+    expect(s.listed[0].downloads).toBe(300)
+    expect(s.warnings).toEqual([])
+  })
+
+  it('rejects the remaining mods with a warning once the budget is spent', () => {
+    const r = repo({
+      manifest: man(
+        mod({ id: 'a', tagPrefix: 'a', assetPattern: 'A-{version}.zip' }),
+        mod({ id: 'b', tagPrefix: 'b', assetPattern: 'B-{version}.zip' })
+      ),
+      releases: [
+        ...releases((i) => `A-${i}.zip`).map((x) => ({ ...x, tag: `a-${x.tag}` })),
+        rel('b-v1.0.0', '2026-03-01T00:00:00Z', {
+          assets: [
+            { name: 'x.txt', size: 1, downloads: 0 },
+            { name: 'B-1.0.zip', size: 1, downloads: 0 }
+          ]
+        })
+      ]
+    })
+    const s = listRepo(r, known, NOW).status
+    expect(s.listed.map((m) => m.id)).toEqual(['a'])
+    expect(s.warnings).toEqual([
+      `asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} names`,
+      'b: not listed (no-matching-asset)'
+    ])
+  })
+
+  it('shares one budget across listings of a repo, re-matching known names for free', () => {
+    const r = repo({
+      manifest: man(mod({ assetPattern: 'Mod-{version}.zip' })),
+      releases: releases((i) => `Mod-${i}.zip`)
+    })
+    const budget = newMatchBudget()
+    expect(listRepo(r, known, NOW, budget).status.listed).toHaveLength(1)
+    expect(budget.left).toBe(0)
+    expect(listRepo(r, known, NOW, budget).status.listed).toHaveLength(1)
+    const more = {
+      ...r,
+      releases: [
+        ...r.releases,
+        rel('v0.0.1', '2026-01-01T00:00:00Z', {
+          assets: [{ name: 'Mod-0.0.1.zip', size: 1, downloads: 1 }]
+        })
+      ]
+    }
+    const s = listRepo(more, known, NOW, budget).status
+    expect(s.rejected).toBe('no-matching-asset')
+    expect(s.warnings[0]).toBe(`asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} names`)
   })
 })

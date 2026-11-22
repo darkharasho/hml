@@ -36,6 +36,42 @@ export interface CrawledRepo {
 
 const MAX_WARNINGS = 20
 
+/**
+ * assetPattern matches one repo may run, across all its mods and its release follow-ups: one per
+ * distinct asset name and pattern (a full first page of 20 releases × 15 assets for one mod).
+ * At the 100-character name cap, 300 hostile matches cost about 7 ms in node. Mods left when it
+ * runs out are rejected with no-matching-asset.
+ */
+export const MAX_ASSET_MATCHES_PER_REPO = 300
+
+/** A repo's assetPattern match budget, with the results so far (re-matching a name is free). */
+export interface MatchBudget {
+  left: number
+  seen: Map<string, boolean>
+}
+
+export const newMatchBudget = (): MatchBudget => ({
+  left: MAX_ASSET_MATCHES_PER_REPO,
+  seen: new Map()
+})
+
+/** Thrown when a repo's match budget runs out mid-mod. */
+const SPENT = Symbol('match budget spent')
+
+function budgetedMatcher(pattern: string, budget: MatchBudget): (name: string) => boolean {
+  const match = assetMatcher(pattern)
+  return (name) => {
+    const key = `${pattern}\0${name}`
+    const known = budget.seen.get(key)
+    if (known !== undefined) return known
+    if (budget.left <= 0) throw SPENT
+    budget.left--
+    const hit = match(name)
+    budget.seen.set(key, hit)
+    return hit
+  }
+}
+
 function rawUrl(r: CrawledRepo, path: string): string {
   const segs = path.split('/').map(encodeURIComponent).join('/')
   return `https://raw.githubusercontent.com/${encodeURIComponent(r.owner)}/${encodeURIComponent(r.repo)}/${encodeURIComponent(r.defaultBranch)}/${segs}`
@@ -53,7 +89,8 @@ const newestFirst = (a: CrawledRelease, b: CrawledRelease): number =>
 function listMod(
   r: CrawledRepo,
   mod: ManifestMod,
-  single: boolean
+  single: boolean,
+  budget: MatchBudget
 ): CatalogEntry | { reason: string } {
   const mine = r.releases
     .filter((rel) => !rel.draft)
@@ -61,7 +98,8 @@ function listMod(
       mod.tagPrefix ? samePrefix(tagPrefix(rel.tag), normPrefix(mod.tagPrefix)) : single
     )
   if (mine.length === 0) return { reason: 'no-releases' }
-  const fits = mod.assetPattern ? assetMatcher(mod.assetPattern) : isZip
+  // Only patterns are budgeted: isZip is linear in the name's length.
+  const fits = mod.assetPattern ? budgetedMatcher(mod.assetPattern, budget) : isZip
   const installable = (rel: CrawledRelease): CrawledRelease['assets'][number] | undefined =>
     rel.assets.find((a) => fits(a.name))
   const usable = mine.filter((rel) => installable(rel)).sort(newestFirst)
@@ -116,7 +154,8 @@ export function buildStatus(
 export function listRepo(
   r: CrawledRepo,
   isKnownGame: (l: string) => boolean,
-  now: string
+  now: string,
+  budget: MatchBudget = newMatchBudget()
 ): { status: RepoStatus; moreReleases: boolean } {
   const base = { owner: r.owner, repo: r.repo, crawledAt: now }
   const done = (status: RepoStatus): { status: RepoStatus; moreReleases: boolean } => ({
@@ -142,9 +181,18 @@ export function listRepo(
   const listed: CatalogEntry[] = []
   let firstReason: string | undefined
   let moreReleases = false
+  let spent = false
   const single = m.mods.length === 1
   for (const mod of m.mods) {
-    const res = listMod(r, mod, single)
+    let res: CatalogEntry | { reason: string }
+    try {
+      res = listMod(r, mod, single, budget)
+    } catch (e) {
+      if (e !== SPENT) throw e
+      if (!spent) warnings.push(`asset matching stopped after ${MAX_ASSET_MATCHES_PER_REPO} names`)
+      spent = true
+      res = { reason: 'no-matching-asset' }
+    }
     if ('reason' in res) {
       firstReason ??= res.reason
       warnings.push(`${mod.id}: not listed (${res.reason})`)

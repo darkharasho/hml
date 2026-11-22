@@ -56,12 +56,18 @@ const VERSION_SRC = '[a-z]?\\d+(?:[._-]\\d+)*(?:[._-]?(?:alpha|beta|rc|pre|previ
  */
 export const MAX_PATTERN_TOKENS = 2
 
+/**
+ * Longest asset name a pattern matches. Matching time grows with the name's length squared
+ * (about 42 ms per 300 names at 250 characters, 2.6 ms at 64), so longer names never match.
+ */
+export const MAX_ASSET_NAME_LENGTH = 100
+
 /** A matcher for one pattern, compiled once (for matching many names). */
 export function assetMatcher(pattern: string): (name: string) => boolean {
   const parts = pattern.split('{version}')
   if (parts.length - 1 > MAX_PATTERN_TOKENS) return () => false
   const re = new RegExp(`^${parts.map(escapeRegExp).join(VERSION_SRC)}$`, 'i')
-  return (name) => re.test(name)
+  return (name) => name.length <= MAX_ASSET_NAME_LENGTH && re.test(name)
 }
 
 export function matchesAssetPattern(pattern: string, name: string): boolean {

@@ -10,6 +10,12 @@ import {
 import type { BlockState } from '../../worker/src/catalog/blocklist'
 import { createHandler } from '../../worker/src/index'
 import { fakeFetch, makeCatalogEnv, memKv, repoNode, type MemKv } from './catalogFakes'
+import { listRepo } from '../../worker/src/catalog/listing'
+
+vi.mock('../../worker/src/catalog/listing', async (importOriginal) => {
+  const m = await importOriginal<typeof import('../../worker/src/catalog/listing')>()
+  return { ...m, listRepo: vi.fn(m.listRepo) }
+})
 
 const T0 = Date.parse('2026-11-22T00:00:00Z')
 const HOUR = 3_600_000
@@ -126,6 +132,25 @@ describe('runCrawl', () => {
     mem.puts.length = 0
     await runCrawl(env, fakeFetch(pages).fetchFn, () => T0 + HOUR)
     expect(mem.puts).not.toContain('catalog:blocks')
+  })
+
+  it('never lists a blocked repo, so its manifest and assets cost no CPU', async () => {
+    const mem = seeded()
+    mem.set('catalog:blocklist', [{ target: 'evil/bad', reason: 'malware', at: '2026-01-01' }])
+    const { env } = makeCatalogEnv(mem)
+    vi.mocked(listRepo).mockClear()
+    await runCrawl(env, fakeFetch([[repoNode(2, 'evil', 'bad')]]).fetchFn, () => T0)
+    expect(listRepo).not.toHaveBeenCalled()
+    const status = mem.json<Record<string, RepoStatus>>('catalog:status')!
+    expect(status['evil/bad']).toEqual({
+      owner: 'evil',
+      repo: 'bad',
+      crawledAt: new Date(T0).toISOString(),
+      listed: [],
+      warnings: [],
+      rejected: 'blocked'
+    })
+    expect(Object.keys(mem.json<BlockState>('catalog:blocks')!.ids)).toEqual(['repo:2'])
   })
 
   it('carries block ids over from a crawl state written before the blocks key', async () => {
