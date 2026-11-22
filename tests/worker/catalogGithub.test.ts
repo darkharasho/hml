@@ -26,6 +26,12 @@ describe('fetchSearchPage', () => {
     expect(f).toHaveBeenCalledTimes(1)
   })
 
+  it('sorts the search by creation date so pagination is stable', () => {
+    expect(SEARCH_QUERY).toContain(
+      'query: "topic:hml-mod archived:false fork:true sort:created-asc"'
+    )
+  })
+
   it('sends first=30 by default and honors an explicit page size', async () => {
     const vars = (f: typeof fetch): unknown =>
       JSON.parse(

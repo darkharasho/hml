@@ -189,6 +189,97 @@ describe('runCrawl', () => {
     expect(index(mem, 'anygame')!.mods).toHaveLength(1)
   })
 
+  it('rewrites for star/download changes only after 6 hours', async () => {
+    const { env, mem } = makeCatalogEnv(seeded())
+    const page = (n: number): unknown[][] => [
+      [repoNode(1, 'alice', 'a', ['repo'], '1.0.0', { stars: n, downloads: n })]
+    ]
+    await runCrawl(env, fakeFetch(page(1)).fetchFn, () => T0)
+    mem.puts.length = 0
+    const r1 = await runCrawl(env, fakeFetch(page(2)).fetchFn, () => T0 + HOUR)
+    expect(r1.writes).toBe(0)
+    expect(index(mem, 'repo')!.mods[0].downloads).toBe(1)
+    const etag = (mem.store.get('catalog:index:repo')!.metadata as { hash: string }).hash
+    const r2 = await runCrawl(env, fakeFetch(page(2)).fetchFn, () => T0 + 7 * HOUR)
+    expect(r2.writes).toBe(2)
+    expect(mem.puts.sort()).toEqual(['catalog:index:repo', 'catalog:status'])
+    expect(index(mem, 'repo')!.mods[0]).toMatchObject({ downloads: 2, stars: 2 })
+    const meta = mem.store.get('catalog:index:repo')!.metadata as Record<string, string>
+    expect(meta.hash).not.toBe(etag)
+    expect(meta.at).toBe(new Date(T0 + 7 * HOUR).toISOString())
+  })
+
+  it('writes at once when more than counts changed', async () => {
+    const { env, mem } = makeCatalogEnv(seeded())
+    await runCrawl(env, fakeFetch([[repoNode(1, 'alice', 'a')]]).fetchFn, () => T0)
+    const r = await runCrawl(
+      env,
+      fakeFetch([[repoNode(1, 'alice', 'a', ['repo'], '1.1.0')]]).fetchFn,
+      () => T0 + HOUR
+    )
+    expect(r.writes).toBe(2)
+    expect(index(mem, 'repo')!.mods[0].latest.version).toBe('1.1.0')
+  })
+
+  it('does not rewrite when only the crawl order changed', async () => {
+    const { env, mem } = makeCatalogEnv(seeded())
+    const a = repoNode(1, 'alice', 'a')
+    const b = repoNode(2, 'bob', 'b')
+    await runCrawl(env, fakeFetch([[b, a]]).fetchFn, () => T0)
+    expect(Object.keys(mem.json<Record<string, unknown>>('catalog:status')!)).toEqual([
+      'alice/a',
+      'bob/b'
+    ])
+    const r = await runCrawl(env, fakeFetch([[a, b]]).fetchFn, () => T0 + HOUR)
+    expect(r.writes).toBe(0)
+  })
+
+  it('ends a pass early after 3 failed runs at one cursor, keeping last pass repos', async () => {
+    const { env, mem } = makeCatalogEnv(seeded())
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const pass1 = [[repoNode(1, 'alice', 'a')], [repoNode(2, 'bob', 'b')]]
+    await runCrawl(env, fakeFetch(pass1).fetchFn, () => T0)
+    const pass2 = [
+      [repoNode(1, 'alice', 'a'), repoNode(3, 'carol', 'c')],
+      [repoNode(2, 'bob', 'b')]
+    ]
+    const { fetchFn } = fakeFetch(pass2, (c) => (c === 'c1' ? 401 : null))
+    const r1 = await runCrawl(env, fetchFn, () => T0 + HOUR)
+    expect(r1.finishedPass).toBe(false)
+    expect(mem.json<CrawlState>('catalog:state')!).toMatchObject({ cursor: 'c1', failures: 1 })
+    await runCrawl(env, fetchFn, () => T0 + 2 * HOUR)
+    expect(mem.json<CrawlState>('catalog:state')!.failures).toBe(2)
+    expect(error).not.toHaveBeenCalled()
+    const r3 = await runCrawl(env, fetchFn, () => T0 + 3 * HOUR)
+    expect(r3.finishedPass).toBe(true)
+    expect(error).toHaveBeenCalledWith(
+      JSON.stringify({ catalog: 'stalled', cursor: 'c1', failures: 3 })
+    )
+    expect(index(mem, 'repo')!.mods.map((m) => m.repo)).toEqual(['a', 'b', 'c'])
+    expect(Object.keys(mem.json<Record<string, unknown>>('catalog:status')!)).toEqual([
+      'alice/a',
+      'bob/b',
+      'carol/c'
+    ])
+    expect(mem.json<CrawlState>('catalog:state')!).toMatchObject({
+      cursor: null,
+      pass: {},
+      failures: 0
+    })
+  })
+
+  it('resets the failure count after a successful page', async () => {
+    const { env, mem } = makeCatalogEnv(seeded())
+    let broken = true
+    const { fetchFn } = fakeFetch(pagesOf(5), (c) => (broken && c === null ? 401 : null))
+    await runCrawl(env, fetchFn, () => T0)
+    await runCrawl(env, fetchFn, () => T0 + HOUR)
+    expect(mem.json<CrawlState>('catalog:state')!.failures).toBe(2)
+    broken = false
+    await runCrawl(env, fetchFn, () => T0 + 2 * HOUR)
+    expect(mem.json<CrawlState>('catalog:state')!).toMatchObject({ cursor: 'c3', failures: 0 })
+  })
+
   it('warns when the search total exceeds 1000', async () => {
     const { env } = makeCatalogEnv(seeded())
     const f = fakeFetch(pagesOf(1))

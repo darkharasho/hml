@@ -4,7 +4,8 @@ import { manifestJsonSchema } from '../../../src/shared/hmlManifest'
 import { err } from '../http'
 import type { Env } from '../index'
 import { serveBlocklist } from './blocklist'
-import { indexKey, KEY_STATE, KEY_STATUS, parseState, readBlocklist, readStored } from './crawl'
+import { parseState } from './crawl'
+import { indexKey, KEY_STATE, KEY_STATUS, readBlocklist, readStored } from './store'
 
 export const CATALOG_PREFIX = '/v1/catalog'
 const GAME_RE = /^[a-z0-9-]{1,64}$/

@@ -1,28 +1,31 @@
 // Resumable GitHub catalog crawl, run from the cron trigger. Free plan: at most
 // CRAWL_PAGES_PER_RUN GraphQL pages per run, and KV writes only when a value's hash changed.
-import type {
-  BlockEntry,
-  CatalogEntry,
-  CatalogIndex,
-  RepoStatus
-} from '../../../src/shared/ghCatalog'
+// Star and download counts alone rewrite an index or the status map at most every 6 hours.
+import type { CatalogEntry, CatalogIndex, RepoStatus } from '../../../src/shared/ghCatalog'
 import { isKnownGameLabel } from '../../../src/shared/hmlManifest'
 import type { Env, KvLike } from '../index'
 import { isBlocked, updateBlockState, type BlockState } from './blocklist'
 import { fetchSearchPage, GhGraphqlError } from './github'
 import { buildStatus } from './listing'
+import {
+  isObj,
+  KEY_GAMES,
+  KEY_STATE,
+  KEY_STATUS,
+  indexKey,
+  putCatalogValue,
+  putIfChanged,
+  readBlocklist,
+  readStored
+} from './store'
 
 export const CRAWL_PAGES_PER_RUN = 3
 export const RETRY_PAGE_SIZE = 15
 export const SCHEMA_URL = 'https://thunderstore.io/api/experimental/schema/dev/latest/'
 const GAMES_MAX_AGE_MS = 86_400_000
 const SEARCH_RESULT_CAP = 1000
-
-export const KEY_STATE = 'catalog:state'
-export const KEY_STATUS = 'catalog:status'
-export const KEY_BLOCKLIST = 'catalog:blocklist'
-export const KEY_GAMES = 'catalog:games'
-export const indexKey = (game: string): string => `catalog:index:${game}`
+/** Consecutive failed runs at one cursor before the pass is ended early. */
+export const MAX_FAILURES = 3
 
 export interface CrawlState {
   cursor: string | null
@@ -32,63 +35,13 @@ export interface CrawlState {
   blocks: BlockState
   /** Games that got a non-empty index at the end of the last pass. */
   indexed: string[]
+  /** Consecutive runs that failed at the stored cursor. */
+  failures: number
 }
 
 export interface GamesCache {
   fetchedAt: string
   slugs: string[]
-}
-
-export interface Stored<T> {
-  value: T | null
-  hash: string | null
-}
-
-type Obj = Record<string, unknown>
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
-
-export async function sha256Hex(s: string): Promise<string> {
-  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
-  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/** Reads a JSON value and the hash stored in its metadata. Unparseable values read as null. */
-export async function readStored<T>(kv: KvLike, key: string): Promise<Stored<T>> {
-  const { value, metadata } = await kv.getWithMetadata<{ hash?: unknown }>(key, 'text')
-  const hash = isObj(metadata) && typeof metadata.hash === 'string' ? metadata.hash : null
-  if (value === null) return { value: null, hash }
-  try {
-    return { value: JSON.parse(value) as T, hash }
-  } catch {
-    return { value: null, hash }
-  }
-}
-
-/**
- * Writes `value` unless the stored hash matches. The hash covers `stable` (default: the value),
- * so volatile fields such as builtAt or crawledAt alone never cause a write.
- */
-async function putIfChanged(
-  kv: KvLike,
-  key: string,
-  value: unknown,
-  stable: unknown = value,
-  known?: string | null
-): Promise<boolean> {
-  const hash = await sha256Hex(JSON.stringify(stable))
-  const prev = known !== undefined ? known : (await readStored(kv, key)).hash
-  if (prev === hash) return false
-  await kv.put(key, JSON.stringify(value), { metadata: { hash } })
-  return true
-}
-
-export async function readBlocklist(kv: KvLike): Promise<BlockEntry[]> {
-  const { value } = await readStored<unknown>(kv, KEY_BLOCKLIST)
-  if (!Array.isArray(value)) return []
-  return value.filter(
-    (e): e is BlockEntry =>
-      isObj(e) && typeof e.target === 'string' && e.target !== '' && typeof e.reason === 'string'
-  )
 }
 
 export function parseState(v: unknown): CrawlState {
@@ -99,7 +52,8 @@ export function parseState(v: unknown): CrawlState {
     total: typeof s.total === 'number' ? s.total : 0,
     blocks:
       isObj(s.blocks) && isObj(s.blocks.ids) ? (s.blocks as unknown as BlockState) : { ids: {} },
-    indexed: Array.isArray(s.indexed) ? s.indexed.filter((g) => typeof g === 'string') : []
+    indexed: Array.isArray(s.indexed) ? s.indexed.filter((g) => typeof g === 'string') : [],
+    failures: typeof s.failures === 'number' ? s.failures : 0
   }
 }
 
@@ -157,23 +111,40 @@ async function fetchPage(
   }
 }
 
-const stripCrawledAt = (
-  s: Record<string, RepoStatus>
-): Record<string, Omit<RepoStatus, 'crawledAt'>> =>
-  Object.fromEntries(
-    Object.entries(s).map(([k, v]) => {
-      const rest: Partial<RepoStatus> = { ...v }
-      delete rest.crawledAt
-      return [k, rest as Omit<RepoStatus, 'crawledAt'>]
-    })
-  )
+const byKey = (a: CatalogEntry, b: CatalogEntry): number =>
+  a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+
+/** An entry without its star and download counts. */
+function withoutCounts(e: CatalogEntry): Omit<CatalogEntry, 'stars' | 'downloads'> {
+  const rest: Partial<CatalogEntry> = { ...e }
+  delete rest.stars
+  delete rest.downloads
+  return rest as Omit<CatalogEntry, 'stars' | 'downloads'>
+}
+
+function withoutCrawledAt(s: RepoStatus, counts: boolean): unknown {
+  const rest: Partial<RepoStatus> = { ...s }
+  delete rest.crawledAt
+  return counts ? rest : { ...rest, listed: s.listed.map(withoutCounts) }
+}
+
+/** Status map with keys sorted, so crawl order never causes a write. */
+function sortedStatus(pass: Record<string, RepoStatus>): Record<string, RepoStatus> {
+  const out: Record<string, RepoStatus> = {}
+  for (const k of Object.keys(pass).sort()) out[k] = pass[k]
+  return out
+}
+
+const mapValues = <T, U>(o: Record<string, T>, f: (v: T) => U): Record<string, U> =>
+  Object.fromEntries(Object.entries(o).map(([k, v]) => [k, f(v)]))
 
 /** Writes per-game indexes and the status map for a finished pass. Returns the write count and indexed games. */
 async function finishPass(
   kv: KvLike,
   state: CrawlState,
-  builtAt: string
+  now: number
 ): Promise<{ writes: number; indexed: string[] }> {
+  const builtAt = new Date(now).toISOString()
   const byGame = new Map<string, CatalogEntry[]>()
   for (const status of Object.values(state.pass))
     for (const entry of status.listed)
@@ -185,11 +156,16 @@ async function finishPass(
   for (const game of state.indexed) if (!byGame.has(game)) byGame.set(game, [])
   let writes = 0
   for (const [game, mods] of byGame) {
-    mods.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    mods.sort(byKey)
     const index: CatalogIndex = { game, builtAt, mods }
-    if (await putIfChanged(kv, indexKey(game), index, { game, mods })) writes++
+    const content = { game, mods }
+    const stable = { game, mods: mods.map(withoutCounts) }
+    if (await putCatalogValue(kv, indexKey(game), index, content, stable, now)) writes++
   }
-  if (await putIfChanged(kv, KEY_STATUS, state.pass, stripCrawledAt(state.pass))) writes++
+  const status = sortedStatus(state.pass)
+  const content = mapValues(status, (s) => withoutCrawledAt(s, true))
+  const stable = mapValues(status, (s) => withoutCrawledAt(s, false))
+  if (await putCatalogValue(kv, KEY_STATUS, status, content, stable, now)) writes++
   const indexed = [...byGame]
     .filter(([, mods]) => mods.length > 0)
     .map(([g]) => g)
@@ -228,10 +204,15 @@ export async function runCrawl(
   const stored = await readStored<unknown>(kv, KEY_STATE)
   const state = parseState(stored.value)
 
+  let failed = false
   while (pages < CRAWL_PAGES_PER_RUN) {
     const page = await fetchPage(fetchFn, env.GITHUB_TOKEN, state.cursor)
-    if (!page) break
+    if (!page) {
+      failed = true
+      break
+    }
     pages++
+    state.failures = 0
     repos += page.repos.length
     state.total = page.total
     state.blocks = updateBlockState(entries, state.blocks, page.repos)
@@ -250,17 +231,29 @@ export async function runCrawl(
     }
   }
 
+  if (failed && ++state.failures >= MAX_FAILURES) {
+    // One page keeps failing: end the pass with what we have, keeping last pass's other repos.
+    console.error(
+      JSON.stringify({ catalog: 'stalled', cursor: state.cursor, failures: state.failures })
+    )
+    const prev = (await readStored<Record<string, RepoStatus>>(kv, KEY_STATUS)).value
+    if (isObj(prev))
+      for (const [k, v] of Object.entries(prev))
+        if (!Object.hasOwn(state.pass, k)) state.pass[k] = v
+    finishedPass = true
+  }
   if (finishedPass) {
-    const res = await finishPass(kv, state, new Date(now()).toISOString())
+    const res = await finishPass(kv, state, now())
     writes += res.writes
     state.indexed = res.indexed
     state.pass = {}
     state.cursor = null
+    state.failures = 0
   }
   if (state.total > SEARCH_RESULT_CAP)
     console.warn(
       `catalog: search total ${state.total} exceeds GitHub's ${SEARCH_RESULT_CAP}-result cap`
     )
-  if (await putIfChanged(kv, KEY_STATE, state, state, stored.hash)) writes++
+  if (await putIfChanged(kv, KEY_STATE, state, stored.hash)) writes++
   return done()
 }

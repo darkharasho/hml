@@ -67,19 +67,26 @@ other methods get `405 method-not-allowed`, the limiter `429 rate-limited`):
 
 Free-tier budget: each run first refreshes the Thunderstore community list if it is missing or over
 24 hours old, and does nothing else that run. Otherwise it fetches at most 3 GraphQL search pages
-(a 502/504 is retried once at page size 15) and saves its cursor, so a pass spans several runs. The
-indexes and status map are written only when a pass finishes. Every catalog value carries the
-SHA-256 of its content in its KV metadata and is written only when that hash changes (`builtAt` and
-`crawledAt` don't count), so an unchanged pass writes nothing. Each run logs
+(sorted `created-asc` so pages are stable; a 502/504 is retried once at page size 15) and saves its
+cursor, so a pass spans several runs. The indexes and status map are written only when a pass
+finishes. Catalog values carry KV metadata `{hash, stableHash, at}`: `hash` covers the content
+without `builtAt`/`crawledAt` (and is the index `ETag`), `stableHash` also leaves out star and
+download counts, and `at` is the write time. A value is rewritten when `stableHash` changes, or when
+only the counts changed and the stored value is over 6 hours old, so an unchanged pass writes
+nothing and busy mods cost at most 4 rewrites a day per key. Status keys are sorted, so crawl order
+never causes a write. If 3 runs in a row fail at the same cursor, the pass ends early: it is built
+from the repos crawled so far plus the previous `catalog:status` for the rest, the cursor resets,
+and the run logs `{"catalog":"stalled","cursor","failures"}` with `console.error`. Each run logs
 `{"catalog":"run","pages","repos","writes","ms"}`, and warns when the search total passes GitHub's
 1,000-result cap.
 
 KV keys (all in `PROFILES`):
 
 - `catalog:index:<game>`: the `CatalogIndex` served for that game.
-- `catalog:status`: lowercase `owner/repo` to `RepoStatus`, from the last finished pass.
+- `catalog:status`: lowercase `owner/repo` to `RepoStatus`, from the last finished pass. A repo's
+  `crawledAt` is when the stored status was last written, not when the repo was last crawled.
 - `catalog:state`: crawl progress (`cursor`, the current pass's statuses, search `total`, the
-  blocklist's resolved GitHub ids, and the games indexed last pass).
+  blocklist's resolved GitHub ids, the games indexed last pass, and consecutive `failures`).
 - `catalog:games`: `{"fetchedAt", "slugs"}`, Thunderstore communities with a mod loader.
 - `catalog:blocklist`: `BlockEntry[]`, edited by hand. `target` is `owner` or `owner/repo`
   (case-insensitive); blocks follow renames once the crawl has seen the repo or owner. To edit:
@@ -88,4 +95,5 @@ KV keys (all in `PROFILES`):
 npx wrangler@4 kv key put --binding PROFILES catalog:blocklist '[{"target":"owner/repo","reason":"malware","at":"2026-11-22"}]'
 ```
 
-The new list takes effect on the next pass.
+Clients see the new list at once through `/v1/catalog/blocklist`. The indexes and status drop a
+newly blocked repo when the first pass that starts after the edit finishes.

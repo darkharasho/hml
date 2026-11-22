@@ -115,7 +115,8 @@ export function repoNode(
   owner: string,
   name: string,
   games: string[] = ['repo'],
-  version = '1.0.0'
+  version = '1.0.0',
+  counts: { stars?: number; downloads?: number } = {}
 ): unknown {
   const manifest = JSON.stringify({
     schema: 1,
@@ -125,7 +126,7 @@ export function repoNode(
     __typename: 'Repository',
     databaseId: id,
     name,
-    stargazerCount: 1,
+    stargazerCount: counts.stars ?? 1,
     createdAt: '2026-01-01T00:00:00Z',
     isArchived: false,
     owner: { id: `O-${owner}`, login: owner, avatarUrl: `https://a.test/${owner}` },
@@ -138,7 +139,9 @@ export function repoNode(
           isDraft: false,
           isPrerelease: false,
           publishedAt: '2026-02-01T00:00:00Z',
-          releaseAssets: { nodes: [{ name: `${name}.zip`, size: 10, downloadCount: 3 }] }
+          releaseAssets: {
+            nodes: [{ name: `${name}.zip`, size: 10, downloadCount: counts.downloads ?? 3 }]
+          }
         }
       ]
     }

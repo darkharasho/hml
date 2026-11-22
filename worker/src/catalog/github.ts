@@ -3,7 +3,7 @@ import { MANIFEST_MAX_BYTES } from '../../../src/shared/hmlManifest'
 import type { CrawledRelease, CrawledRepo } from './listing'
 
 export const SEARCH_QUERY = `query($cursor: String, $first: Int!) {
-  search(query: "topic:hml-mod archived:false fork:true", type: REPOSITORY, first: $first, after: $cursor) {
+  search(query: "topic:hml-mod archived:false fork:true sort:created-asc", type: REPOSITORY, first: $first, after: $cursor) {
     repositoryCount
     pageInfo { hasNextPage endCursor }
     nodes {
