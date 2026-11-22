@@ -35,13 +35,18 @@ export async function sha256Hex(s: string): Promise<string> {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** Reads a JSON value and the hash stored in its metadata. Unparseable values read as null. */
-export async function readStored<T>(kv: KvLike, key: string): Promise<Stored<T>> {
-  const { value, metadata } = await kv.getWithMetadata<Record<string, unknown>>(key, 'text')
+function parseMeta(metadata: unknown): Partial<CatalogMeta> {
   const meta: Partial<CatalogMeta> = {}
   if (isObj(metadata))
     for (const k of ['hash', 'stableHash', 'at'] as const)
       if (typeof metadata[k] === 'string') meta[k] = metadata[k] as string
+  return meta
+}
+
+/** Reads a JSON value and the hash stored in its metadata. Unparseable values read as null. */
+export async function readStored<T>(kv: KvLike, key: string): Promise<Stored<T>> {
+  const { value, metadata } = await kv.getWithMetadata<Record<string, unknown>>(key, 'text')
+  const meta = parseMeta(metadata)
   const hash = meta.hash ?? null
   if (value === null) return { value: null, hash, meta }
   try {
@@ -49,6 +54,13 @@ export async function readStored<T>(kv: KvLike, key: string): Promise<Stored<T>>
   } catch {
     return { value: null, hash, meta }
   }
+}
+
+/** Reads only a value's metadata; the body is streamed and cancelled unread (saves CPU). */
+async function readMeta(kv: KvLike, key: string): Promise<Partial<CatalogMeta>> {
+  const { value, metadata } = await kv.getWithMetadata<Record<string, unknown>>(key, 'stream')
+  await value?.cancel()
+  return parseMeta(metadata)
 }
 
 /** Writes `value` (whole-value hash) unless the stored hash matches. */
@@ -60,7 +72,7 @@ export async function putIfChanged(
 ): Promise<boolean> {
   const json = JSON.stringify(value)
   const hash = await sha256Hex(json)
-  const prev = known !== undefined ? known : (await readStored(kv, key)).hash
+  const prev = known !== undefined ? known : ((await readMeta(kv, key)).hash ?? null)
   if (prev === hash) return false
   await kv.put(key, json, { metadata: { hash } })
   return true
@@ -83,7 +95,7 @@ export async function putCatalogValue(
     sha256Hex(JSON.stringify(content)),
     sha256Hex(JSON.stringify(stable))
   ])
-  const prev = (await readStored(kv, key)).meta
+  const prev = await readMeta(kv, key)
   if (prev.stableHash === stableHash) {
     if (prev.hash === hash) return false
     const at = prev.at ? Date.parse(prev.at) : NaN
