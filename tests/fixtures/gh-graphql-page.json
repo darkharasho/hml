@@ -1,0 +1,65 @@
+{
+  "data": {
+    "search": {
+      "repositoryCount": 3,
+      "pageInfo": { "hasNextPage": true, "endCursor": "Y3Vyc29yOjEwMA==" },
+      "nodes": [
+        {
+          "__typename": "Repository",
+          "databaseId": 1001,
+          "name": "cool-mod",
+          "stargazerCount": 42,
+          "createdAt": "2026-01-02T03:04:05Z",
+          "isArchived": false,
+          "owner": { "id": "MDQ6VXNlcjE=", "login": "alice", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
+          "defaultBranchRef": { "name": "main" },
+          "object": { "text": "{\"schema\":1,\"mods\":[{\"id\":\"cool\",\"name\":\"Cool\",\"description\":\"d\",\"games\":[\"repo\"]}]}", "byteSize": 95 },
+          "releases": {
+            "nodes": [
+              {
+                "tagName": "v1.2.0",
+                "isDraft": false,
+                "isPrerelease": false,
+                "publishedAt": "2026-03-01T00:00:00Z",
+                "releaseAssets": { "nodes": [ { "name": "cool.zip", "size": 2048, "downloadCount": 17 } ] }
+              },
+              {
+                "tagName": "v1.3.0-beta",
+                "isDraft": true,
+                "isPrerelease": true,
+                "publishedAt": null,
+                "releaseAssets": { "nodes": [] }
+              }
+            ]
+          }
+        },
+        {
+          "__typename": "Repository",
+          "databaseId": 1002,
+          "name": "no-manifest",
+          "stargazerCount": 0,
+          "createdAt": "2026-02-02T00:00:00Z",
+          "isArchived": true,
+          "owner": { "id": "MDQ6VXNlcjI=", "login": "bob", "avatarUrl": "https://avatars.githubusercontent.com/u/2?v=4" },
+          "defaultBranchRef": { "name": "master" },
+          "object": null,
+          "releases": { "nodes": [] }
+        },
+        {
+          "__typename": "Repository",
+          "databaseId": 1003,
+          "name": "huge-manifest",
+          "stargazerCount": 5,
+          "createdAt": "2026-02-03T00:00:00Z",
+          "isArchived": false,
+          "owner": { "id": "MDEyOk9yZ2FuaXphdGlvbjM=", "login": "carol-org", "avatarUrl": "https://avatars.githubusercontent.com/u/3?v=4" },
+          "defaultBranchRef": { "name": "main" },
+          "object": { "text": null, "byteSize": 900000 },
+          "releases": { "nodes": [] }
+        },
+        { "__typename": "Repository", "databaseId": "oops", "name": 7 },
+        null
+      ]
+    }
+  }
+}
