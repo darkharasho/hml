@@ -63,6 +63,21 @@ async function readMeta(kv: KvLike, key: string): Promise<Partial<CatalogMeta>> 
   return parseMeta(metadata)
 }
 
+/** Writes `value` (whole-value hash) unless the stored hash matches; gives the value's hash. */
+export async function writeIfChanged(
+  kv: KvLike,
+  key: string,
+  value: unknown,
+  known?: string | null
+): Promise<{ written: boolean; hash: string }> {
+  const json = JSON.stringify(value)
+  const hash = await sha256Hex(json)
+  const prev = known !== undefined ? known : ((await readMeta(kv, key)).hash ?? null)
+  if (prev === hash) return { written: false, hash }
+  await kv.put(key, json, { metadata: { hash } })
+  return { written: true, hash }
+}
+
 /** Writes `value` (whole-value hash) unless the stored hash matches. */
 export async function putIfChanged(
   kv: KvLike,
@@ -70,12 +85,7 @@ export async function putIfChanged(
   value: unknown,
   known?: string | null
 ): Promise<boolean> {
-  const json = JSON.stringify(value)
-  const hash = await sha256Hex(json)
-  const prev = known !== undefined ? known : ((await readMeta(kv, key)).hash ?? null)
-  if (prev === hash) return false
-  await kv.put(key, json, { metadata: { hash } })
-  return true
+  return (await writeIfChanged(kv, key, value, known)).written
 }
 
 /**

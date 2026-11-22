@@ -1,6 +1,8 @@
 // Resumable GitHub catalog crawl, run from the cron trigger. Free plan: at most
 // CRAWL_PAGES_PER_RUN GraphQL pages per run, and KV writes only when a value's hash changed.
 // Star and download counts alone rewrite an index or the status map at most every 6 hours.
+// catalog:state is written at most twice a run (the failed-run marker before fetching, then the
+// run's result): at most 96 of the 1,000 daily KV writes on the */30 cron.
 import type { CatalogEntry, CatalogIndex, RepoStatus } from '../../../src/shared/ghCatalog'
 import { isKnownGameLabel } from '../../../src/shared/hmlManifest'
 import type { Env, KvLike } from '../index'
@@ -16,7 +18,8 @@ import {
   putCatalogValue,
   putIfChanged,
   readBlocklist,
-  readStored
+  readStored,
+  writeIfChanged
 } from './store'
 
 export const CRAWL_PAGES_PER_RUN = 3
@@ -24,7 +27,11 @@ export const RETRY_PAGE_SIZE = 15
 export const SCHEMA_URL = 'https://thunderstore.io/api/experimental/schema/dev/latest/'
 const GAMES_MAX_AGE_MS = 86_400_000
 const SEARCH_RESULT_CAP = 1000
-/** Consecutive failed runs at one cursor before the pass is ended early. */
+/**
+ * Consecutive failed runs at one cursor before the pass is ended early. A run counts as failed
+ * when its first page fails, and also when the platform kills it (CPU or time limit): each run
+ * counts itself as failed in KV before fetching, and a fetched page resets the count.
+ */
 export const MAX_FAILURES = 3
 
 export interface CrawlState {
@@ -35,7 +42,7 @@ export interface CrawlState {
   blocks: BlockState
   /** Games that got a non-empty index at the end of the last pass. */
   indexed: string[]
-  /** Consecutive runs that failed at the stored cursor. */
+  /** Consecutive runs that failed, or were killed, at the stored cursor. */
   failures: number
 }
 
@@ -203,12 +210,24 @@ export async function runCrawl(
   const entries = await readBlocklist(kv)
   const stored = await readStored<unknown>(kv, KEY_STATE)
   const state = parseState(stored.value)
+  let stateHash = stored.hash
 
-  let failed = false
-  while (pages < CRAWL_PAGES_PER_RUN) {
+  // Earlier runs at this cursor all failed or were killed before finishing: don't fetch it again.
+  let stalled = state.failures >= MAX_FAILURES
+  if (!stalled) {
+    // Count this run as failed before any page work, so a run killed mid-crawl still counts.
+    state.failures++
+    const marked = await writeIfChanged(kv, KEY_STATE, state, stateHash)
+    if (marked.written) writes++
+    stateHash = marked.hash
+  }
+
+  while (!stalled && pages < CRAWL_PAGES_PER_RUN) {
     const page = await fetchPage(fetchFn, env.GITHUB_TOKEN, state.cursor)
     if (!page) {
-      failed = true
+      // A later page failing counts as one failed run at the cursor it stopped at.
+      if (pages > 0) state.failures = 1
+      stalled = state.failures >= MAX_FAILURES
       break
     }
     pages++
@@ -231,7 +250,7 @@ export async function runCrawl(
     }
   }
 
-  if (failed && ++state.failures >= MAX_FAILURES) {
+  if (stalled) {
     // One page keeps failing: end the pass with what we have, keeping last pass's other repos.
     console.error(
       JSON.stringify({ catalog: 'stalled', cursor: state.cursor, failures: state.failures })
@@ -254,6 +273,6 @@ export async function runCrawl(
     console.warn(
       `catalog: search total ${state.total} exceeds GitHub's ${SEARCH_RESULT_CAP}-result cap`
     )
-  if (await putIfChanged(kv, KEY_STATE, state, stored.hash)) writes++
+  if (await putIfChanged(kv, KEY_STATE, state, stateHash)) writes++
   return done()
 }

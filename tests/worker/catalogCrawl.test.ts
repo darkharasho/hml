@@ -24,6 +24,11 @@ function seeded(slugs = ['repo', 'stonewards', 'bonelab'], at = T0): MemKv {
 const pagesOf = (n: number): unknown[][] =>
   Array.from({ length: n }, (_, i) => [repoNode(100 + i, 'alice', `mod-${i}`)])
 
+/** Writes of catalog:state in a run that fetched a page: the run marker, then its reset. */
+const STATE_WRITES = 2
+/** Writes other than catalog:state. */
+const valuePuts = (mem: MemKv): string[] => mem.puts.filter((k) => k !== 'catalog:state')
+
 const index = (mem: MemKv, game: string): CatalogIndex | null =>
   mem.json<CatalogIndex>(`catalog:index:${game}`)
 
@@ -60,15 +65,15 @@ describe('runCrawl', () => {
     expect(index(mem, 'repo')!.mods).toHaveLength(5)
   })
 
-  it('writes nothing on a second identical pass', async () => {
+  it('writes only the run marker and its reset on a second identical pass', async () => {
     const { env, mem } = makeCatalogEnv(seeded())
     const { fetchFn } = fakeFetch(pagesOf(2))
     const first = await runCrawl(env, fetchFn, () => T0)
     expect(first.writes).toBeGreaterThan(0)
     mem.puts.length = 0
     const second = await runCrawl(env, fetchFn, () => T0 + HOUR)
-    expect(second.writes).toBe(0)
-    expect(mem.puts).toEqual([])
+    expect(second.writes).toBe(STATE_WRITES)
+    expect(mem.puts).toEqual(['catalog:state', 'catalog:state'])
   })
 
   it('stores each value hash in its metadata', async () => {
@@ -197,12 +202,13 @@ describe('runCrawl', () => {
     await runCrawl(env, fakeFetch(page(1)).fetchFn, () => T0)
     mem.puts.length = 0
     const r1 = await runCrawl(env, fakeFetch(page(2)).fetchFn, () => T0 + HOUR)
-    expect(r1.writes).toBe(0)
+    expect(r1.writes).toBe(STATE_WRITES)
+    expect(valuePuts(mem)).toEqual([])
     expect(index(mem, 'repo')!.mods[0].downloads).toBe(1)
     const etag = (mem.store.get('catalog:index:repo')!.metadata as { hash: string }).hash
     const r2 = await runCrawl(env, fakeFetch(page(2)).fetchFn, () => T0 + 7 * HOUR)
-    expect(r2.writes).toBe(2)
-    expect(mem.puts.sort()).toEqual(['catalog:index:repo', 'catalog:status'])
+    expect(r2.writes).toBe(2 + STATE_WRITES)
+    expect(valuePuts(mem).sort()).toEqual(['catalog:index:repo', 'catalog:status'])
     expect(index(mem, 'repo')!.mods[0]).toMatchObject({ downloads: 2, stars: 2 })
     const meta = mem.store.get('catalog:index:repo')!.metadata as Record<string, string>
     expect(meta.hash).not.toBe(etag)
@@ -217,7 +223,7 @@ describe('runCrawl', () => {
       fakeFetch([[repoNode(1, 'alice', 'a', ['repo'], '1.1.0')]]).fetchFn,
       () => T0 + HOUR
     )
-    expect(r.writes).toBe(2)
+    expect(r.writes).toBe(2 + STATE_WRITES)
     expect(index(mem, 'repo')!.mods[0].latest.version).toBe('1.1.0')
   })
 
@@ -230,8 +236,10 @@ describe('runCrawl', () => {
       'alice/a',
       'bob/b'
     ])
+    mem.puts.length = 0
     const r = await runCrawl(env, fakeFetch([[a, b]]).fetchFn, () => T0 + HOUR)
-    expect(r.writes).toBe(0)
+    expect(r.writes).toBe(STATE_WRITES)
+    expect(valuePuts(mem)).toEqual([])
   })
 
   it('ends a pass early after 3 failed runs at one cursor, keeping last pass repos', async () => {
@@ -266,6 +274,35 @@ describe('runCrawl', () => {
       pass: {},
       failures: 0
     })
+  })
+
+  it('counts runs killed mid-crawl and ends the pass after 3 of them', async () => {
+    const { env, mem } = makeCatalogEnv(seeded())
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await runCrawl(env, fakeFetch([[repoNode(1, 'alice', 'a')]]).fetchFn, () => T0)
+    // A run the platform kills (CPU limit) never returns: GraphQL that never answers stands in.
+    const hang = (async (url: string) =>
+      url.startsWith('https://api.github.com/')
+        ? new Promise<Response>(() => {})
+        : new Response('{}')) as unknown as typeof fetch
+    const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 5))
+    for (let i = 1; i <= 3; i++) {
+      void runCrawl(env, hang, () => T0 + i * HOUR)
+      await flush()
+      expect(mem.json<CrawlState>('catalog:state')!).toMatchObject({ cursor: null, failures: i })
+    }
+    const { fetchFn, gql } = fakeFetch([[repoNode(1, 'alice', 'a'), repoNode(2, 'bob', 'b')]])
+    const r = await runCrawl(env, fetchFn, () => T0 + 4 * HOUR)
+    expect(gql).toHaveLength(0)
+    expect(r.finishedPass).toBe(true)
+    expect(error).toHaveBeenCalledWith(
+      JSON.stringify({ catalog: 'stalled', cursor: null, failures: 3 })
+    )
+    expect(index(mem, 'repo')!.mods.map((m) => m.repo)).toEqual(['a'])
+    expect(mem.json<CrawlState>('catalog:state')!).toMatchObject({ cursor: null, failures: 0 })
+    await runCrawl(env, fetchFn, () => T0 + 5 * HOUR)
+    expect(gql).toHaveLength(1)
+    expect(index(mem, 'repo')!.mods.map((m) => m.repo)).toEqual(['a', 'b'])
   })
 
   it('resets the failure count after a successful page', async () => {
