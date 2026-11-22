@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { CliShimStatus, UpdateCheckResult } from '../../../shared/ipc'
 import type { NxStatus } from '../../../shared/types'
-import { noSecureStorage } from '../../../shared/messages'
+import { NX_SSO_CANCELLED, noSecureStorage } from '../../../shared/messages'
 import { api, errorMessage } from '../api'
 import { CLI_AGENT_INSTRUCTIONS } from '../cliAgentText'
 import { NX_API_KEY_PAGE } from '../nxView'
@@ -248,6 +248,7 @@ function NexusSection(): React.JSX.Element {
   const [status, setStatus] = useState<NxStatus | null>(null)
   const [key, setKeyText] = useState('')
   const [registering, setRegistering] = useState(false)
+  const [signingIn, setSigningIn] = useState(false)
   const inBrowser = useStore((s) => s.settings?.nexusPagesInBrowser ?? false)
   const setInBrowser = useStore((s) => s.setNexusPagesInBrowser)
 
@@ -292,6 +293,20 @@ function NexusSection(): React.JSX.Element {
     if (await setKey(null)) await refresh()
   }
 
+  async function signIn(): Promise<void> {
+    setSigningIn(true)
+    try {
+      const who = await api.nxSignIn()
+      toast('success', `Signed in to Nexus Mods as ${who.name}`)
+    } catch (e) {
+      const message = errorMessage(e)
+      if (message !== NX_SSO_CANCELLED) toast('error', message)
+    } finally {
+      setSigningIn(false)
+      await refresh()
+    }
+  }
+
   async function register(): Promise<void> {
     setRegistering(true)
     try {
@@ -308,8 +323,35 @@ function NexusSection(): React.JSX.Element {
   return (
     <div className="flex flex-col gap-4 border-t border-line pt-5">
       <h3 className="text-sm font-semibold text-fg">Nexus Mods</h3>
+      {status?.signIn && (
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-fg">Account</p>
+            <p className="mt-0.5 text-xs text-muted">
+              {signingIn
+                ? 'Click Authorise on the Nexus Mods page in your browser.'
+                : status.user
+                  ? statusLine
+                  : 'Sign in to download mods. There is no key to copy.'}
+            </p>
+          </div>
+          {signingIn ? (
+            <Button variant="quiet" onClick={() => void api.nxCancelSignIn()}>
+              Cancel
+            </Button>
+          ) : (
+            <Button
+              variant={status.user ? 'ghost' : 'primary'}
+              disabled={unavailable || busy}
+              onClick={() => void signIn()}
+            >
+              {status.user ? 'Sign in again' : 'Sign in with Nexus Mods'}
+            </Button>
+          )}
+        </div>
+      )}
       <Field
-        label="Personal API key"
+        label={status?.signIn ? 'Or paste your personal API key' : 'Personal API key'}
         hint={
           <>
             <span className="block">{statusLine}</span>

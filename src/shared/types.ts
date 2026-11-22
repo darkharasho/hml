@@ -535,6 +535,8 @@ export interface NxStatus {
   set: boolean
   encryptionAvailable: boolean
   user: NxUser | null
+  /** Whether "Sign in with Nexus Mods" is available (HML has an OAuth client id). */
+  signIn: boolean
   handler: 'registered' | 'not-registered' | 'unavailable'
 }
 /** The game and profile a Nexus download from HML's window installs into. */

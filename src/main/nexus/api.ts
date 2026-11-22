@@ -49,10 +49,19 @@ export function nxHeaders(o: NxClientOpts): Record<string, string> {
   }
 }
 
-/** The key is only ever attached to api.nexusmods.com/v1 requests. */
+/**
+ * A Nexus credential as the API client takes it: a personal API key, or `Bearer <token>` for an
+ * OAuth sign-in (see `bearer`). API keys never contain spaces, so the two can't be confused.
+ */
+export const bearer = (accessToken: string): string => `Bearer ${accessToken}`
+
+/** The credential is only ever attached to api.nexusmods.com/v1 requests. */
 function headersFor(o: NxClientOpts, url: string, key?: string): Record<string, string> {
   const h = nxHeaders(o)
-  if (key && url.startsWith(V1_ROOT)) h.apikey = key
+  if (key && url.startsWith(V1_ROOT)) {
+    if (key.startsWith('Bearer ')) h.Authorization = key
+    else h.apikey = key
+  }
   return h
 }
 
@@ -62,8 +71,9 @@ async function send(
   init: { method?: string; headers: Record<string, string>; body?: string },
   timeoutMs = API_TIMEOUT_MS
 ): Promise<Response> {
-  // A redirect would carry the apikey header to wherever it points, so keyed requests refuse them.
-  const redirect: RequestRedirect = 'apikey' in init.headers ? 'error' : 'follow'
+  // A redirect would carry the credential to wherever it points, so keyed requests refuse them.
+  const redirect: RequestRedirect =
+    'apikey' in init.headers || 'Authorization' in init.headers ? 'error' : 'follow'
   try {
     return await o.fetch(url, { ...init, redirect, signal: AbortSignal.timeout(timeoutMs) })
   } catch (e) {

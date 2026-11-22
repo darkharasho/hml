@@ -191,6 +191,8 @@ export interface ServiceDeps {
    * it queued. Missing where HML has no windows.
    */
   nexusPages?: { open(urls: string[], target?: NxTarget): number }
+  /** Nexus Mods OAuth client id; defaults to NX_OAUTH_CLIENT_ID (tests set one). */
+  nxOAuthClientId?: string | null
   /** Base URL of the share-code Worker. */
   shareBaseUrl: string
   /** Folder of Flatpak's system-wide overrides; defaults to /var/lib/flatpak/overrides. */

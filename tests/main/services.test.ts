@@ -3695,6 +3695,111 @@ describe('services', () => {
       expect(calls).toEqual([])
     })
 
+    describe('OAuth sign-in', () => {
+      const jwt = (user: Record<string, unknown>): string =>
+        `h.${Buffer.from(JSON.stringify({ sub: String(user.id), user })).toString('base64url')}.s`
+      const ACCESS = jwt({ id: 77, username: 'Haro', membership_roles: ['member', 'premium'] })
+      const ACCESS2 = jwt({ id: 77, username: 'Haro', membership_roles: ['member'] })
+      let tokenBodies: URLSearchParams[]
+      let tokenStatus: number
+      const oauthFetch = (async (url: string, init?: { body?: string }) => {
+        if (url === 'https://users.nexusmods.com/oauth/token') {
+          const body = new URLSearchParams(init?.body ?? '')
+          tokenBodies.push(body)
+          if (tokenStatus !== 200) return reply({ error: 'invalid_grant' }, tokenStatus)
+          const refreshing = body.get('grant_type') === 'refresh_token'
+          return reply({
+            access_token: refreshing ? ACCESS2 : ACCESS,
+            refresh_token: refreshing ? 'r2' : 'r1',
+            expires_in: 3600,
+            token_type: 'Bearer'
+          })
+        }
+        return nxFetch(url, init as never)
+      }) as unknown as typeof fetch
+      const signedIn = (o: { clientId?: string | null } = {}): ReturnType<typeof createServices> =>
+        createServices({
+          ...deps,
+          fetch: oauthFetch,
+          nxOAuthClientId: o.clientId === undefined ? 'hml' : o.clientId,
+          shell: {
+            ...deps.shell,
+            // Stands in for the browser: Nexus redirects back to HML with a code.
+            openExternal: async (url: string) => {
+              const q = new URL(url).searchParams
+              expect(url.startsWith('https://users.nexusmods.com/oauth/authorize?')).toBe(true)
+              expect(q.get('client_id')).toBe('hml')
+              expect(q.get('code_challenge_method')).toBe('S256')
+              const back = new URL(q.get('redirect_uri')!)
+              back.searchParams.set('code', 'the-code')
+              back.searchParams.set('state', q.get('state')!)
+              void globalThis.fetch(back)
+            }
+          }
+        })
+      beforeEach(() => {
+        tokenBodies = []
+        tokenStatus = 200
+      })
+
+      test('saves the tokens, reads the account from the token and downloads with Bearer', async () => {
+        const a = signedIn()
+        expect(await a.nxSignIn()).toEqual({ name: 'Haro', isPremium: true })
+        expect(tokenBodies[0].get('grant_type')).toBe('authorization_code')
+        expect(tokenBodies[0].get('code')).toBe('the-code')
+        expect(tokenBodies[0].get('code_verifier')).toMatch(/^[\w-]{43}$/)
+        const st = await a.nxStatus()
+        expect(st).toMatchObject({ set: true, signIn: true, user: { name: 'Haro' } })
+        expect(JSON.stringify(st)).not.toContain('r1')
+        calls = []
+        const p2 = (await a.createProfile('repo', 'q')).id
+        expect((await a.nxInstall('repo', p2, 5)).kind).toBe('installed')
+        const dl = calls.find((c) => c.url.includes('download_link.json'))!
+        expect(dl.headers.Authorization).toBe(`Bearer ${ACCESS}`)
+        expect(dl.headers.apikey).toBeUndefined()
+        expect(calls.some((c) => c.url.endsWith('validate.json'))).toBe(false)
+      })
+
+      test('is hidden without a client id', async () => {
+        const a = signedIn({ clientId: null })
+        expect((await a.nxStatus()).signIn).toBe(false)
+        await expect(a.nxSignIn()).rejects.toThrow("sign-in isn't available yet")
+      })
+
+      test('an expiring token is refreshed once and the new tokens are saved', async () => {
+        const { mkdirSync, writeFileSync } = await import('node:fs')
+        mkdirSync(path.dirname(deps.paths.nxKey), { recursive: true })
+        writeFileSync(
+          deps.paths.nxKey,
+          JSON.stringify({ access: ACCESS, refresh: 'r1', expiresAt: Date.now() + 1000 })
+        )
+        const a = signedIn()
+        const [s1, s2] = await Promise.all([a.nxStatus(), a.nxStatus()])
+        expect(tokenBodies).toHaveLength(1)
+        expect(tokenBodies[0].get('grant_type')).toBe('refresh_token')
+        expect(tokenBodies[0].get('refresh_token')).toBe('r1')
+        expect(s1.user).toEqual({ name: 'Haro', isPremium: false })
+        expect(s2.user).toEqual({ name: 'Haro', isPremium: false })
+        expect(JSON.parse(readFileSync(deps.paths.nxKey).toString()).refresh).toBe('r2')
+      })
+
+      test('a refused refresh signs the user out', async () => {
+        const { mkdirSync, writeFileSync } = await import('node:fs')
+        mkdirSync(path.dirname(deps.paths.nxKey), { recursive: true })
+        writeFileSync(
+          deps.paths.nxKey,
+          JSON.stringify({ access: ACCESS, refresh: 'r1', expiresAt: Date.now() - 1 })
+        )
+        tokenStatus = 400
+        const a = signedIn()
+        await expect(a.nxInstall('repo', pid, 5)).rejects.toThrow(
+          'Your Nexus Mods sign-in has expired. Sign in again in Settings.'
+        )
+        expect(existsSync(deps.paths.nxKey)).toBe(false)
+        expect(await a.nxStatus()).toMatchObject({ set: false, user: null })
+      })
+    })
+
     test('null removes the key', async () => {
       await withKey()
       expect(await api.nxSetKey(null)).toBeNull()

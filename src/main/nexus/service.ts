@@ -28,8 +28,23 @@ import {
   NxRejectedKeyError,
   searchMods,
   validateKey,
+  bearer,
   type NxClientOpts
 } from './api'
+import {
+  authorizeUrl,
+  exchangeCode,
+  loopbackCode,
+  NX_OAUTH_CLIENT_ID,
+  NX_OAUTH_REFRESH_EARLY_MS,
+  NxSignedOutError,
+  parseCredential,
+  pkcePair,
+  refreshTokens,
+  serializeTokens,
+  tokenUser
+} from './oauth'
+import { randomUUID } from 'node:crypto'
 import type { NexusGames } from './games'
 import type { NexusFileRef, NxmLink } from './nxm'
 import { FOLLOWER_LOCKED_MESSAGE, matchesManualEntry } from '../sync/lock'
@@ -67,7 +82,15 @@ const filePageUrl = nexusFilePageUrl
 
 export function createNexusServices(ctx: NexusContext): Pick<
   HmlApi,
-  'nxSetKey' | 'nxStatus' | 'nxSearch' | 'nxGetMod' | 'nxInstall' | 'nxCheckUpdates' | 'nxUpdate'
+  | 'nxSetKey'
+  | 'nxStatus'
+  | 'nxSignIn'
+  | 'nxCancelSignIn'
+  | 'nxSearch'
+  | 'nxGetMod'
+  | 'nxInstall'
+  | 'nxCheckUpdates'
+  | 'nxUpdate'
 > & {
   installFromNxm(
     link: NxmLink,
@@ -90,7 +113,47 @@ export function createNexusServices(ctx: NexusContext): Pick<
   let user: (NxUser & { userId: number }) | null = null
   let validated = false
 
-  const loadKey = (): Promise<string | null> => loadSecret(paths.nxKey, deps.secrets)
+  const clientId = deps.nxOAuthClientId !== undefined ? deps.nxOAuthClientId : NX_OAUTH_CLIENT_ID
+  const WHAT = 'a Nexus Mods sign-in'
+  let refreshing: Promise<string> | null = null
+
+  /**
+   * The saved credential as the API client takes it: the API key, or `Bearer <token>` for an
+   * OAuth sign-in, refreshed first if it is about to expire. Null when signed out.
+   */
+  async function loadKey(): Promise<string | null> {
+    const cred = parseCredential(await loadSecret(paths.nxKey, deps.secrets))
+    if (!cred) return null
+    if (cred.kind === 'apikey') return cred.key
+    if (cred.expiresAt - NX_OAUTH_REFRESH_EARLY_MS > now()) return bearer(cred.access)
+    // Concurrent requests share one refresh; Nexus rotates the refresh token.
+    refreshing ??= (async () => {
+      try {
+        if (!clientId) throw new NxSignedOutError()
+        const t = await refreshTokens(client.fetch, clientId, cred.refresh, now())
+        await saveSecret(paths.nxKey, deps.secrets, serializeTokens(t), WHAT)
+        user = null
+        validated = false
+        return bearer(t.access)
+      } catch (e) {
+        if (e instanceof NxSignedOutError) {
+          await saveSecret(paths.nxKey, deps.secrets, null, WHAT)
+          user = null
+          validated = false
+        }
+        throw e
+      } finally {
+        refreshing = null
+      }
+    })()
+    return refreshing
+  }
+
+  /** The account behind a credential: from the token's claims, or by asking Nexus for a key. */
+  async function whoIs(key: string): Promise<NxUser & { userId: number }> {
+    if (key.startsWith('Bearer ')) return tokenUser(key.slice('Bearer '.length), now())
+    return validateKey(client, key)
+  }
 
   async function setKey(raw: string | null): Promise<NxUser | null> {
     const key = raw?.trim() ?? ''
@@ -100,7 +163,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
       validated = false
       return null
     }
-    if (!looksLikeKey(key)) throw new Error(BAD_KEY)
+    if (!looksLikeKey(key) || key.startsWith('{')) throw new Error(BAD_KEY)
     // Don't send a key to Nexus Mods that can't be stored afterwards.
     if (!deps.secrets.isAvailable()) {
       throw new Error(noSecureStorage('a Nexus Mods API key'))
@@ -112,11 +175,44 @@ export function createNexusServices(ctx: NexusContext): Pick<
     return { name: who.name, isPremium: who.isPremium }
   }
 
+  let signIn: AbortController | null = null
+
+  async function signInWithNexus(): Promise<NxUser> {
+    if (!clientId) throw new Error("Nexus Mods sign-in isn't available yet. Paste an API key.")
+    if (!deps.secrets.isAvailable()) throw new Error(noSecureStorage(WHAT))
+    // A new sign-in replaces one still waiting.
+    signIn?.abort()
+    const ctl = new AbortController()
+    signIn = ctl
+    try {
+      const { verifier, challenge } = pkcePair()
+      const state = randomUUID()
+      const { code, redirectUri } = await loopbackCode(
+        { open: (url) => deps.shell.openExternal(url), signal: ctl.signal },
+        state,
+        (redirectUri) => authorizeUrl({ clientId, redirectUri, state, challenge })
+      )
+      const t = await exchangeCode(client.fetch, { clientId, redirectUri, code, verifier }, now())
+      const who = tokenUser(t.access, now())
+      await saveSecret(paths.nxKey, deps.secrets, serializeTokens(t), WHAT)
+      user = who
+      validated = true
+      return { name: who.name, isPremium: who.isPremium }
+    } finally {
+      if (signIn === ctl) signIn = null
+    }
+  }
+
   async function status(): Promise<NxStatus> {
-    const key = await loadKey()
+    let key: string | null = null
+    try {
+      key = await loadKey()
+    } catch {
+      // An expired sign-in reads as signed out; a failed refresh is retried next time.
+    }
     if (key && !validated) {
       try {
-        user = await validateKey(client, key)
+        user = await whoIs(key)
         validated = true
       } catch (e) {
         user = null
@@ -128,13 +224,14 @@ export function createNexusServices(ctx: NexusContext): Pick<
       set: key !== null,
       encryptionAvailable: deps.secrets.isAvailable(),
       user: key && user ? { name: user.name, isPremium: user.isPremium } : null,
+      signIn: clientId !== null,
       handler: await deps.nxmHandler.status()
     }
   }
 
   async function currentUser(key: string): Promise<NxUser & { userId: number }> {
     if (!user) {
-      user = await validateKey(client, key)
+      user = await whoIs(key)
       validated = true
     }
     return user
@@ -408,6 +505,10 @@ export function createNexusServices(ctx: NexusContext): Pick<
   return {
     nxSetKey: setKey,
     nxStatus: status,
+    nxSignIn: signInWithNexus,
+    async nxCancelSignIn() {
+      signIn?.abort()
+    },
     async nxSearch(game, q) {
       const { domain } = await domainOf(game)
       return searchMods(client, domain, q)
