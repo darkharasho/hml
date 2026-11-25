@@ -1660,6 +1660,7 @@ export function createServices(deps: ServiceDeps): Services {
     catStatusStrict: catalogApi.catStatusStrict,
     catPlanInstall: catalogInstaller.catPlanInstall,
     catInstall: catalogInstaller.catInstall,
+    catEntryForMod: catalogInstaller.catEntryForMod,
     syncTick: () => syncApi.tick(),
     syncFocusCheck: () => syncApi.focusCheck(),
     ...customApi,

@@ -26,7 +26,7 @@ import type {
 import { api, errorMessage } from './api'
 import { isGhAccessError } from '../../shared/messages'
 import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
-import { catInstallToast } from './ghCatalogView'
+import { catDepsToast, catInstallToast } from './ghCatalogView'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
 import {
   NX_MAX_UPDATE_TABS,
@@ -173,7 +173,9 @@ interface State {
   catInstall(
     entry: CatalogEntry,
     confirmedOwners: string[],
-    unavailable: string[]
+    unavailable: string[],
+    /** The mod is already installed (from a pasted link): the toast reports its dependencies. */
+    depsOnly?: boolean
   ): Promise<CatInstallResult | null>
   ghSetUpdateMode(modId: string, mode: GhUpdateMode): Promise<void>
   /** Holds a Thunderstore or Nexus mod at its version, or lets it update again. */
@@ -1002,7 +1004,7 @@ export const useStore = create<State>()((set, get) => {
       return result
     },
 
-    async catInstall(entry, confirmedOwners, unavailable) {
+    async catInstall(entry, confirmedOwners, unavailable, depsOnly = false) {
       const { currentGame, currentProfile } = get()
       if (!currentGame || !currentProfile || get().catInstalling.includes(entry.key)) return null
       set((s) => ({ catInstalling: [...s.catInstalling, entry.key] }))
@@ -1035,8 +1037,13 @@ export const useStore = create<State>()((set, get) => {
         await refreshWarnings()
       }
       if (result.kind === 'installed') {
-        const t = catInstallToast(entry, result.installed, unavailable, result.pendingNexus)
-        get().toast(t.kind, t.message)
+        const t = (depsOnly ? catDepsToast : catInstallToast)(
+          entry,
+          result.installed,
+          unavailable,
+          result.pendingNexus
+        )
+        if (t) get().toast(t.kind, t.message)
         await get().checkUpdates()
       } else if (result.kind === 'blocked') {
         get().toast('error', `Blocked by HML: ${result.reason}`)

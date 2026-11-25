@@ -4,6 +4,7 @@ import type { InstalledMod } from '../../src/shared/types'
 import {
   catCategories,
   catInstallState,
+  catDepsToast,
   catInstallToast,
   catReportUrl,
   confirmOwnersBody,
@@ -230,6 +231,26 @@ describe('catInstallToast', () => {
       kind: 'info',
       message: 'Tools is already installed'
     })
+  })
+})
+
+describe('catDepsToast', () => {
+  const e = entry({ key: 'alice/tools/tools', name: 'Tools' })
+  it('counts the dependencies installed', () => {
+    expect(catDepsToast(e, [ghMod('x', 'a', 'v1'), ghMod('x', 'b', 'v1')], [])).toEqual({
+      kind: 'success',
+      message: 'Installed 2 dependencies of Tools.'
+    })
+  })
+  it('reports missing ones and Nexus files to download', () => {
+    expect(catDepsToast(e, [], ['github:z/z'], [{ name: 'BepInEx' }])).toEqual({
+      kind: 'info',
+      message:
+        "Missing dependencies of Tools: github:z/z. Download BepInEx from Nexus Mods: it's listed in this profile."
+    })
+  })
+  it('is null when there was nothing to do', () => {
+    expect(catDepsToast(e, [], [])).toBeNull()
   })
 })
 

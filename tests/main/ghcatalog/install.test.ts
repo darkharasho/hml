@@ -426,3 +426,38 @@ describe('nexus dependencies', () => {
     )
   })
 })
+
+describe('catEntryForMod', () => {
+  it("finds an installed GitHub mod's catalog entry by repo and tag prefix", async () => {
+    const one = entry('o', 'solo', 'solo')
+    const a = entry('o', 'mono', 'a', { tagPrefix: 'a' })
+    const b = entry('o', 'mono', 'b', { tagPrefix: 'b' })
+    const h = harness([one, a, b])
+    h.installed = [ghMod('O', 'Solo', 'v1.0.0'), ghMod('o', 'mono', 'b-v1.0.0')]
+    h.installed[1] = { ...h.installed[1], id: 'mono-b' }
+    const inst = createCatalogInstaller(h.deps)
+    expect(await inst.catEntryForMod('g', 'p', 'O-Solo')).toBe(one)
+    expect(await inst.catEntryForMod('g', 'p', 'mono-b')).toBe(b)
+  })
+
+  it('is null for a mod not in the catalog, a non-GitHub mod or no catalog', async () => {
+    const h = harness([entry('o', 'a', 'a')])
+    h.installed = [ghMod('x', 'y', 'v1'), nexusModFor()]
+    const inst = createCatalogInstaller(h.deps)
+    expect(await inst.catEntryForMod('g', 'p', 'x-y')).toBeNull()
+    expect(await inst.catEntryForMod('g', 'p', 'nx-6')).toBeNull()
+    expect(await inst.catEntryForMod('g', 'p', 'missing')).toBeNull()
+    h.installed = [ghMod('o', 'a', 'v1')]
+    h.deps.catList = async () => {
+      throw new Error('offline')
+    }
+    expect(await inst.catEntryForMod('g', 'p', 'o-a')).toBeNull()
+  })
+})
+
+function nexusModFor(): InstalledMod {
+  return {
+    ...ghMod('nx', '6', 'v1'),
+    source: { kind: 'nexus', domain: 'invokyr', modId: 6, fileId: 1 } as InstalledMod['source']
+  }
+}

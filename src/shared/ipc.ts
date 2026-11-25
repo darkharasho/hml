@@ -44,7 +44,7 @@ import type {
   UpdateSummary
 } from './types'
 import type { ModDeps } from './modDeps'
-import type { CatListResult, RepoStatus } from './ghCatalog'
+import type { CatalogEntry, CatListResult, RepoStatus } from './ghCatalog'
 
 export interface GameSummary extends GameDef {
   installDir: string | null
@@ -235,6 +235,11 @@ export interface HmlApi {
     confirmedOwners: string[]
   ): Promise<CatInstallResult>
   /**
+   * The catalog entry of installed GitHub mod `modId`, so a mod installed from a pasted link
+   * can get its dependencies; null when the mod isn't in the game's catalog (or it can't load).
+   */
+  catEntryForMod(game: string, profileId: string, modId: string): Promise<CatalogEntry | null>
+  /**
    * Reads a share code or a picked `.hml` file and holds it for importShare; null when the file
    * dialog is cancelled. r2modman codes and `.r2z` files import into `game`, the open game.
    */
@@ -382,6 +387,7 @@ const METHOD_TABLE = {
   catStatus: true,
   catPlanInstall: true,
   catInstall: true,
+  catEntryForMod: true,
   previewShare: true,
   shareModDetails: true,
   importShare: true,

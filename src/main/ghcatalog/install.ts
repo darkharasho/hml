@@ -58,6 +58,7 @@ export interface CatalogInstaller {
     key: string,
     confirmedOwners: string[]
   ): Promise<CatInstallResult>
+  catEntryForMod(game: string, profileId: string, modId: string): Promise<CatalogEntry | null>
 }
 
 const lower = (s: string): string => s.toLowerCase()
@@ -204,6 +205,16 @@ export function createCatalogInstaller(deps: CatalogInstallDeps): CatalogInstall
   }
 
   return {
+    async catEntryForMod(game, profileId, modId) {
+      const mod = (await deps.installedMods(game, profileId)).find((m) => m.id === modId)
+      if (mod?.source.kind !== 'github') return null
+      const index = await deps.catList(game).then(
+        (r) => r.mods,
+        () => null
+      )
+      return index?.find((e) => isInstalled([mod], e)) ?? null
+    },
+
     async catPlanInstall(game, profileId, key) {
       const { index, target } = await findTarget(game, String(key))
       const reason = await deps.blockedReason(target.owner, target.repo)

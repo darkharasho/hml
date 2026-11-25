@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import type { CatalogEntry } from '../../../shared/ghCatalog'
 import type { GhInstallResult } from '../../../shared/types'
-import { errorMessage } from '../api'
+import { api, errorMessage } from '../api'
+import { CONFIRM_OWNERS_TITLE, confirmOwnersBody } from '../ghCatalogView'
 import { formatBytes } from '../ghView'
 import { useStore, useSyncLocked } from '../store'
 import { SYNC_LOCKED_NOTE } from '../syncView'
 import { ProgressLine } from './PackageDetail'
-import { Button, Icon, Modal } from './ui'
+import { Button, ConfirmDialog, Icon, Modal } from './ui'
 
 type Choice = Extract<GhInstallResult, { kind: 'choose-asset' }>
 type PreOnly = Extract<GhInstallResult, { kind: 'prerelease-only' }>
@@ -19,6 +21,15 @@ const RADIO =
 /** Paste a GitHub link and install its release; asks which file when the release has several. */
 export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Element {
   const ghInstall = useStore((s) => s.ghInstall)
+  const catInstall = useStore((s) => s.catInstall)
+  const game = useStore((s) => s.currentGame?.label)
+  const profileId = useStore((s) => s.currentProfile)
+  // Dependencies from owners the user hasn't trusted yet wait for a yes, as in the catalog.
+  const [depsConfirm, setDepsConfirm] = useState<{
+    entry: CatalogEntry
+    owners: string[]
+    unavailable: string[]
+  } | null>(null)
   // The dialog can stay open while a sync makes the profile a follower.
   const locked = useSyncLocked()
   const [url, setUrl] = useState('')
@@ -74,6 +85,32 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
     (!choice || picked !== null) &&
     (!modChoice || pickedMod !== null)
 
+  /**
+   * A mod in the game's GitHub catalog gets the dependencies its hml.json lists, as a catalog
+   * install would; then the dialog closes. Mods outside the catalog have none to follow.
+   */
+  async function followDeps(modId: string): Promise<void> {
+    if (!game || !profileId) return onClose()
+    const entry = await api.catEntryForMod(game, profileId, modId).catch(() => null)
+    const plan = entry && (await api.catPlanInstall(game, profileId, entry.key).catch(() => null))
+    if (!mounted.current) return
+    const work =
+      plan &&
+      plan.mods.length + plan.thunderstore.length + plan.nexus.length + plan.unavailable.length > 0
+    if (!entry || !plan || !work) return onClose()
+    if (plan.untrustedOwners.length > 0) {
+      setDepsConfirm({ entry, owners: plan.untrustedOwners, unavailable: plan.unavailable })
+      return
+    }
+    const r = await catInstall(entry, [], plan.unavailable, true)
+    if (!mounted.current) return
+    if (r?.kind === 'needs-confirm') {
+      setDepsConfirm({ entry, owners: r.owners, unavailable: plan.unavailable })
+      return
+    }
+    onClose()
+  }
+
   async function submit(withPrereleases = prereleases): Promise<void> {
     if (!canSubmit) return
     setError(null)
@@ -85,7 +122,7 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
         ...(pickedMod !== null ? { tagPrefix: pickedMod } : {})
       })
       if (!mounted.current) return
-      if (result.kind === 'installed') return onClose()
+      if (result.kind === 'installed') return await followDeps(result.mod.id)
       if (result.kind === 'prerelease-only') return setPreOnly(result)
       if (result.kind === 'choose-mod') {
         setModChoice(result)
@@ -99,6 +136,19 @@ export function GithubDialog({ onClose }: { onClose(): void }): React.JSX.Elemen
     } finally {
       if (mounted.current) setRunning(false)
     }
+  }
+
+  if (depsConfirm) {
+    const { entry, owners, unavailable } = depsConfirm
+    return (
+      <ConfirmDialog
+        title={CONFIRM_OWNERS_TITLE}
+        body={<p className="text-fg/90">{confirmOwnersBody(owners)}</p>}
+        confirmLabel="Install"
+        onConfirm={() => void catInstall(entry, owners, unavailable, true)}
+        onClose={onClose}
+      />
+    )
   }
 
   return (

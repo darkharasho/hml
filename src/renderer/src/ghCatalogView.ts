@@ -126,3 +126,25 @@ export function catInstallToast(
   const also = deps > 0 ? ` and ${deps} ${deps === 1 ? 'dependency' : 'dependencies'}` : ''
   return { kind, message: `Installed ${what}${also}${missing}${pending}` }
 }
+
+/**
+ * The toast after installing the dependencies of a mod added from a pasted link (the mod's own
+ * toast came first); null when there was nothing to install or report.
+ */
+export function catDepsToast(
+  entry: CatalogEntry,
+  installed: InstalledMod[],
+  unavailable: string[],
+  pendingNexus: Pick<PendingNexusMod, 'name'>[] = []
+): { kind: 'success' | 'info'; message: string } | null {
+  const parts: string[] = []
+  const n = installed.length
+  if (n > 0)
+    parts.push(`Installed ${n} ${n === 1 ? 'dependency' : 'dependencies'} of ${entry.name}.`)
+  if (unavailable.length > 0)
+    parts.push(`Missing dependencies of ${entry.name}: ${unavailable.join(', ')}.`)
+  const names = pendingNexus.map((p) => p.name).join(', ')
+  if (names) parts.push(`Download ${names} from Nexus Mods: it's listed in this profile.`)
+  if (parts.length === 0) return null
+  return { kind: n > 0 && parts.length === 1 ? 'success' : 'info', message: parts.join(' ') }
+}
