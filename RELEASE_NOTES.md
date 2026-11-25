@@ -1,5 +1,10 @@
 # Release Notes
 
+Version v1.10.1 — November 25, 2026
+
+## Fixes
+- Mods from darkharasho in the GitHub tab install without asking whether to trust an unvetted author. Mods from other authors still ask the first time.
+
 Version v1.10.0 — November 22, 2026
 
 ## GitHub mods in the Online tab
