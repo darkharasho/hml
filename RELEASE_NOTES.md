@@ -1,5 +1,10 @@
 # Release Notes
 
+Version v1.11.1 — November 25, 2026
+
+## Dependencies for pasted GitHub links
+Pasting the link of a mod that's listed in the GitHub tab now also installs the mods it depends on, just like installing it from the GitHub tab. A message tells you what was installed and anything that couldn't be found. Links to repos that aren't listed still install only the mod itself.
+
 Version v1.11.0 — November 25, 2026
 
 ## BepInEx for Nexus Mods games
