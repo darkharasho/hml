@@ -1,5 +1,13 @@
 # Release Notes
 
+Version v1.11.0 — November 25, 2026
+
+## BepInEx for Nexus Mods games
+Installing a mod from the GitHub source now also installs the BepInEx it needs on games like Invokyr, whose BepInEx is only on Nexus Mods. With Nexus Premium it installs with the mod. Otherwise it's added to the profile's list of Nexus mods to install, so you can download it from HML's Nexus window.
+
+## For mod authors
+- An `hml.json` dependency can be a Nexus Mods file: `nexus:domain/mod-id/file-id`, such as `nexus:invokyr/6/13`. It's skipped for profiles that already have that mod. The guide is at https://github.com/darkharasho/hml/blob/main/docs/catalog.md#dependencies.
+
 Version v1.10.1 — November 25, 2026
 
 ## Fixes
