@@ -165,6 +165,13 @@ describe('catPlanInstall', () => {
     expect(plan.untrustedOwners).toEqual(['bob', 'Alice'])
   })
 
+  it('never lists a vetted owner as untrusted', async () => {
+    const a = entry('DarkHarasho', 'a', 'a', { dependencies: ['github:bob/b'] })
+    const h = harness([a, entry('bob', 'b', 'b')])
+    const plan = await createCatalogInstaller(h.deps).catPlanInstall('repo', 'p', 'DarkHarasho/a/a')
+    expect(plan.untrustedOwners).toEqual(['bob'])
+  })
+
   it('omits mods already installed at the same owner/repo/prefix', async () => {
     const a = entry('o', 'a', 'a', { dependencies: ['github:o/b', 'github:o/mono/e'] })
     const e = entry('o', 'mono', 'e', { tagPrefix: 'energy-v' })

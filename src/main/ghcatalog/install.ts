@@ -41,6 +41,8 @@ export interface CatalogInstaller {
 }
 
 const lower = (s: string): string => s.toLowerCase()
+/** Lowercase GitHub owners HML vets itself; installing from them never asks for confirmation. */
+export const VETTED_OWNERS: readonly string[] = ['darkharasho']
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 /** The resolver's identity of an entry: `owner/repo/id`, owner and repo lowercased. */
@@ -145,7 +147,7 @@ export function createCatalogInstaller(deps: CatalogInstallDeps): CatalogInstall
 
     const installed = await deps.installedMods(game, profileId)
     const mods = ordered.filter((e) => !isInstalled(installed, e))
-    const trusted = new Set((await deps.trustedOwners()).map(lower))
+    const trusted = new Set([...VETTED_OWNERS, ...(await deps.trustedOwners()).map(lower)])
     const untrusted = new Map<string, string>()
     for (const m of mods) {
       if (!trusted.has(lower(m.owner)) && !untrusted.has(lower(m.owner)))
