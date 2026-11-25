@@ -11,7 +11,7 @@ import type {
   NxUser
 } from '../../shared/types'
 import type { HmlApi } from '../../shared/ipc'
-import { NX_NO_KEY, noSecureStorage } from '../../shared/messages'
+import { NX_FILE_GONE, NX_NO_KEY, noSecureStorage } from '../../shared/messages'
 import { unsupportedLoaderMessage } from '../github/service'
 import type { ServiceDeps } from '../services'
 import { detectPackageMeta, installZip } from '../install/installer'
@@ -323,11 +323,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     const files = await modFiles(client, gameId, modId)
     const file = fileId === undefined ? newestMain(files) : files.find((f) => f.fileId === fileId)
     if (!file) {
-      throw new Error(
-        fileId === undefined
-          ? 'This mod has no main file to install.'
-          : 'That file is no longer on Nexus Mods.'
-      )
+      throw new Error(fileId === undefined ? 'This mod has no main file to install.' : NX_FILE_GONE)
     }
     return installFile(def, profileId, domain, modId, file, key)
   }

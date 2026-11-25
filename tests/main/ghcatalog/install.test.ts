@@ -4,7 +4,8 @@ import {
   type CatalogInstallDeps
 } from '../../../src/main/ghcatalog/install'
 import type { CatalogEntry } from '../../../src/shared/ghCatalog'
-import type { InstalledMod } from '../../../src/shared/types'
+import { NX_FILE_GONE, NX_NO_KEY } from '../../../src/shared/messages'
+import type { InstalledMod, PendingNexusMod } from '../../../src/shared/types'
 
 const entry = (
   owner: string,
@@ -40,13 +41,18 @@ interface Harness {
   blocked: Record<string, string>
   ghInstallWith: ReturnType<typeof vi.fn>
   tsInstall: ReturnType<typeof vi.fn>
+  nxInstall: ReturnType<typeof vi.fn>
+  domain: string | null
+  pending: PendingNexusMod[]
 }
 
 function harness(index: CatalogEntry[]): Harness {
   const h = {
     trusted: [] as string[],
     installed: [] as InstalledMod[],
-    blocked: {} as Record<string, string>
+    blocked: {} as Record<string, string>,
+    domain: 'invokyr',
+    pending: [] as PendingNexusMod[]
   } as Harness
   h.ghInstallWith = vi.fn(async (_g: string, _p: string, url: string) => {
     const [owner, repo] = url.replace('https://github.com/', '').split('/')
@@ -59,6 +65,14 @@ function harness(index: CatalogEntry[]): Harness {
     skipped: [],
     missing: []
   }))
+  h.nxInstall = vi.fn(async (_g: string, _p: string, modId: number, fileId: number) => {
+    const mod: InstalledMod = {
+      ...ghMod('nx', String(modId), 'v1'),
+      source: { kind: 'nexus', domain: 'invokyr', modId, fileId } as InstalledMod['source']
+    }
+    h.installed.push(mod)
+    return { kind: 'installed', mod, replaced: [] }
+  })
   h.deps = {
     catList: async () => ({ mods: index, fetchedAt: 'x', offline: false }),
     blockedReason: async (owner, repo) =>
@@ -69,7 +83,13 @@ function harness(index: CatalogEntry[]): Harness {
       h.trusted = [...new Set([...h.trusted, ...owners])]
     },
     ghInstallWith: h.ghInstallWith as unknown as CatalogInstallDeps['ghInstallWith'],
-    tsInstall: h.tsInstall as unknown as CatalogInstallDeps['tsInstall']
+    tsInstall: h.tsInstall as unknown as CatalogInstallDeps['tsInstall'],
+    nxGetDomain: async () => h.domain,
+    nxInstall: h.nxInstall as unknown as CatalogInstallDeps['nxInstall'],
+    nxFileInfo: async () => ({ name: 'BepInEx', version: '6.0.0-be.755' }),
+    addPendingNexus: async (_g, _p, mods) => {
+      h.pending.push(...mods)
+    }
   }
   return h
 }
@@ -315,5 +335,94 @@ describe('catInstall', () => {
       createCatalogInstaller(h.deps).catInstall('repo', 'p', 'alice/a/a', [])
     ).rejects.toThrow('bob/b')
     expect(h.ghInstallWith).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('nexus dependencies', () => {
+  const nexusTarget = (): CatalogEntry =>
+    entry('o', 'a', 'a', { dependencies: ['nexus:invokyr/6/13'] })
+  const nexusMod = (): InstalledMod => ({
+    ...ghMod('nx', '6', 'v1'),
+    source: { kind: 'nexus', domain: 'Invokyr', modId: 6, fileId: 9 } as InstalledMod['source']
+  })
+
+  it("plans a Nexus dep for the game's own domain only", async () => {
+    const h = harness([nexusTarget()])
+    const inst = createCatalogInstaller(h.deps)
+    expect((await inst.catPlanInstall('g', 'p', 'o/a/a')).nexus).toEqual(['nexus:invokyr/6/13'])
+    h.domain = 'skyrim'
+    const other = await inst.catPlanInstall('g', 'p', 'o/a/a')
+    expect(other.nexus).toEqual([])
+    expect(other.unavailable).toEqual(['nexus:invokyr/6/13'])
+    h.domain = null
+    expect((await inst.catPlanInstall('g', 'p', 'o/a/a')).unavailable).toEqual([
+      'nexus:invokyr/6/13'
+    ])
+  })
+
+  it('installs the Nexus file directly when it can', async () => {
+    const h = harness([nexusTarget()])
+    h.trusted = ['o']
+    const r = await createCatalogInstaller(h.deps).catInstall('g', 'p', 'o/a/a', [])
+    expect(h.nxInstall.mock.calls).toEqual([['g', 'p', 6, 13]])
+    if (r.kind !== 'installed') throw new Error('expected install')
+    expect(r.installed).toHaveLength(2)
+    expect(r.pendingNexus).toEqual([])
+    expect(h.pending).toEqual([])
+  })
+
+  it('skips a Nexus dep the profile has at any file', async () => {
+    const h = harness([nexusTarget()])
+    h.trusted = ['o']
+    h.installed = [nexusMod()]
+    const inst = createCatalogInstaller(h.deps)
+    expect((await inst.catPlanInstall('g', 'p', 'o/a/a')).nexus).toEqual([])
+    await inst.catInstall('g', 'p', 'o/a/a', [])
+    expect(h.nxInstall).not.toHaveBeenCalled()
+  })
+
+  it('lists the file in the profile for a free account', async () => {
+    const h = harness([nexusTarget()])
+    h.trusted = ['o']
+    h.nxInstall.mockResolvedValueOnce({ kind: 'open-website', url: 'u' })
+    const r = await createCatalogInstaller(h.deps).catInstall('g', 'p', 'o/a/a', [])
+    const want = [
+      { name: 'BepInEx', version: '6.0.0-be.755', domain: 'invokyr', modId: 6, fileId: 13 }
+    ]
+    expect(r).toMatchObject({ kind: 'installed', pendingNexus: want })
+    expect(h.pending).toEqual(want)
+  })
+
+  it('lists the file without an API key, named by its id when Nexus is unreadable', async () => {
+    const h = harness([nexusTarget()])
+    h.trusted = ['o']
+    h.nxInstall.mockRejectedValueOnce(new Error(NX_NO_KEY))
+    h.deps.nxFileInfo = async () => {
+      throw new Error(NX_NO_KEY)
+    }
+    await createCatalogInstaller(h.deps).catInstall('g', 'p', 'o/a/a', [])
+    expect(h.pending).toEqual([
+      { name: 'Nexus mod 6', version: '', domain: 'invokyr', modId: 6, fileId: 13 }
+    ])
+  })
+
+  it("installs the mod's newest main file when the named one is gone", async () => {
+    const h = harness([nexusTarget()])
+    h.trusted = ['o']
+    h.nxInstall.mockRejectedValueOnce(new Error(NX_FILE_GONE))
+    await createCatalogInstaller(h.deps).catInstall('g', 'p', 'o/a/a', [])
+    expect(h.nxInstall.mock.calls).toEqual([
+      ['g', 'p', 6, 13],
+      ['g', 'p', 6]
+    ])
+  })
+
+  it('throws other Nexus failures', async () => {
+    const h = harness([nexusTarget()])
+    h.trusted = ['o']
+    h.nxInstall.mockRejectedValueOnce(new Error('Nexus is down'))
+    await expect(createCatalogInstaller(h.deps).catInstall('g', 'p', 'o/a/a', [])).rejects.toThrow(
+      'Nexus is down'
+    )
   })
 })

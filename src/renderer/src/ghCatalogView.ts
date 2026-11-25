@@ -1,6 +1,6 @@
 import type { CatalogEntry } from '../../shared/ghCatalog'
 import { isNewerTag, normPrefix, samePrefix, tagPrefix } from '../../shared/ghTag'
-import type { InstalledMod } from '../../shared/types'
+import type { InstalledMod, PendingNexusMod } from '../../shared/types'
 
 export type CatSort = 'updated' | 'downloads' | 'stars' | 'newest'
 
@@ -109,15 +109,20 @@ export const catRepoUrl = (entry: Pick<CatalogEntry, 'owner' | 'repo'>): string 
 export function catInstallToast(
   entry: CatalogEntry,
   installed: InstalledMod[],
-  unavailable: string[]
+  unavailable: string[],
+  pendingNexus: Pick<PendingNexusMod, 'name'>[] = []
 ): { kind: 'success' | 'info'; message: string } {
   const missing = unavailable.length > 0 ? ` — missing dependencies: ${unavailable.join(', ')}` : ''
+  // Nexus files HML couldn't download itself wait in the profile's "Nexus mods to install".
+  const names = pendingNexus.map((p) => p.name).join(', ')
+  const pending = names ? `. Download ${names} from Nexus Mods: it's listed in this profile.` : ''
+  const kind = missing || pending ? 'info' : 'success'
   if (installed.length === 0) {
-    return { kind: 'info', message: `${entry.name} is already installed${missing}` }
+    return { kind: 'info', message: `${entry.name} is already installed${missing}${pending}` }
   }
   const target = findCatInstalled(entry, installed)
   const deps = installed.length - (target ? 1 : 0)
   const what = target ? `${target.name} ${target.version}` : entry.name
   const also = deps > 0 ? ` and ${deps} ${deps === 1 ? 'dependency' : 'dependencies'}` : ''
-  return { kind: missing ? 'info' : 'success', message: `Installed ${what}${also}${missing}` }
+  return { kind, message: `Installed ${what}${also}${missing}${pending}` }
 }

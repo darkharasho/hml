@@ -18,3 +18,5 @@ export const noSecureStorage = (what: string): string =>
 export function isGhAccessError(message: string): boolean {
   return message.startsWith(GH_RATE_LIMIT_PREFIX) || message.startsWith(GH_REJECTED_TOKEN_PREFIX)
 }
+
+export const NX_FILE_GONE = 'That file is no longer on Nexus Mods.'

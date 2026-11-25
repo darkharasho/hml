@@ -150,6 +150,21 @@ describe('parseDependency', () => {
       id: 'c'
     })
   })
+  it('nexus domain/mod/file', () => {
+    expect(parseDependency('nexus:invokyr/6/13')).toEqual({
+      kind: 'nexus',
+      domain: 'invokyr',
+      modId: 6,
+      fileId: 13
+    })
+  })
+  it('nexus needs a file id and numeric ids', () => {
+    expect(parseDependency('nexus:invokyr/6')).toBeNull()
+    expect(parseDependency('nexus:invokyr/6/x')).toBeNull()
+    expect(parseDependency('nexus:invokyr/0/1')).toBeNull()
+    expect(parseDependency('nexus:in voke/6/13')).toBeNull()
+    expect(parseDependency('nexus:invokyr/6/13/1')).toBeNull()
+  })
   it('invalid gives null', () => {
     expect(parseDependency('github:')).toBeNull()
     expect(parseDependency('nope')).toBeNull()

@@ -1035,7 +1035,7 @@ export const useStore = create<State>()((set, get) => {
         await refreshWarnings()
       }
       if (result.kind === 'installed') {
-        const t = catInstallToast(entry, result.installed, unavailable)
+        const t = catInstallToast(entry, result.installed, unavailable, result.pendingNexus)
         get().toast(t.kind, t.message)
         await get().checkUpdates()
       } else if (result.kind === 'blocked') {

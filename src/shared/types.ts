@@ -158,6 +158,8 @@ export interface CatInstallPlan {
   mods: CatalogEntry[]
   /** Thunderstore dependency strings (`Owner-Name-1.2.3`) of the target and its GitHub deps. */
   thunderstore: string[]
+  /** Nexus dependency strings (`nexus:domain/mod/file`) the profile doesn't have yet. */
+  nexus: string[]
   /** Dependency strings that can't be resolved: unparseable, unlisted, ambiguous or blocked. */
   unavailable: string[]
   /** Owners among `mods` the user hasn't agreed to install from yet. */
@@ -165,7 +167,12 @@ export interface CatInstallPlan {
 }
 
 export type CatInstallResult =
-  | { kind: 'installed'; installed: InstalledMod[] }
+  | {
+      kind: 'installed'
+      installed: InstalledMod[]
+      /** Nexus dependencies HML couldn't download itself, now listed in the profile to install. */
+      pendingNexus: PendingNexusMod[]
+    }
   | { kind: 'needs-confirm'; owners: string[] }
   | { kind: 'blocked'; reason: string }
 

@@ -2,10 +2,13 @@ import type { CatalogEntry, CatListResult } from '../../shared/ghCatalog'
 import { parseDependency } from '../../shared/ghCatalog'
 import { normPrefix, samePrefix, tagPrefix } from '../../shared/ghTag'
 import type { HmlApi } from '../../shared/ipc'
+import { NX_FILE_GONE, NX_NO_KEY } from '../../shared/messages'
 import type {
   CatInstallPlan,
   CatInstallResult,
   InstalledMod,
+  NxInstallResult,
+  PendingNexusMod,
   TsInstallResult
 } from '../../shared/types'
 import type { GhInstallOptions } from '../github/service'
@@ -28,6 +31,23 @@ export interface CatalogInstallDeps {
   ): ReturnType<HmlApi['ghInstall']>
   /** The Thunderstore install with its dependencies (tsInstall). */
   tsInstall(game: string, profileId: string, fullName: string): Promise<TsInstallResult>
+  /** The game's Nexus Mods domain; null when it has none. */
+  nxGetDomain(game: string): Promise<string | null>
+  /** Installs a Nexus file (nxInstall); throws NX_NO_KEY without an API key. */
+  nxInstall(
+    game: string,
+    profileId: string,
+    modId: number,
+    fileId?: number
+  ): Promise<NxInstallResult>
+  /** The mod's name and the file's version for the pending list; null when they can't be read. */
+  nxFileInfo(
+    game: string,
+    modId: number,
+    fileId: number
+  ): Promise<{ name: string; version: string } | null>
+  /** Adds Nexus files to the profile's list of mods to install from their pages. */
+  addPendingNexus(game: string, profileId: string, mods: PendingNexusMod[]): Promise<void>
 }
 
 export interface CatalogInstaller {
@@ -63,6 +83,13 @@ const isInstalled = (mods: InstalledMod[], e: CatalogEntry): boolean =>
       // A repo of one mod (no tagPrefix) may still tag with a prefix: the repo alone decides.
       (typeof e.tagPrefix !== 'string' || samePrefix(tagPrefix(m.source.tag), prefixOf(e)))
   )
+const hasNexus = (mods: InstalledMod[], domain: string, modId: number): boolean =>
+  mods.some(
+    (m) =>
+      m.source.kind === 'nexus' &&
+      lower(m.source.domain) === lower(domain) &&
+      m.source.modId === modId
+  )
 /** `Owner-Name-1.2.3` → `Owner-Name`. */
 const tsFullName = (dep: string): string => dep.replace(/-\d+\.\d+\.\d+$/, '')
 
@@ -94,7 +121,9 @@ export function createCatalogInstaller(deps: CatalogInstallDeps): CatalogInstall
     const visited = new Map<string, CatalogEntry>([[idOf(target), target]])
     const edges = new Map<string, string[]>()
     const thunderstore = new Set<string>()
+    const nexus = new Set<string>()
     const unavailable = new Set<string>()
+    let domain: Promise<string | null> | undefined
     const queue = [target]
     while (queue.length > 0) {
       const e = queue.shift()!
@@ -107,6 +136,14 @@ export function createCatalogInstaller(deps: CatalogInstallDeps): CatalogInstall
         }
         if (d.kind === 'thunderstore') {
           thunderstore.add(s)
+          continue
+        }
+        if (d.kind === 'nexus') {
+          // Only a file for this game's own Nexus domain can be installed into it.
+          domain ??= deps.nxGetDomain(game).catch(() => null)
+          const own = await domain
+          if (own === null || lower(own) !== lower(d.domain)) unavailable.add(s)
+          else nexus.add(s)
           continue
         }
         const same = index.filter(
@@ -147,6 +184,10 @@ export function createCatalogInstaller(deps: CatalogInstallDeps): CatalogInstall
 
     const installed = await deps.installedMods(game, profileId)
     const mods = ordered.filter((e) => !isInstalled(installed, e))
+    const missingNexus = [...nexus].filter((s) => {
+      const d = parseDependency(s)
+      return d?.kind === 'nexus' && !hasNexus(installed, d.domain, d.modId)
+    })
     const trusted = new Set([...VETTED_OWNERS, ...(await deps.trustedOwners()).map(lower)])
     const untrusted = new Map<string, string>()
     for (const m of mods) {
@@ -156,6 +197,7 @@ export function createCatalogInstaller(deps: CatalogInstallDeps): CatalogInstall
     return {
       mods,
       thunderstore: [...thunderstore],
+      nexus: missingNexus,
       unavailable: [...unavailable],
       untrustedOwners: [...untrusted.values()]
     }
@@ -228,7 +270,41 @@ export function createCatalogInstaller(deps: CatalogInstallDeps): CatalogInstall
         if (present) continue
         installed.push(...(await deps.tsInstall(game, profileId, fullName)).installed)
       }
-      return { kind: 'installed', installed }
+
+      // A Nexus dependency (a Nexus-only game's BepInEx) installs directly for Premium; a free
+      // account, or one without an API key, gets it listed in the profile to download by hand.
+      const pendingNexus: PendingNexusMod[] = []
+      for (const s of plan.nexus) {
+        const d = parseDependency(s)
+        if (d?.kind !== 'nexus') continue
+        if (hasNexus(await deps.installedMods(game, profileId), d.domain, d.modId)) continue
+        let r: NxInstallResult | null
+        try {
+          r = await deps.nxInstall(game, profileId, d.modId, d.fileId).catch((e: unknown) => {
+            // The author's file was replaced on Nexus: the mod's newest main file stands in.
+            if (e instanceof Error && e.message === NX_FILE_GONE)
+              return deps.nxInstall(game, profileId, d.modId)
+            throw e
+          })
+        } catch (e) {
+          if (!(e instanceof Error && e.message === NX_NO_KEY)) throw e
+          r = null
+        }
+        if (r?.kind === 'installed') {
+          installed.push(r.mod)
+          continue
+        }
+        const info = await deps.nxFileInfo(game, d.modId, d.fileId).catch(() => null)
+        pendingNexus.push({
+          name: info?.name ?? `Nexus mod ${d.modId}`,
+          version: info?.version ?? '',
+          domain: d.domain,
+          modId: d.modId,
+          fileId: d.fileId
+        })
+      }
+      if (pendingNexus.length > 0) await deps.addPendingNexus(game, profileId, pendingNexus)
+      return { kind: 'installed', installed, pendingNexus }
     }
   }
 }

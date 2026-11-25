@@ -105,8 +105,11 @@ Each entry is one of:
 
 - A Thunderstore package with its version: `Owner-Name-1.2.3`.
 - A GitHub mod in the catalog: `github:owner/repo`, or `github:owner/repo/mod-id`. Without a mod id, the repo must list exactly one mod.
+- A Nexus Mods file: `nexus:domain/mod-id/file-id`, such as `nexus:invokyr/6/13`. The IDs are in the file's page link (`nexusmods.com/invokyr/mods/6?tab=files&file_id=13`). Use this for a `nexus-` game whose loader is only on Nexus Mods. It applies only to the game with that Nexus domain.
 
 HML installs dependencies before your mod. A dependency it can't find is reported to the user and skipped.
+
+A Nexus dependency the profile already has, at any file, is skipped. Nexus Premium users get it installed directly. If the file has since been removed, HML installs the mod's newest main file instead. Other users get it added to the profile's "Nexus mods to install" list, which they download from in HML's Nexus window.
 
 ## Releases
 

@@ -1066,7 +1066,26 @@ export function createServices(deps: ServiceDeps): Services {
     ghInstallWith: (game, profileId, url, asset, opts) =>
       ghInstallWith(game, profileId, url, asset, { ...opts, beforeReplacing: assertGameClosed }),
     tsInstall: (game, profileId, fullName) =>
-      tsInstallChecked(game, profileId, fullName, undefined, true)
+      tsInstallChecked(game, profileId, fullName, undefined, true),
+    nxGetDomain,
+    nxInstall: (game, profileId, modId, fileId) =>
+      nexusApi.nxInstall(game, profileId, modId, fileId),
+    async nxFileInfo(game, modId, fileId) {
+      const { mod, files } = await nexusApi.nxGetMod(game, modId)
+      const file = files.find((f) => f.fileId === fileId)
+      return { name: mod.name, version: file?.version ?? '' }
+    },
+    // Joins the profile's list of Nexus files to install from their pages, one per mod.
+    addPendingNexus: (game, profileId, mods) =>
+      serialize(game, profileId, async () => {
+        const p = await getProfile(paths, game, profileId)
+        const have = new Set(
+          (p.pendingNexus ?? []).map((m) => `${m.domain.toLowerCase()}/${m.modId}`)
+        )
+        const added = mods.filter((m) => !have.has(`${m.domain.toLowerCase()}/${m.modId}`))
+        if (added.length === 0) return
+        await saveProfile(paths, { ...p, pendingNexus: [...(p.pendingNexus ?? []), ...added] })
+      })
   })
 
   const { installFromNxm, installFromDownload, loggedInUserId, ...nexusApi } = createNexusServices({

@@ -217,6 +217,14 @@ describe('catInstallToast', () => {
       message: 'Installed tools v1.0.0 — missing dependencies: github:z/z'
     })
   })
+  it('points to the profile for Nexus files to download by hand', () => {
+    const mod = { ...ghMod('alice', 'tools', 'v1.0.0'), name: 'Tools', version: '1.0.0' }
+    expect(catInstallToast(e, [mod], [], [{ name: 'BepInEx' }])).toEqual({
+      kind: 'info',
+      message:
+        "Installed Tools 1.0.0. Download BepInEx from Nexus Mods: it's listed in this profile."
+    })
+  })
   it('says when nothing needed installing', () => {
     expect(catInstallToast(e, [], [])).toEqual({
       kind: 'info',

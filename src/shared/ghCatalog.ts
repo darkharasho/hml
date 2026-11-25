@@ -8,8 +8,21 @@ const ID_RE = /^[a-z0-9-]{1,64}$/
 export type Dependency =
   | { kind: 'thunderstore'; fullName: string }
   | { kind: 'github'; owner: string; repo: string; id?: string }
+  /** A Nexus Mods file, for games whose loader (BepInEx) only Nexus hosts. */
+  | { kind: 'nexus'; domain: string; modId: number; fileId: number }
+
+const NEXUS_DOMAIN_RE = /^[a-z0-9-]{1,64}$/i
+const NEXUS_ID_RE = /^[1-9]\d{0,9}$/
 
 export function parseDependency(s: string): Dependency | null {
+  if (s.startsWith('nexus:')) {
+    // nexus:<domain>/<modId>/<fileId>; the file is required so a free account can be sent to it.
+    const [domain, modId, fileId, ...extra] = s.slice('nexus:'.length).split('/')
+    if (extra.length > 0 || !domain || !modId || !fileId) return null
+    if (!NEXUS_DOMAIN_RE.test(domain) || !NEXUS_ID_RE.test(modId) || !NEXUS_ID_RE.test(fileId))
+      return null
+    return { kind: 'nexus', domain, modId: Number(modId), fileId: Number(fileId) }
+  }
   if (s.startsWith('github:')) {
     const [owner, repo, id, ...extra] = s.slice('github:'.length).split('/')
     if (extra.length > 0 || !owner || !repo) return null
