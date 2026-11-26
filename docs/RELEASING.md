@@ -82,7 +82,7 @@ op read "$ITEM/juapwaxqpqluusuqhjaax6im2i"  | gh secret set APPLE_TEAM_ID -R dar
 
 The Windows installer and `hml.exe` are signed with **Azure Artifact Signing**
 (`win.azureSignOptions` in `electron-builder.yml`): account `darkharasho-signing`
-(East US), certificate profile `public-trust`, publisher `Michael Stephens`.
+(East US), certificate profile `public-trust`.
 electron-builder installs the `TrustedSigning` PowerShell module on the runner
 and signs through it, authenticating as the `github-actions-code-signing` app
 registration (it has the "Artifact Signing Certificate Profile Signer" role on
