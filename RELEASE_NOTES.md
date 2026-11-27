@@ -1,5 +1,15 @@
 # Release Notes
 
+Version v1.12.0 — November 26, 2026
+
+## Check one mod for updates
+A mod's ⋯ menu has a Check for updates item. It asks Thunderstore, GitHub or Nexus Mods about that mod right away instead of waiting for the next check, and tells you what it found. If there's a newer version, the mod's Update button shows up straight away. It also tells you when a held or pinned mod has a newer version it's skipping.
+
+## Shared GitHub mods keep updating
+Importing a share code used to pin every GitHub mod to the release in the code, so they never updated afterwards. Now the code remembers each mod's update setting. You still get the exact releases that were shared, and then each mod follows the sharer's setting: auto mods update, notify mods show an Update button, and pinned mods stay put.
+
+NOTE: Codes made with older HML versions import their GitHub mods as auto-updating. Sync codes are unchanged, and synced profiles stay on the leader's versions.
+
 Version v1.11.1 — November 25, 2026
 
 ## Dependencies for pasted GitHub links
