@@ -1041,7 +1041,7 @@ export function createServices(deps: ServiceDeps): Services {
     now
   })
 
-  const { ghInstallWith, ...ghServices } = createGithubServices({
+  const { ghInstallWith, ghCheckMod, ...ghServices } = createGithubServices({
     deps,
     getCatalog,
     requireGame,
@@ -1088,14 +1088,15 @@ export function createServices(deps: ServiceDeps): Services {
       })
   })
 
-  const { installFromNxm, installFromDownload, loggedInUserId, ...nexusApi } = createNexusServices({
-    deps,
-    client: nexusClient,
-    games: nexus,
-    getCatalog,
-    requireGame,
-    serialize
-  })
+  const { installFromNxm, installFromDownload, loggedInUserId, nxCheckMod, ...nexusApi } =
+    createNexusServices({
+      deps,
+      client: nexusClient,
+      games: nexus,
+      getCatalog,
+      requireGame,
+      serialize
+    })
 
   /**
    * Where the profile's mod loader logs: BepInEx and the proxy loaders (MelonLoader, lovely,
@@ -1643,6 +1644,22 @@ export function createServices(deps: ServiceDeps): Services {
     runBackgroundChecks: async () => void (await background.run()),
     emitOpenProfile: (game, profileId) => deps.emit({ type: 'open-profile', game, profileId }),
     getUpdateSummary: async () => background.summary(),
+    async checkModUpdate(game, profileId, modId) {
+      const { mods } = await getProfile(paths, game, profileId)
+      const mod = mods.find((m) => m.id === modId)
+      if (!mod) throw new Error('That mod is no longer in this profile.')
+      if (mod.source.kind === 'github') return ghCheckMod(game, profileId, modId)
+      if (mod.source.kind === 'nexus') return nxCheckMod(game, profileId, modId)
+      if (mod.source.kind !== 'thunderstore') {
+        throw new Error(`${mod.name} was installed from a file, so HML can't check it for updates.`)
+      }
+      // The index carries Thunderstore's live changes from the last couple of minutes. A held
+      // mod is still checked: the user asked about this one.
+      const idx = await loadIndex(await requireGame(game), false)
+      const unheld = { ...mod }
+      delete unheld.held
+      return findUpdates([unheld], idx.byName)[0]?.latest ?? null
+    },
     async reportUpdateCount(game, profileId, count) {
       if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return
       await getProfile(paths, game, profileId)

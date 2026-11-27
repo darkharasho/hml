@@ -210,6 +210,8 @@ interface State {
   /** Runs every Thunderstore, GitHub and Nexus update for the current profile. */
   updateAll(): Promise<void>
   checkUpdates(): Promise<void>
+  /** Asks one mod's source for a newer version now, refreshes the update lists and says so. */
+  checkModUpdate(modId: string): Promise<void>
   handleEvent(e: HmlEvent): void
   /** Starts the current game; resolves once it's seen running, HML gives up, or it failed. */
   launch(mode: LaunchMode): Promise<void>
@@ -1282,6 +1284,36 @@ export const useStore = create<State>()((set, get) => {
         get().ghUpdate(ghUpdates),
         get().nxUpdate(nxUpdates)
       ])
+    },
+
+    async checkModUpdate(modId) {
+      const { currentGame, currentProfile } = get()
+      const mod = get()
+        .profiles.find((p) => p.id === currentProfile)
+        ?.mods.find((m) => m.id === modId)
+      if (!currentGame || !currentProfile || !mod) return
+      let latest: string | null
+      try {
+        latest = await api.checkModUpdate(currentGame.label, currentProfile, modId)
+      } catch (e) {
+        return get().toast('error', errorMessage(e))
+      }
+      // The check freshened the source's cache, so the profile's lists pick up what it found.
+      await get().checkUpdates()
+      if (latest === null) return get().toast('success', `${mod.name} is up to date.`)
+      if (mod.held) {
+        return get().toast(
+          'info',
+          `${mod.name} ${latest} is out, but it's held at ${mod.version}. Turn off Hold at this version to update.`
+        )
+      }
+      if (mod.source.kind === 'github' && mod.github?.updateMode === 'pinned') {
+        return get().toast(
+          'info',
+          `${mod.name} ${latest} is out, but it stays on ${mod.version} while its updates are pinned.`
+        )
+      }
+      get().toast('info', `${mod.name} has an update to ${latest}. Use Update to install it.`)
     },
 
     async checkUpdates() {

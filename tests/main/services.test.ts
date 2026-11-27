@@ -1249,6 +1249,21 @@ describe('services', () => {
       expect(progress[0].message).toBe('Installing Lib 1.0.0')
     })
 
+    test("checkModUpdate reports a held mod's newer version", async () => {
+      packages = [rawPkg('Own', 'Mod', ['2.0.0', '1.0.0'])]
+      blobs.set(dl('Own-Mod', '2.0.0'), zipOf('Mod', '2.0.0'))
+      const api = make()
+      const profile = await api.createProfile('repo', 'T')
+      await api.tsInstall('repo', profile.id, 'Own-Mod')
+      expect(await api.checkModUpdate('repo', profile.id, 'Own-Mod')).toBeNull()
+      await api.tsInstall('repo', profile.id, 'Own-Mod', '1.0.0')
+      expect(await api.tsCheckUpdates('repo', profile.id)).toEqual([])
+      expect(await api.checkModUpdate('repo', profile.id, 'Own-Mod')).toBe('2.0.0')
+      await expect(api.checkModUpdate('repo', profile.id, 'Gone-Mod')).rejects.toThrow(
+        'no longer in this profile'
+      )
+    })
+
     test('installing an older version holds the mod; the newest frees it', async () => {
       packages = [rawPkg('Own', 'Mod', ['2.0.0', '1.0.0'])]
       blobs.set(dl('Own-Mod', '2.0.0'), zipOf('Mod', '2.0.0'))
@@ -2253,6 +2268,22 @@ describe('services', () => {
       clock += 9 * 60_000
       await api.ghCheckUpdates('repo', pid)
       expect(calls.length).toBe(n)
+    })
+
+    test('checkModUpdate asks GitHub now, checks pinned mods and freshens the list', async () => {
+      await setup()
+      publish('owner', 'repo', 'v1.0.0', { 'a.zip': zipOf('Thing', '1.0.0') })
+      publish('pin', 'ned', 'v1.0.0', { 'a.zip': zipOf('Pinned', '1.0.0') })
+      await api.ghInstall('repo', pid, 'owner/repo')
+      await api.ghInstall('repo', pid, 'https://github.com/pin/ned/releases/tag/v1.0.0')
+      expect(await api.checkModUpdate('repo', pid, 'owner-repo')).toBeNull()
+      publish('owner', 'repo', 'v1.1.0', { 'a.zip': zipOf('Thing', '1.1.0') })
+      publish('pin', 'ned', 'v2.0.0', { 'a.zip': zipOf('Pinned', '2.0.0') })
+      // Inside the memo window the profile check still sees the old release list.
+      expect(await api.ghCheckUpdates('repo', pid)).toEqual([])
+      expect(await api.checkModUpdate('repo', pid, 'owner-repo')).toBe('v1.1.0')
+      expect(await api.checkModUpdate('repo', pid, 'pin-ned')).toBe('v2.0.0')
+      expect((await api.ghCheckUpdates('repo', pid)).map((u) => u.latest)).toEqual(['v1.1.0'])
     })
 
     test('ghInstallRelease rolls back and pins; the newest release unpins', async () => {
@@ -3994,6 +4025,20 @@ describe('services', () => {
         const res = await fresh.nxUpdate('repo', pid, ['nexus-5'])
         expect(res.map((r) => r.kind)).toEqual(['installed'])
         expect((await modsOf())[0].source).toMatchObject({ fileId: 13 })
+      })
+
+      test('checkModUpdate asks Nexus now instead of using the memo', async () => {
+        await withKey()
+        files = [{ fileId: 11, category: 'MAIN', date: 100 }]
+        await api.nxInstall('repo', pid, 5)
+        expect(await api.checkModUpdate('repo', pid, 'nexus-5')).toBeNull()
+        files = [
+          { fileId: 11, category: 'MAIN', date: 100 },
+          { fileId: 13, category: 'MAIN', date: 300 }
+        ]
+        expect(await api.nxCheckUpdates('repo', pid)).toEqual([])
+        expect(await api.checkModUpdate('repo', pid, 'nexus-5')).toBe('v13')
+        expect((await api.nxCheckUpdates('repo', pid)).map((u) => u.latest)).toEqual(['v13'])
       })
 
       test('an OPTIONAL-installed mod is not checked', async () => {

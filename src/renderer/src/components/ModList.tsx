@@ -660,6 +660,7 @@ function ModRow({
   )
   const setModHeld = useStore((s) => s.setModHeld)
   const copyModToProfile = useStore((s) => s.copyModToProfile)
+  const checkModUpdate = useStore((s) => s.checkModUpdate)
   const profiles = useStore((s) => s.profiles)
   const currentProfileId = useStore((s) => s.currentProfile)
   const loadModDeps = useStore((s) => s.loadModDeps)
@@ -791,6 +792,20 @@ function ModRow({
     ]
   }
   if (source.kind === 'nexus' && onOpen) menu = [{ label: 'Details…', onSelect: onOpen }, ...menu]
+  if (source.kind !== 'local') {
+    // Just before Copy to profile, at the end of the first group.
+    const at = menu.findIndex((m) => m.label === copy.label)
+    menu = [
+      ...menu.slice(0, at),
+      {
+        label: 'Check for updates',
+        // A synced follower takes its versions from the sync code, not from update checks.
+        disabled: updating || locked,
+        onSelect: () => void checkModUpdate(mod.id)
+      },
+      ...menu.slice(at)
+    ]
+  }
   if (config) {
     const at = onOpen ? 1 : 0
     menu = [

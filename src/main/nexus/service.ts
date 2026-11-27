@@ -104,6 +104,8 @@ export function createNexusServices(ctx: NexusContext): Pick<
   ): Promise<{ game: string; profileId: string; mod: InstalledMod }>
   /** The logged-in Nexus user's id (validating the key if needed); null without a key. */
   loggedInUserId(): Promise<number | null>
+  /** The newer MAIN file version of one mod, asked of Nexus now; null when it is up to date. */
+  nxCheckMod(game: string, profileId: string, modId: string): Promise<string | null>
 } {
   const { deps, client, games, serialize } = ctx
   const { paths } = deps
@@ -405,6 +407,16 @@ export function createNexusServices(ctx: NexusContext): Pick<
     return out
   }
 
+  async function checkMod(game: string, profileId: string, modId: string): Promise<string | null> {
+    const { domain, gameId } = await domainOf(game)
+    const { mods } = await getProfile(paths, game, profileId)
+    const m = mods.find((x) => x.id === modId)
+    if (!m || !isNxMod(m)) throw new Error('That mod is no longer in this profile.')
+    // Drop the memo so this asks Nexus now; the fresh list is then shared with the next check.
+    filesMemo.delete(`${domain}/${m.source.modId}`)
+    return newerFile(m, await memoFiles(domain, gameId, m.source.modId))?.version ?? null
+  }
+
   async function update(
     game: string,
     profileId: string,
@@ -521,6 +533,7 @@ export function createNexusServices(ctx: NexusContext): Pick<
     nxInstall: install,
     nxCheckUpdates: checkUpdates,
     nxUpdate: update,
+    nxCheckMod: checkMod,
     installFromNxm: (link, to) =>
       installLinked(link, { nxm: { key: link.key, expires: link.expires } }, to),
     installFromDownload: (file, data, to) => installLinked(file, { data }, to),

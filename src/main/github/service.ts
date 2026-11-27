@@ -166,6 +166,8 @@ export function createGithubServices(ctx: GhContext): Pick<
   | 'ghBlocked'
 > & {
   ghAutoUpdateAll(): Promise<void>
+  /** The newer tag one mod follows, asked of GitHub now; null when it is up to date. */
+  ghCheckMod(game: string, profileId: string, modId: string): Promise<string | null>
   ghInstallWith(
     game: string,
     profileId: string,
@@ -716,6 +718,20 @@ export function createGithubServices(ctx: GhContext): Pick<
     return out
   }
 
+  async function checkMod(game: string, profileId: string, modId: string): Promise<string | null> {
+    await ctx.requireGame(game)
+    const { mods } = await getProfile(paths, game, profileId)
+    const m = mods.find((x) => x.id === modId)
+    if (!m || !isGhMod(m)) throw new Error('That mod is no longer in this profile.')
+    const reason = await blockedOf(m)
+    if (reason !== null) throw new Error(`HML blocks this mod: ${reason}`)
+    // No memo age: the release list is revalidated with GitHub (cheap with its ETag), which also
+    // freshens the cache the profile's next check reads.
+    const latestOf = memoLookup(await loadToken(paths, deps.secrets))
+    const { mod, latest } = await latestFor(game, profileId, m, latestOf)
+    return needsUpdate(mod, latest) ? latest.tag : null
+  }
+
   async function update(
     game: string,
     profileId: string,
@@ -1058,6 +1074,7 @@ export function createGithubServices(ctx: GhContext): Pick<
       }),
     ghInstallWith: install,
     ghCheckUpdates: checkUpdates,
+    ghCheckMod: checkMod,
     ghUpdate: update,
     ghSetUpdateMode: setUpdateMode,
     ghSetPrereleases: setPrereleases,

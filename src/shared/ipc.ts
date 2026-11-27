@@ -141,6 +141,11 @@ export interface HmlApi {
     opts?: GhInstallRequest
   ): Promise<GhInstallResult>
   ghCheckUpdates(game: string, profileId: string): Promise<GhUpdate[]>
+  /**
+   * Asks the mod's source now for a newer version than the installed one; null when it is up to
+   * date. Held and pinned mods are checked too.
+   */
+  checkModUpdate(game: string, profileId: string, modId: string): Promise<string | null>
   ghUpdate(game: string, profileId: string, modIds: string[]): Promise<InstalledMod[]>
   ghSetUpdateMode(game: string, profileId: string, modId: string, mode: GhUpdateMode): Promise<void>
   /** Saves the mod's pre-release setting and checks the mod (pinned mods aren't checked). */
@@ -354,6 +359,7 @@ const METHOD_TABLE = {
   tsUpdate: true,
   ghInstall: true,
   ghCheckUpdates: true,
+  checkModUpdate: true,
   ghUpdate: true,
   ghSetUpdateMode: true,
   ghSetPrereleases: true,
