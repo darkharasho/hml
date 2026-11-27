@@ -25,6 +25,7 @@ import type {
 } from '../../shared/types'
 import { api, errorMessage } from './api'
 import { isGhAccessError } from '../../shared/messages'
+import { nexusFilePageUrl } from '../../shared/nexusPage'
 import { disabledDependencies, type ModDeps } from '../../shared/modDeps'
 import { catDepsToast, catInstallToast } from './ghCatalogView'
 import { ghInstallToast, ghUpdatedToast } from './ghView'
@@ -1045,7 +1046,17 @@ export const useStore = create<State>()((set, get) => {
           unavailable,
           result.pendingNexus
         )
-        if (t) get().toast(t.kind, t.message)
+        // Its Install opens the Nexus files left to download, which the GitHub tab doesn't list.
+        const urls = result.pendingNexus.map((p) => nexusFilePageUrl(p.domain, p.modId, p.fileId))
+        const target = { game: currentGame.label, profileId: currentProfile }
+        if (t)
+          get().toast(
+            t.kind,
+            t.message,
+            urls.length > 0
+              ? { label: 'Install', run: () => void get().openManualDownloads(urls, target) }
+              : undefined
+          )
         await get().checkUpdates()
       } else if (result.kind === 'blocked') {
         get().toast('error', `Blocked by HML: ${result.reason}`)
@@ -1523,7 +1534,8 @@ export const useStore = create<State>()((set, get) => {
     toast(kind, message, action) {
       const id = ++toastSeq
       set({ toasts: [...get().toasts, { id, kind, message, action }] })
-      setTimeout(() => get().dismissToast(id), kind === 'error' ? 8000 : 4000)
+      // Errors and toasts with a button stay long enough to read and act on.
+      setTimeout(() => get().dismissToast(id), kind === 'error' || action ? 8000 : 4000)
     },
 
     dismissToast(id) {

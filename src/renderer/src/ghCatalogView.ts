@@ -105,6 +105,10 @@ export function catReportUrl(owner: string, repo: string): string {
 export const catRepoUrl = (entry: Pick<CatalogEntry, 'owner' | 'repo'>): string =>
   `https://github.com/${entry.owner}/${entry.repo}`
 
+/** What a catalog install's toast says of Nexus files it left to download; its Install opens them. */
+const nexusPendingNote = (names: string): string =>
+  `${names} still needs installing from Nexus Mods: use Install, or find it on the Installed tab.`
+
 /** The toast after a catalog install: the mod, how many dependencies came with it, what's missing. */
 export function catInstallToast(
   entry: CatalogEntry,
@@ -115,7 +119,7 @@ export function catInstallToast(
   const missing = unavailable.length > 0 ? ` — missing dependencies: ${unavailable.join(', ')}` : ''
   // Nexus files HML couldn't download itself wait in the profile's "Nexus mods to install".
   const names = pendingNexus.map((p) => p.name).join(', ')
-  const pending = names ? `. Download ${names} from Nexus Mods: it's listed in this profile.` : ''
+  const pending = names ? `. ${nexusPendingNote(names)}` : ''
   const kind = missing || pending ? 'info' : 'success'
   if (installed.length === 0) {
     return { kind: 'info', message: `${entry.name} is already installed${missing}${pending}` }
@@ -144,7 +148,7 @@ export function catDepsToast(
   if (unavailable.length > 0)
     parts.push(`Missing dependencies of ${entry.name}: ${unavailable.join(', ')}.`)
   const names = pendingNexus.map((p) => p.name).join(', ')
-  if (names) parts.push(`Download ${names} from Nexus Mods: it's listed in this profile.`)
+  if (names) parts.push(nexusPendingNote(names))
   if (parts.length === 0) return null
   return { kind: n > 0 && parts.length === 1 ? 'success' : 'info', message: parts.join(' ') }
 }

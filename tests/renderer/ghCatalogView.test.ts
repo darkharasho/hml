@@ -223,7 +223,7 @@ describe('catInstallToast', () => {
     expect(catInstallToast(e, [mod], [], [{ name: 'BepInEx' }])).toEqual({
       kind: 'info',
       message:
-        "Installed Tools 1.0.0. Download BepInEx from Nexus Mods: it's listed in this profile."
+        "Installed Tools 1.0.0. BepInEx still needs installing from Nexus Mods: use Install, or find it on the Installed tab."
     })
   })
   it('says when nothing needed installing', () => {
@@ -246,7 +246,7 @@ describe('catDepsToast', () => {
     expect(catDepsToast(e, [], ['github:z/z'], [{ name: 'BepInEx' }])).toEqual({
       kind: 'info',
       message:
-        "Missing dependencies of Tools: github:z/z. Download BepInEx from Nexus Mods: it's listed in this profile."
+        "Missing dependencies of Tools: github:z/z. BepInEx still needs installing from Nexus Mods: use Install, or find it on the Installed tab."
     })
   })
   it('is null when there was nothing to do', () => {

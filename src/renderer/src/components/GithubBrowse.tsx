@@ -16,6 +16,8 @@ import {
 import { useCurrentProfile, useStore, useSyncLocked } from '../store'
 import { SYNC_LOCKED_NOTE } from '../syncView'
 import { compactCount, relativeTime, UNSUPPORTED_LOADER } from '../tsView'
+import { pendingNexusHeading, pendingNexusRows } from '../nxView'
+import { PendingNexusRows } from './PendingNexusList'
 import { GithubCatalogDetail } from './GithubCatalogDetail'
 import { PackageIcon, ProgressLine } from './PackageDetail'
 import { Button, ConfirmDialog, Icon } from './ui'
@@ -53,6 +55,10 @@ export function GithubBrowse({
   const profileId = useStore((s) => s.currentProfile)
   const catInstall = useStore((s) => s.catInstall)
   const toast = useStore((s) => s.toast)
+  const profile = useCurrentProfile()
+  // Nexus files a catalog install left to download (a Nexus-only game's BepInEx) show here too,
+  // not only on the Installed tab.
+  const pending = profile ? pendingNexusRows(profile) : []
   const seq = useRef(0)
   const key = `${game}#${nonce}`
 
@@ -224,6 +230,16 @@ export function GithubBrowse({
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-3">
+          {profile && pending.length > 0 && (
+            <section aria-label="Nexus mods to install" className="pb-3">
+              <p className="px-2 pb-1 text-xs text-muted">
+                {`${pendingNexusHeading(pending.length)} in this profile`}
+              </p>
+              <ul className="flex flex-col">
+                <PendingNexusRows rows={pending} target={{ game, profileId: profile.id }} />
+              </ul>
+            </section>
+          )}
           <p className="px-2 pb-2 text-xs text-muted" aria-live="polite">
             {`${shown.length.toLocaleString('en')} ${shown.length === 1 ? 'mod' : 'mods'}`}
           </p>
