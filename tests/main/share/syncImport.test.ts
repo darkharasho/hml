@@ -20,6 +20,7 @@ let requests: string[]
 let syncStatus: number
 let mods: HmlExportMod[]
 let syncApi: ReturnType<typeof createSyncServices>
+let ghOpts: unknown[]
 
 const exp = (): HmlExport => ({ formatVersion: 1, game: 'repo', profileName: 'Friends', mods })
 const data = (): Uint8Array =>
@@ -64,7 +65,11 @@ function make(
     installers: {
       createProfile: (game: string, name: string) => createProfile(paths, game, name),
       tsGetPackage: async () => null,
-      tsRefresh: async () => undefined
+      tsRefresh: async () => undefined,
+      ghInstall: async (_g: string, _p: string, _u: string, opts: unknown) => {
+        ghOpts.push(opts)
+        throw new Error('offline')
+      }
     } as never,
     findCustomGameByName: async () => undefined,
     findCustomGameByFolder: async () => undefined,
@@ -90,6 +95,7 @@ beforeEach(async () => {
   requests = []
   syncStatus = 200
   mods = []
+  ghOpts = []
 })
 
 afterEach(async () => {
@@ -165,6 +171,24 @@ describe('sync code import', () => {
     const r = await share.importShare(p!.token, '')
     expect(r.warnings).toEqual([])
     expect((await getProfile(paths, 'repo', r.profile.id)).sync).toBeUndefined()
+  })
+
+  it("a share import keeps a GitHub mod's update mode; a sync import leaves it pinned", async () => {
+    const gh = (tag: string, updateMode?: 'notify'): HmlExportMod => ({
+      source: { kind: 'github', owner: 'o', repo: 'r', tag, asset: 'a.zip', sha256: 's' },
+      version: tag,
+      enabled: true,
+      ...(updateMode ? { updateMode } : {})
+    })
+    mods = [gh('v1', 'notify'), gh('v2')]
+    const share = make()
+    await share.importShare((await share.previewShare({ code: SHARE }))!.token, '')
+    // A code without a mode is from an older HML: it follows releases like a fresh install.
+    expect(ghOpts).toMatchObject([{ updateMode: 'notify' }, { updateMode: 'auto' }])
+    ghOpts = []
+    await share.importShare((await share.previewShare({ code: SYNC }))!.token, '')
+    expect(ghOpts).toHaveLength(2)
+    expect(ghOpts.some((o) => 'updateMode' in (o as object))).toBe(false)
   })
 
   it('a sync import whose mods did not all install is retried by the next check', async () => {

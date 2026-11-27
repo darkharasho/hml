@@ -48,7 +48,9 @@ const exportSchema = z.object({
       name: z.string().optional(),
       provides: z.array(z.string()).optional(),
       // A malformed value reads as off instead of refusing the file.
-      prereleases: z.boolean().optional().catch(undefined)
+      prereleases: z.boolean().optional().catch(undefined),
+      // An unknown mode reads as absent (auto on import) instead of refusing the file.
+      updateMode: z.enum(['auto', 'notify', 'pinned']).optional().catch(undefined)
     })
   ),
   customGame: z
@@ -88,11 +90,15 @@ async function collectConfigs(
   }
 }
 
-/** Gathers what a .hml holds: the export object and the profile's config files, in collection order. */
+/**
+ * Gathers what a .hml holds: the export object and the profile's config files, in collection
+ * order. `updateModes` records GitHub mods' update modes (shares; a sync follower ignores them,
+ * so sync publishes leave them out and a mode change doesn't publish a revision).
+ */
 export async function collectHmlParts(
   profile: ProfileManifest,
   profileDir: string,
-  opts: { maxBytes?: number; customGame?: HmlCustomGame } = {}
+  opts: { maxBytes?: number; customGame?: HmlCustomGame; updateModes?: boolean } = {}
 ): Promise<{ export: HmlExport; configs: Map<string, Uint8Array> }> {
   const maxBytes = opts.maxBytes ?? MAX_HML_BYTES
   const exp: HmlExport = {
@@ -105,7 +111,10 @@ export async function collectHmlParts(
       version: m.version,
       enabled: m.enabled,
       ...(m.provides && m.provides.length > 0 ? { provides: m.provides } : {}),
-      ...(m.source.kind === 'github' && m.github?.prereleases ? { prereleases: true } : {})
+      ...(m.source.kind === 'github' && m.github?.prereleases ? { prereleases: true } : {}),
+      ...(m.source.kind === 'github' && opts.updateModes
+        ? { updateMode: m.github?.updateMode ?? 'auto' }
+        : {})
     })),
     ...(opts.customGame ? { customGame: opts.customGame } : {})
   }
@@ -143,7 +152,7 @@ export async function buildHmlFile(
   profileDir: string,
   opts: { maxBytes?: number; customGame?: HmlCustomGame } = {}
 ): Promise<Uint8Array> {
-  return zipHmlParts(await collectHmlParts(profile, profileDir, opts))
+  return zipHmlParts(await collectHmlParts(profile, profileDir, { ...opts, updateModes: true }))
 }
 
 export function isSafeConfigPath(name: string): boolean {

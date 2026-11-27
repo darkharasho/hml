@@ -349,7 +349,10 @@ export function createShareServices(ctx: ShareContext): ShareApi {
       const total = exp.mods.length
       for (const [i, entry] of exp.mods.entries()) {
         deps.emit({ type: 'progress', message: `Importing ${modName(entry)}`, done: i, total })
-        const r = await entries.installEntry(game, profileId, entry, refreshOnce)
+        // A follower stays on the leader's versions; a plain import keeps the sharer's modes.
+        const r = await entries.installEntry(game, profileId, entry, refreshOnce, {
+          keepUpdateMode: !held.sync
+        })
         if ('unresolved' in r) {
           unresolved.push(r.unresolved)
           installedIds.push(null)

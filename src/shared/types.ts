@@ -288,6 +288,8 @@ export interface HmlExportMod {
   provides?: string[]
   /** A GitHub mod that follows pre-releases; written only when true, absent is off. */
   prereleases?: boolean
+  /** A GitHub mod's update mode; absent on older codes, which share imports read as auto. */
+  updateMode?: GhUpdateMode
 }
 
 /** The export.json inside a .hml profile file. */

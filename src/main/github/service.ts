@@ -150,6 +150,11 @@ export interface GhInstallOptions {
   followNewestTag?: boolean
   /** A GitHub catalog install: marks the config so checks refresh its asset pattern. */
   catalog?: boolean
+  /**
+   * The update mode to save instead of the one the link implies. A share import installs the
+   * shared tag but keeps the sharer's mode, so an auto mod catches up on the next check.
+   */
+  updateMode?: GhUpdateMode
 }
 
 export function createGithubServices(ctx: GhContext): Pick<
@@ -663,11 +668,13 @@ export function createGithubServices(ctx: GhContext): Pick<
                 ...(opts.catalog === true ? { catalog: true as const } : {})
               }
             : {
-                updateMode: pinned
-                  ? 'pinned'
-                  : previous?.github?.updateMode === 'pinned' && ref.tag !== undefined
-                    ? 'auto'
-                    : (previous?.github?.updateMode ?? 'auto'),
+                updateMode:
+                  opts.updateMode ??
+                  (pinned
+                    ? 'pinned'
+                    : previous?.github?.updateMode === 'pinned' && ref.tag !== undefined
+                      ? 'auto'
+                      : (previous?.github?.updateMode ?? 'auto')),
                 assetPattern:
                   named !== undefined
                     ? assetPattern(chosen.asset.name, release.tag)

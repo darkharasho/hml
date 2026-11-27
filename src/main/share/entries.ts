@@ -89,7 +89,8 @@ export function createEntryInstaller(ctx: { deps: ServiceDeps; installers: Share
     game: string,
     profileId: string,
     entry: HmlExportMod,
-    refreshOnce: () => Promise<void>
+    refreshOnce: () => Promise<void>,
+    opts?: { keepUpdateMode?: boolean }
   ): Promise<{ modId: string; warnings: string[] } | { unresolved: UnresolvedMod }>
   tsModAt(game: string, profileId: string, fullName: string, version: string): Promise<boolean>
   refresher(game: string): () => Promise<void>
@@ -120,12 +121,17 @@ export function createEntryInstaller(ctx: { deps: ServiceDeps; installers: Share
     return api.tsGetPackage(game, fullName)
   }
 
-  /** Installs one exported mod. Never throws: a failure comes back as an unresolved entry. */
+  /**
+   * Installs one exported mod. Never throws: a failure comes back as an unresolved entry. A
+   * GitHub mod installs pinned to the shared tag unless `keepUpdateMode` (a share import, not a
+   * sync apply) gives it the sharer's update mode, auto for codes that don't say.
+   */
   async function installEntry(
     game: string,
     profileId: string,
     entry: HmlExportMod,
-    refreshOnce: () => Promise<void>
+    refreshOnce: () => Promise<void>,
+    opts: { keepUpdateMode?: boolean } = {}
   ): Promise<{ modId: string; warnings: string[] } | { unresolved: UnresolvedMod }> {
     const unresolved = (
       reason: string,
@@ -165,7 +171,8 @@ export function createEntryInstaller(ctx: { deps: ServiceDeps; installers: Share
           try {
             r = await api.ghInstall(game, profileId, url, {
               provides,
-              prereleases: entry.prereleases === true
+              prereleases: entry.prereleases === true,
+              ...(opts.keepUpdateMode ? { updateMode: entry.updateMode ?? 'auto' } : {})
             })
           } catch (e) {
             // A network failure or rate limit keeps GitHub's own message, which says what to do.

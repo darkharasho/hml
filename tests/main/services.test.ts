@@ -5132,7 +5132,7 @@ describe('share import', () => {
   test("import carries a GitHub mod's prerelease setting; old codes import it as off", async () => {
     const on = await importCode([{ ...gh('v1.0.0'), prereleases: true }])
     expect(on.unresolved).toEqual([])
-    expect(on.profile.mods[0].github).toMatchObject({ updateMode: 'pinned', prereleases: true })
+    expect(on.profile.mods[0].github).toMatchObject({ updateMode: 'auto', prereleases: true })
     const off = await importCode([gh('v1.0.0')])
     expect(off.profile.mods[0].github?.prereleases).toBe(false)
   })

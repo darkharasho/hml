@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { buildHmlFile, MAX_HML_BYTES, readHmlFile } from '../../src/main/share/hmlFile'
+import {
+  buildHmlFile,
+  collectHmlParts,
+  MAX_HML_BYTES,
+  readHmlFile
+} from '../../src/main/share/hmlFile'
 import type { InstalledMod, ProfileManifest } from '../../src/shared/types'
 
 const DAMAGED = 'This HML profile file is damaged or from a newer HML.'
@@ -87,7 +92,9 @@ describe('hml files', () => {
         name: m.name,
         source: m.source,
         version: m.version,
-        enabled: m.enabled
+        enabled: m.enabled,
+        // A GitHub mod without a saved config follows releases.
+        ...(m.source.kind === 'github' ? { updateMode: 'auto' } : {})
       }))
     })
     expect([...out.configs.keys()].sort()).toEqual([
@@ -257,6 +264,37 @@ describe('hml files', () => {
     })
     const read = await readHmlFile(zipOf({ 'export.json': odd }))
     expect(read.export.mods[0].prereleases).toBeUndefined()
+  })
+
+  it("records GitHub mods' update modes in shares only; odd modes read as absent", async () => {
+    const gh = profile.mods[1]
+    const modes: ProfileManifest = {
+      ...profile,
+      mods: [
+        { ...gh, github: { updateMode: 'pinned', assetPattern: null } },
+        { ...gh, id: 'B2', github: { updateMode: 'notify', assetPattern: null } },
+        { ...gh, id: 'B3' },
+        profile.mods[0]
+      ]
+    }
+    const out = await readHmlFile(await buildHmlFile(modes, dir))
+    expect(out.export.mods.map((m) => m.updateMode)).toEqual([
+      'pinned',
+      'notify',
+      'auto',
+      undefined
+    ])
+    // Sync publishes leave them out: a follower stays on the leader's versions either way.
+    const synced = await collectHmlParts(modes, dir)
+    expect(synced.export.mods.some((m) => 'updateMode' in m)).toBe(false)
+    const odd = JSON.stringify({
+      formatVersion: 1,
+      game: 'g',
+      profileName: 'p',
+      mods: [{ source: gh.source, version: '1', enabled: true, updateMode: 'sometimes' }]
+    })
+    const read = await readHmlFile(zipOf({ 'export.json': odd }))
+    expect(read.export.mods[0].updateMode).toBeUndefined()
   })
 
   it('rejects a missing export.json, a newer format and bad export.json', async () => {
