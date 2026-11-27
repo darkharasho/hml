@@ -1,5 +1,10 @@
 # Release Notes
 
+Version v1.12.1 — November 26, 2026
+
+## BepInEx is easier to find after a GitHub install
+When a mod from the GitHub tab needs BepInEx from Nexus Mods and HML can't download it for you, the BepInEx row used to show up only on the Installed tab, so it was easy to miss. Now it also shows at the top of the GitHub tab. The message after installing has an Install button that opens BepInEx in HML's Nexus window, and it stays up longer so you can click it.
+
 Version v1.12.0 — November 26, 2026
 
 ## Check one mod for updates
